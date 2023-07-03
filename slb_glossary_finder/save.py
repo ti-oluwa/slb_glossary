@@ -1,3 +1,5 @@
+"""Contains class for saving glossary terms to a file"""
+
 import openpyxl
 import csv
 import json

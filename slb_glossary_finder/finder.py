@@ -1,3 +1,5 @@
+"""Contains class for finding glossary terms in the SLB glossary."""
+
 from typing import Tuple, List
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -12,6 +14,7 @@ from .exceptions import NetworkError, BrowserException, BrowserNotInstalled, Bro
 
 
 ALLOWED_BROWSERS = webdriver.__all__
+base_search_url = 'https://glossary.slb.com/en/search'
 
 
 class SLBGlossaryTermsFinder:
@@ -39,7 +42,7 @@ class SLBGlossaryTermsFinder:
 
                 :kwargs wait_duration: The number of seconds to wait for an element to be found before throwing an error
 
-                :kwargs open_window: Whether to open the browser window or not. Defaults to False
+                :kwargs open_browser_window: Whether to open the browser window or not. Defaults to False
         """ 
         return self._init_browser(browser, **kwargs)
         
@@ -55,13 +58,13 @@ class SLBGlossaryTermsFinder:
 
                 :kwargs wait_duration: The number of seconds to wait for an element to be found before throwing an error
 
-                :kwargs open_window: Whether to open the browser window or not. Defaults to False
+                :kwargs open_browser_window: Whether to open the browser window or not. Defaults to False
         """
         browser = browser.title().replace(' ', '')
         if browser not in ALLOWED_BROWSERS:
             raise BrowserNotSupported(f'{browser.title()} is not supported by selenium')
 
-        options = self._get_headless_options(browser) if kwargs.get('open_window', False) is False else None
+        options = self._get_headless_options(browser) if kwargs.get('open_browser_window', False) is False else None
         try:
             self.browser: WebDriver = getattr(webdriver, browser)(options=options)
         except AttributeError:
@@ -139,71 +142,68 @@ class SLBGlossaryTermsFinder:
 
 
     @staticmethod
-    def generate_slb_url(topic: str, pager_query: str = '', by_start_letter: bool = False, by_topic_and_start_letter: bool = False):
+    def generate_slb_url(topic: str, query: str = None, pager_query: str = None, start_letter: str = None):
         """
-        Generate the url for the given topic
+        Generate the url for the given parameters
 
-        :param topic: The topic to generate the url for
-        :param pager_query: The query string for the pager/paginator. Points to a specific tab. Use the get_pager_query method to get the query string
-        :param by_start_letter: Whether to generate the url for the topic by topic's first letter or not. e.g
-        if True, the url for the topic 'd' or 'drilling' will be generated as "https://glossary.slb.com/en/search#sort=relevancy&f:TermStartLetterFacet=[D]"
-
-        :param by_topic_and_start_letter: Whether to generate the url for the topic by topic and (topic's first letter or another letter provided) or not. e.g
-        if True, the url for the topic "drilling, c" will be generated as "https://glossary.slb.com/en/search#sort=relevancy&f:DisciplineFacet=[Drilling]&f:TermStartLetterFacet=[C]"
-        if the topic is just "drilling", the url will be generated as "https://glossary.slb.com/en/search#sort=relevancy&f:DisciplineFacet=[Drilling]&f:TermStartLetterFacet=[D]"
-
-        :raises ValueError: If topic is empty
-        :return: The url for the given topic
+        :param topic: The topic to get the terms for
+        :param query: The search query to use
+        :param pager_query: The query string for the pager/paginator that will be used to get the terms on the given tab
+        :param start_letter: The first letter of the terms to get
+        :return: The url for the given parameters
         """
-        if not topic:
-            raise ValueError('Topic cannot be empty')
-
-        if by_topic_and_start_letter is True:
-            if len(topic.split(',')) > 1:
-                topic, start_letter = topic.split(',')
-                start_letter = start_letter[0].upper().strip()
-            else:
-                start_letter = topic[0].upper()
-            return f'https://glossary.slb.com/en/search#{pager_query}sort=relevancy&f:DisciplineFacet=[{topic.title()}]&f:TermStartLetterFacet=[{start_letter}]'
+        if not topic and not(query or start_letter):
+            return base_search_url
+        if query:
+            query = f"q={query}&"
+        if start_letter:
+            start_letter = f"&f:TermStartLetterFacet=[{start_letter[0].upper()}]"
+        if topic:
+            topic = f"&f:DisciplineFacet=[{topic.strip().title()}]"
+        return f"{base_search_url}#{query or ''}{pager_query or ''}sort=relevancy{topic or ''}{start_letter or ''}"
         
-        if by_start_letter is True:
-            start_letter = topic[0].upper()
-            return f'https://glossary.slb.com/en/search#{pager_query}sort=relevancy&f:TermStartLetterFacet=[{start_letter}]'
-        # Else generate url by topic
-        return f'https://glossary.slb.com/en/search#{pager_query}sort=relevancy&f:DisciplineFacet=[{topic.title()}]'
 
-
-    def get_terms_urls(self, topic: str, count: int = None, **kwargs):
+    def get_terms_urls(self, topic: str, query: str = None, start_letter: str = None, count: int = None, **kwargs):
         """
         Get the urls of the terms under the given topic
 
         :param topic: The topic to get the terms for
-        :param count: The number of terms to get. If None, all terms will be returned
+        :param query: The search query to use
+        :param start_letter: The first letter of the terms to get
+        :param count: The number of terms to get. If None, all term urls will be returned
         :param kwargs: Other keyword arguments
         :return: A list of urls of the terms under the given topic
         """
-        if count and not isinstance(count, int):
-            raise TypeError('Invalid type for count')
         if count and count < 1:
             raise ValueError('Count must be greater than 0')
-        if not isinstance(topic, str):
-            raise TypeError('Invalid type for topic')
 
         pager_query = self.get_pager_query(tab_number=kwargs.get('tab', 1))
         urls = kwargs.get('urls', [])
-        slb_url = self.generate_slb_url(topic, pager_query)
+        if urls:
+            old_page_source = self.browser.page_source
 
-        self._load(slb_url)
+        url = self.generate_slb_url(topic=topic, query=query, pager_query=pager_query, start_letter=start_letter)
+        self._load(url)
 
-        if kwargs.get('urls', None):
-            time.sleep(3)
+        if urls:
+            # If we're moving to a new tab, ensure page content as changed completely before proceeding to get new urls
+            updated_page_source = self.browser.page_source
+            while old_page_source == updated_page_source:
+                time.sleep(3)
+
         results_header = self.browser.find_element(by=By.CLASS_NAME, value='coveo-results-header')
         # if result header has content, results have been loaded else reload page
         while results_header.text == '':
             print('Content not loaded yet. Reloading page...')
-            return self.get_terms_urls(topic, count)
+            return self.get_terms_urls(topic, query=query, start_letter=start_letter, count=count, **kwargs)
 
-        total_no_of_terms_found = int(self.browser.find_elements(by=By.CSS_SELECTOR, value='.CoveoQuerySummary .coveo-highlight')[2].text)
+        try:
+            total_no_of_terms_found = int(self.browser.find_elements(by=By.CSS_SELECTOR, value='.CoveoQuerySummary .coveo-highlight')[2].text.replace(',', ''))
+        except IndexError:
+            print(f"Could not get total number of terms found on tab {kwargs.get('tab', 1)}. Returning urls found so far...")
+            # If for any reason the total number of terms found is not found, return term urls found so far
+            return urls
+
         found_terms = self.browser.find_elements(by=By.CSS_SELECTOR, value='.CoveoResult .CoveoResultLink')
         no_of_terms_per_tab = len(found_terms)
         max_no_of_tabs = math.ceil(total_no_of_terms_found / no_of_terms_per_tab)
@@ -216,7 +216,7 @@ class SLBGlossaryTermsFinder:
             current_tab = kwargs.get('tab', 1)
             next_tab = current_tab + 1
             if next_tab <= max_no_of_tabs:
-                return self.get_terms_urls(topic, count, tab=next_tab, urls=urls)
+                return self.get_terms_urls(topic, query=query, start_letter=start_letter, count=count, tab=next_tab, urls=urls)
         return urls
 
 
@@ -236,10 +236,7 @@ class SLBGlossaryTermsFinder:
         for detail in term_details:
             sub_details = detail.find_elements(by=By.CSS_SELECTOR, value='p')
             term_definition_sub: str = sub_details[0].text
-            if len(sub_details) <= 4:
-                term_definition: str = sub_details[1].text
-            elif len(sub_details) > 4:
-                term_definition: str = sub_details[2].text if sub_details[1].text == "" else sub_details[1].text
+            term_definition: str = sub_details[2].text if sub_details[1].text == "" else sub_details[1].text
 
             if topic and topic.lower() in term_definition_sub.lower():
                 details.append((term_name, term_definition))
@@ -252,54 +249,36 @@ class SLBGlossaryTermsFinder:
         return details
 
 
-    def find_terms_on(self, topic: str, count: int = None) -> List[Tuple[str, str]]:
+    def find_terms_on(self, topic: str, max_results: int = None) -> List[Tuple[str, str]]:
         """
         Find terms on a given topic in the glossary
 
         :param topic: The topic to base the search on
-        :param count: The number of terms to find. If None, all terms will be returned
+        :param max_results: The maximum number of terms to find. If None, all terms will be returned
         :return: A list of tuples containing the terms under the given topic and their definitions
+
+        Note this method returns only the definitions of the terms related to the given topic. 
+        If you want to get all the definitions of the terms, use `search` instead.
         """
-        term_links = self.get_terms_urls(topic, count)
+        term_links = self.get_terms_urls(topic, count=max_results)
         return [ self.get_term_details(topic, term_link)[0] for term_link in term_links ]
 
 
-    def search(self, query: str, under_topic: str = None, max_results: int = 3):
+    def search(self, query: str, topic: str = None, start_letter: str = None, max_results: int = 3):
         """
-        Search the glossary for the given query
+        Search the glossary for terms matching the given query and other filters
 
         :param query: The query to search for
-        :param under_topic: filter the search under the given topic
-        :param max_results: The maximum number of results to return. Should be less than or equal to 12
+        :param topic: filter the search under the given topic
+        :param start_letter: filter the search to terms starting with the given letter
+        :param max_results: The maximum number of results to return. Defaults to 3. If None, all results will be returned
         :return: A list of containing the details on the first `max_results` results of the search. 
 
         Note that each search results can have multiple definitions on different topics and each definition is a tuple of the term and its definition.
         So the number of results returned is `max_results` multiplied by the number of definitions per result, except a topic is specified in `under_topic`.
         """
-        if under_topic and not isinstance(under_topic, str):
-            raise TypeError('Invalid type for under_topic')
-        if not isinstance(query, str):
-            raise TypeError('Invalid type for query')
-        
-        if max_results > 12:
-            max_results = 12
-        search_url = f'https://glossary.slb.com/en/search#q={query}'
-        if under_topic:
-            search_url += f'&f:DisciplineFacet=[{under_topic.title()}]'
-        
-        self._load(search_url)
-
-        results_header = self.browser.find_element(by=By.CLASS_NAME, value='coveo-results-header')
-        # if result header has content, results have been loaded else reload page
-        while results_header.text == '':
-            print('Content not loaded yet. Reloading page...')
-            return self.search(query, under_topic)
-
-        found_terms = self.browser.find_elements(by=By.CSS_SELECTOR, value='.CoveoResult .CoveoResultLink')
-        related_terms = [ term for term in found_terms if term.text.lower() in query.lower() or query.lower() in term.text.lower() ]
-        result_urls = [ term.get_attribute('href') for term in related_terms[:max_results] ]
-
-        return [ result for url in result_urls for result in self.get_term_details(under_topic or "", url) ]
+        result_urls = self.get_terms_urls(topic, query=query, start_letter=start_letter, count=max_results)        
+        return [ result for url in result_urls for result in self.get_term_details(topic or "", url) ]
 
 
 
