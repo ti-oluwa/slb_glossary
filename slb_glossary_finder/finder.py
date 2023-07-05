@@ -17,32 +17,33 @@ ALLOWED_BROWSERS = webdriver.__all__
 base_search_url = 'https://glossary.slb.com/en/search'
 
 
-class SLBGlossaryTermsFinder:
+class GlossaryTermsFinder:
     """
     Class for finding terms in the SLB glossary using Selenium
     
-    :attr wait_duration: The number of seconds to wait for an element to be found before throwing an error
+    :attr implicit_wait_time: The number of seconds to wait for an element to be found before throwing an error
 
     :attr browser: The browser webdriver instance to be used in finding the terms
 
     :attr saver: The GlosssaryTermsSaver object to be used in saving the terms found
     """
 
-    wait_duration = 5
+    implicit_wait_time = 5
     saver = GlossaryTermsSaver()
 
-    def __init__(self, browser: str ='chrome', **kwargs) -> None:
+    def __init__(self, browser: str ='Chrome', **kwargs) -> None:
         """
         Initialize the glossary terms finder
 
         :param browser: The browser to use. Must be one of chrome, firefox, chromium edge, edge, safari, etc.
         The browser selected should be one you have installed on your machine and must be supported by selenium
         :param kwargs: Other keyword arguments
-                :kwargs page_load_timeout: The number of seconds to wait for a page to load before throwing an error
+                :kwarg page_load_timeout: The number of seconds to wait for a page to load before throwing an error
 
-                :kwargs wait_duration: The number of seconds to wait for an element to be found before throwing an error
+                :kwarg implicit_wait_time: The number of seconds to wait for an element to be found before throwing an error
 
-                :kwargs open_browser_window: Whether to open the browser window or not. Defaults to False
+                :kwarg open_browser_window: Whether to open the browser window or not. Defaults to False.
+                Do not close the browser window while code is executing else code execution stops.
         """ 
         return self._init_browser(browser, **kwargs)
         
@@ -56,9 +57,10 @@ class SLBGlossaryTermsFinder:
         :param kwargs: Other keyword arguments
                 :kwargs page_load_timeout: The number of seconds to wait for a page to load before throwing an error
 
-                :kwargs wait_duration: The number of seconds to wait for an element to be found before throwing an error
+                :kwargs implicit_wait_time: The number of seconds to wait for an element to be found before throwing an error
 
-                :kwargs open_browser_window: Whether to open the browser window or not. Defaults to False
+                :kwargs open_browser_window: Whether to open the browser window or not. Defaults to False. 
+                Do not close the browser window while code is executing else code execution stops.
         """
         browser = browser.title().replace(' ', '')
         if browser not in ALLOWED_BROWSERS:
@@ -72,10 +74,10 @@ class SLBGlossaryTermsFinder:
 
         if kwargs.get('page_load_timeout', None):
             self.browser.set_page_load_timeout(kwargs.get('page_load_timeout'))
-        if kwargs.get('wait_duration', None):
-            self.wait_duration = kwargs.get('wait_duration')
+        if kwargs.get('implicit_wait_time', None):
+            self.implicit_wait_time = kwargs.get('implicit_wait_time')
             
-        self.browser.implicitly_wait(self.wait_duration)
+        self.browser.implicitly_wait(self.implicit_wait_time)
 
 
     def _get_headless_options(self, browser: str):
@@ -180,16 +182,15 @@ class SLBGlossaryTermsFinder:
         pager_query = self.get_pager_query(tab_number=kwargs.get('tab', 1))
         urls = kwargs.get('urls', [])
         if urls:
-            old_page_source = self.browser.page_source
+            old_first_result_text = self.browser.find_element(by=By.CSS_SELECTOR, value='.CoveoResult .CoveoResultLink').text
 
         url = self.generate_slb_url(topic=topic, query=query, pager_query=pager_query, start_letter=start_letter)
         self._load(url)
 
         if urls:
             # If we're moving to a new tab, ensure page content as changed completely before proceeding to get new urls
-            updated_page_source = self.browser.page_source
-            while old_page_source == updated_page_source:
-                time.sleep(3)
+            while old_first_result_text == self.browser.find_element(by=By.CSS_SELECTOR, value='.CoveoResult .CoveoResultLink').text:
+                time.sleep(3)                
 
         results_header = self.browser.find_element(by=By.CLASS_NAME, value='coveo-results-header')
         # if result header has content, results have been loaded else reload page
@@ -200,9 +201,7 @@ class SLBGlossaryTermsFinder:
         try:
             total_no_of_terms_found = int(self.browser.find_elements(by=By.CSS_SELECTOR, value='.CoveoQuerySummary .coveo-highlight')[2].text.replace(',', ''))
         except IndexError:
-            print(f"Could not get total number of terms found on tab {kwargs.get('tab', 1)}. Returning urls found so far...")
-            # If for any reason the total number of terms found is not found, return term urls found so far
-            return urls
+            return self.get_terms_urls(topic, query=query, start_letter=start_letter, count=count, **kwargs)
 
         found_terms = self.browser.find_elements(by=By.CSS_SELECTOR, value='.CoveoResult .CoveoResultLink')
         no_of_terms_per_tab = len(found_terms)
@@ -220,13 +219,13 @@ class SLBGlossaryTermsFinder:
         return urls
 
 
-    def get_term_details(self, topic: str, term_url: str):
+    def get_term_details(self, term_url: str, topic: str = ""):
         """
         Get the details of the term on the given url
 
-        :param topic: The topic to base the search on
         :param term_url: The url of the term to get the details for
-        :return: A tuple containing the term name and its definition
+        :param topic: The topic to base the search on
+        :return: A list of tuples containing the term name and its definition
         """
         self._load(term_url)
         term_name: str = self.browser.find_element(by=By.CSS_SELECTOR, value=".row .small-12 h1 strong").text
