@@ -13,7 +13,7 @@ pip install slb-glossary-finder
 * The package can also be installed from the source code as follows:
 
 ```bash
-git clone https://
+git clone https://github.com/ti-oluwa/slb_glossary_finder.git
 cd slb_glossary_finder
 python setup.py install
 ```
