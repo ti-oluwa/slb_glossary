@@ -1,3 +1,4 @@
+"""Module exceptions"""
 
 class NetworkError(ConnectionError):
     """

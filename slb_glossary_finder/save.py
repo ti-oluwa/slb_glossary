@@ -1,3 +1,5 @@
+"""Contains class for saving glossary terms to a file"""
+
 import openpyxl
 import csv
 import json
@@ -43,13 +45,18 @@ class GlossaryTermsSaver:
         :param topic: The topic on which the terms are based
         :param terms: The terms to save
         :param filename: The name of the file to save the terms in. Can also be the path to the file
-        :return: None
+        :return: True if the terms were saved successfully, False otherwise
+        :raises: NotImplementedError if the file extension of the given filename is not supported
         """
         file_extension = filename.split('.')[-1] if filename else 'txt'
         try:
-            return getattr(self, f'save_as_{file_extension}')(topic, terms, filename)
+            getattr(self, f'save_as_{file_extension}')(topic, terms, filename)
+            return True
         except AttributeError:
             raise NotImplementedError(f'Cannot save to {file_extension} files. `save_as_{file_extension}` method not implemented')
+        except Exception:
+            return False
+    
 
     @staticmethod
     def save_as_xlsx(topic: str, terms: List[Tuple[str, str]], filename: str = None):
