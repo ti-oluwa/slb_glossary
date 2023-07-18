@@ -2,6 +2,8 @@
 
 This module helps you find the definition of terms in the Schlumberger Petroleum Glossary. This search can be done using several query paramaters such as term name, topics and start letter. The search results are usually returned in a list of tuples containing the term name and its definition. You can find the Schlumberger petroleum glossary [here](https://glossary.slb.com/en/).
 
+> **For optimum performance, it is advisable to use the module with the Chrome browser and a fast and stable internet connection.**
+
 ## Installation
 
 * The package can be installed using pip as follows:
@@ -10,13 +12,17 @@ This module helps you find the definition of terms in the Schlumberger Petroleum
 pip install slb-glossary-finder
 ```
 
-* The package can also be installed from the source code as follows:
+* The package can also be installed from the distribution files as follows:
 
 ```bash
 git clone https://github.com/ti-oluwa/slb_glossary_finder.git
+
 cd slb_glossary_finder
-python setup.py install
+
+pip install dist/slb_glossary_finder-<version>-py3-none-any.whl
 ```
+
+Replace `<version>` with the version of the package you want to install. For example, `0.1.0`. You can check the version of the package you want to install in the `slb_glossary_finder/__init__.py` file.
 
 ## Quick Start Guide
 
@@ -71,6 +77,17 @@ for term in result:
 
 An alternative to the `search` method here is the `find_terms_on` method. Read more about the `find_terms_on` method [here](#the-glossarytermsfinder-class).
 
+To search for terms on multiple topics or using multiple start letters, join the topics or start letters with a comma (,) as follows:
+
+```python
+
+result = finder.search(query='', start_letter='p, q, r', topic='Drilling, Geology')
+for term in result:
+    print(f'{term[0]}: ', term[1])
+    print('--------------------------')
+
+```
+
 > **Note:** The parameters of the search method are mutually inclusive. This means that you can use the `query`, `start_letter` and `topic` parameters together (some what like search filters) to find the definition of terms that match all the parameters. For example, you can find the definition of terms starting with the letter 'p' and under the topic 'Drilling' as follows:
 
 ```python
@@ -108,6 +125,8 @@ The module contains two classes:
 
 The `GlossaryTermsFinder` class is used to find the definition of terms in the Schlumberger Petroleum Glossary using Selenium.
 
+>**IMPORTANT INFO: It is advisable to use a topic that is available on the glossary website. If topic is not available it uses the nearest match for topics available on the slb glossary website. If no match is found, no result is returned. To get an idea of the available topics check the properties `available_topics` or `available_topics_list`. Also `topic` as used in all case scenarios is the same as `Discipline` on the website. Also the valid start letters are letters A to U for now.**
+
 #### Instantiating the `GlossaryTermsFinder` class
 
 The `GlossaryTermsFinder` class can be instantiated as follows:
@@ -128,15 +147,24 @@ Here the `TermsFinder` class is instantiated with default instantiation paramete
 
   * `implicit_wait_time` - The time in seconds to wait for the element to be found. The default is based on Selenium's default implicit wait time.
 
+  * `explicit_wait_time` - The time in seconds to wait for certain conditions to be met. It is used by the `WebDriverWait` object of the class.
+
   * `open_browser_window` - A boolean value that determines whether to open a browser window or not. The default is `True`. If `False`, then the browser window is not opened and the search is done in the background.
 
-### Attributes
+### Attributes and Properties
 
 The `GlossaryTermsFinder` class has the following attributes:
 
 * `browser` - The browser used for the search. This is an instance of the `selenium.webdriver` class.
-* `implicit_wait_time` - The time in seconds to wait for the element to be found. This is an integer.
+* `implicit_wait_time` - The time in seconds to wait for the element to be found. This is a float.
+* `explicit_wait_time` - The time in seconds to wait for certain conditions to be met. This is a float. It is used by the `WebDriverWait` object of the class
 * `saver` - An instance of the `GlossaryTermsSaver` class. This is used to save the search results to a file. Read more about the `GlossaryTermsSaver` class [here](#the-glossarytermssaver-class).
+* `language` - The language of the glossary. This is a string. Can be either 'English' or 'Spanish' - "en" or "es" respectively.
+* `base_search_url` - The base URL for the search. This is a string.
+* `glossary_size` - The number of terms in the glossary. This is an integer.
+* `available_topics` - The topics available on the glossary website. This is a dictionary with the topic name as the key and the number of terms under the topic as the value.
+* `available_topics_list` - A list of the topics available on the glossary website. This is a list of strings.
+* `wait` - `WebDriverWait` object used to wait for certain conditions to be met. This is an instance of the `selenium.webdriver.support.ui.WebDriverWait` class.
 
 ### Methods
 
@@ -235,6 +263,16 @@ The `GlossaryTermsFinder` class has the following methods:
 
   ```
 
+* `get_topic_match(self, topic: str)` - Returns the first topic that matches the given topic in `self.available_topics_list`. The method takes the following parameters:
+  * `topic` - The topic to get a match for. This is a string.
+
+  ```python
+  # Example
+  topic = finder.get_topic_match(topic='Well work') # Returns the first topic that matches the given topic
+  print(topic) # Prints the topic
+
+  ```
+
 ### The `GlossaryTermsSaver` class
 
 The `GlossaryTermsSaver` class is used to save the terms and their definitions to a file.
@@ -310,7 +348,7 @@ class MyGlossaryTermsSaver(GlossaryTermsSaver):
 
 # Now you save the terms to a file with the extension <ext>
 saver = MyGlossaryTermsSaver()
-saver.save_as_<ext>(topic="Well completion", terms=[('porosity', 'The percentage of the total volume of a rock or sediment that consists of pore space.'), ('permeability', 'The capacity of a porous rock, sediment, or soil to permit the flow of fluids through its pore spaces.')], filename='glossary_terms.<ext>')
+saver.save(topic="Well completion", terms=[('porosity', 'The percentage of the total volume of a rock or sediment that consists of pore space.'), ('permeability', 'The capacity of a porous rock, sediment, or soil to permit the flow of fluids through its pore spaces.')], filename='glossary_terms.<ext>')
 
 ```
 

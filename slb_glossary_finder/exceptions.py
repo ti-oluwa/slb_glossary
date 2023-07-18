@@ -1,4 +1,4 @@
-"""Module exceptions"""
+"""#### Module exceptions"""
 
 class NetworkError(ConnectionError):
     """
