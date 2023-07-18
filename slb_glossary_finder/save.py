@@ -1,4 +1,4 @@
-"""Contains class for saving glossary terms to a file"""
+"""#### Contains class for saving glossary terms to a file"""
 
 import openpyxl
 import csv
@@ -8,7 +8,7 @@ from typing import List, Tuple
 
 class GlossaryTermsSaver:
     """
-    A class that saves glossary terms to a file
+    ### A class that saves glossary terms to a file
 
     :attr supported_file_extensions: A list of file extensions that the class supports saving to
     by default the class supports saving to xlsx, csv, json and txt files.
