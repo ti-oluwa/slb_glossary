@@ -14,8 +14,3 @@ class BrowserNotInstalled(BrowserException):
     """
     Exception raised when the browser selected is not installed on the machine
     """
-
-class BrowserNotSupported(BrowserException):
-    """
-    Exception raised when the browser selected is not supported by selenium
-    """

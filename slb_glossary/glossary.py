@@ -7,15 +7,31 @@ import sys
 import functools
 from difflib import get_close_matches
 from urllib.parse import quote
+from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.wpewebkit.webdriver import WebDriver
-from selenium.common.exceptions import WebDriverException, NoSuchElementException
+from selenium.common.exceptions import WebDriverException, NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.safari.options import Options as SafariOptions
+import enum
+from dataclasses import dataclass, astuple, asdict
 
-from .saver import GlossaryTermsSaver
-from .exceptions import NetworkError, BrowserException, BrowserNotInstalled, BrowserNotSupported
+from .exceptions import NetworkError, BrowserException, BrowserNotInstalled
 
 
-ALLOWED_BROWSERS = webdriver.__all__
+
+class Browser(enum.Enum):
+    """Supported browsers for the glossary search"""
+    CHROME = "Chrome"
+    EDGE = "Edge"
+    FIREFOX = "Firefox"
+    CHROMIUM_EDGE = "Chromium Edge"
+    SAFARI = "Safari"
+
+
+class Language(enum.Enum):
+    """Available languages for the glossary search"""
+    ENGLISH = "en"
+    SPANISH = "es"
+
 
 def get_glossary_base_url(lang_code: str="en") -> str: 
     """
@@ -28,45 +44,67 @@ def get_glossary_base_url(lang_code: str="en") -> str:
 
 
 
-class SLBGlossary:
+@dataclass(slots=True, frozen=True, order=True, eq=True, repr=True)
+class SearchResult:
+    """Holds the search result of a term in the glossary"""
+    term: str
+    """The term found in the glossary"""
+    definition: Optional[str]
+    """The definition of the term found in the glossary"""
+    topic: Optional[str]
+    """The topic the term is related to or the topic under which the definition was found"""
+
+    def astuple(self) -> Tuple[str, Optional[str], Optional[str]]:
+        """Return the search result as a tuple"""
+        return astuple(self)
+    
+    def asdict(self) -> Dict[str, Union[str, None]]:
+        """Return the search result as a dictionary"""
+        return asdict(self)
+
+
+
+class Glossary:
     """
     Search the SLB glossary programmatically using Selenium. 
     
     For optimum performance, use Chrome browser and make sure you have a fast internet connection.
 
-    NOTE: Speed of execution is dependent on your internet connection speed. If your internet connection is slow,
-    you may want to increase the implicit_wait_time and explicit_wait_time attributes.
+    NOTE: Speed of execution is dependent on your internet connection. If your internet connection is slow,
+    you may want to increase the value of the implicit_wait_time attribute.
     """
     implicit_wait_time = 3.0
     no_of_terms_per_tab = 12
-    saver = GlossaryTermsSaver()
 
     def __init__(
         self, 
-        browser: str ='Chrome', 
+        browser: Browser = Browser.CHROME, 
         *,
-        open_browser_window: bool = False,
+        open_browser: bool = False,
         page_load_timeout: Optional[int] = None,
         implicit_wait_time: Optional[Union[float, int]] = None,
-        language: str = "en"
+        language: Language = Language.ENGLISH
     ) -> None:
         """
         Initialize the glossary
 
-        NOTE: Speed of execution is dependent on your internet connection speed
+        Speed of execution is largely dependent on your internet connection!
 
         :param browser: The browser to use. Must be one of chrome, firefox, chromium edge, edge or safari.
         The browser selected should be one you have installed on your machine and must be supported by selenium
         :param page_load_timeout: The number of seconds to wait for a page to load before throwing an error
         :param implicit_wait_time: The number of seconds to wait for an element to be found before throwing an error
-        :param open_browser_window: Whether to open the browser window or not. Defaults to False.
+        :param open_browser: Whether to open the browser window or not. Defaults to False.
         Do not close the browser window while code is executing else code execution stops.
-        :param language: The language to use in finding the terms. Defaults to 'en' for English. Other supported language is Spanish - 'es'
+        :param language: The language to use for the glossary search. Defaults to English
         """ 
+        if not isinstance(browser, Browser):
+            raise TypeError('browser must be an instance of `Browser` Enum')
+
         self.language = language
         self._initialize_browser(
             browser=browser, 
-            open_browser_window=open_browser_window,
+            open_browser=open_browser,
             page_load_timeout=page_load_timeout,
             implicit_wait_time=implicit_wait_time,
         )
@@ -83,36 +121,38 @@ class SLBGlossary:
     @functools.cached_property
     def base_url(self) -> str:
         """Base url for searching for terms in the glossary"""
-        return get_glossary_base_url(self.language)
+        return get_glossary_base_url(self.language.value)
+    
+    @functools.cached_property
+    def saver(self):
+        """The saver object for saving search results to a file"""
+        from .saver import Saver
+        return Saver()
         
 
     def _initialize_browser(
         self, 
-        browser: str, 
+        browser: Browser, 
         *, 
-        open_browser_window: bool = False,
+        open_browser: bool = False,
         page_load_timeout: Optional[int] = None,
         implicit_wait_time: Optional[Union[float, int]] = None,
     ) -> None:
         """
         Initialize the browser
 
-        :param browser: The browser to use. Must be one of chrome, firefox, chromium edge, edge, safari, etc.
+        :param browser: The browser to use. Must be one of chrome, firefox, chromium edge, edge or safari.
         The browser selected should be one you have installed on your machine and must be supported by selenium
         :param page_load_timeout: The number of seconds to wait for a page to load before throwing an error
         :param implicit_wait_time: The number of seconds to wait for an element to be found before throwing an error
-        :param open_browser_window: Whether to open the browser window or not. Defaults to False. 
+        :param open_browser: Whether to open the browser window or not. Defaults to False. 
         Do not close the browser window while code is executing else code execution stops.
         """
-        browser = browser.title().replace(' ', '')
-        if browser not in ALLOWED_BROWSERS:
-            raise BrowserNotSupported(f'{browser.title()} is not supported by selenium')
-
-        options = self._get_headless_options(browser) if open_browser_window is False else None
+        options = self._get_headless_options(browser) if open_browser is False else None
         try:
-            self.browser: WebDriver = getattr(webdriver, browser)(options=options)
+            self.browser: WebDriver = getattr(webdriver, browser.value.replace(" ", ""))(options=options)
         except AttributeError:
-            raise BrowserNotInstalled(f'{browser.title()} is not installed on your machine')
+            raise BrowserNotInstalled(f'{browser.value} is not installed on your machine')
 
         if page_load_timeout:
             self.browser.set_page_load_timeout(page_load_timeout)
@@ -120,32 +160,32 @@ class SLBGlossary:
         return None
 
 
-    def _get_headless_options(self, browser: str) -> Union[webdriver.ChromeOptions, webdriver.FirefoxOptions, webdriver.EdgeOptions, SafariOptions, None]:
+    def _get_headless_options(self, browser: Browser) -> Union[webdriver.ChromeOptions, webdriver.FirefoxOptions, webdriver.EdgeOptions, SafariOptions, None]:
         """
         Get the browser options for the given browser
 
-        :param browser: The browser to use. Must be one of chrome, firefox, chromium edge, edge, safari, etc.
+        :param browser: The browser to get the options for
         :return: The browser options for the given browser in headless mode
         """
         options = None
         
-        if browser.lower() == 'chrome':
+        if browser.value.lower() == 'chrome':
             options = webdriver.ChromeOptions()
             options.add_argument('--headless')
             options.add_argument('--disable-gpu')
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
-        elif browser.lower() == 'firefox':
+        elif browser.value.lower() == 'firefox':
             options = webdriver.FirefoxOptions()
             options.headless = True
-        elif browser.lower() == 'edge':
+        elif browser.value.lower() == 'edge':
             options = webdriver.EdgeOptions()
             options.add_argument('--headless')
-        elif browser.lower() == 'chromiumedge':
+        elif browser.value.lower() == 'chromium edge':
             options = webdriver.EdgeOptions()
             options.use_chromium = True
             options.add_argument('--headless')
-        elif browser.lower() == 'safari':
+        elif browser.value.lower() == 'safari':
             options = SafariOptions()
             # Enable automatic handling of the WebDriver extension
             options.set_capability("safari:automaticInspection", True)
@@ -191,6 +231,64 @@ class SLBGlossary:
     def size(self) -> int:
         """Total number of terms in the glossary"""
         return self._size
+    
+
+    def _get_element_by_css_selector(self, 
+            css_selector: str,
+            *,  
+            root: Optional[WebElement] = None, 
+            max_retry: int = 3
+        ) -> WebElement:
+        """
+        Get the first element with the given css selector
+
+        :param css_selector: The css selector of the element to get
+        :param root: The root element to search from. Defaults to None
+        :param max_retry: The maximum number of times to retry getting the element. Defaults to 3
+        """
+        element = None
+        tries = 0
+        root = root or self.browser
+
+        while not element and tries < max_retry:
+            try:
+                element = root.find_element(by=By.CSS_SELECTOR, value=css_selector)
+            except (StaleElementReferenceException, NoSuchElementException) as exc:
+                time.sleep(1)
+                element = None
+                tries += 1
+                if tries == max_retry:
+                    raise exc
+        return element
+    
+
+    def _get_elements_by_css_selector(self, 
+            css_selector: str,
+            *,  
+            root: Optional[WebElement] = None, 
+            max_retry: int = 3
+        ) -> List[WebElement]:
+        """
+        Get the all elements with the given css selector
+
+        :param css_selector: The css selector of the elements to get
+        :param root: The root element to search from. Defaults to None
+        :param max_retry: The maximum number of times to retry getting the elements. Defaults to 3
+        """
+        elements = None
+        tries = 0
+        root = root or self.browser
+
+        while not elements and tries < max_retry:
+            try:
+                elements = root.find_elements(by=By.CSS_SELECTOR, value=css_selector)
+            except (StaleElementReferenceException, NoSuchElementException) as exc:
+                time.sleep(1)
+                elements = None
+                tries += 1
+                if tries == max_retry:
+                    raise exc
+        return elements
 
 
     def get_topics(self, get_size: bool = False) -> Union[Tuple[Dict, int], Dict]:
@@ -205,7 +303,7 @@ class SLBGlossary:
 
         while True:
             try:
-                facet_header = self.browser.find_element(by=By.CSS_SELECTOR, value='.CoveoFacet .coveo-facet-header')
+                facet_header = self._get_element_by_css_selector('.CoveoFacet .coveo-facet-header')
             except NoSuchElementException:
                 self.load(self.base_url)
                 continue
@@ -217,29 +315,29 @@ class SLBGlossary:
         if not facet_header or facet_header.text == '':
             return self.get_topics(get_size=get_size)
         
-        discipline_facet_expand_button = self.browser.find_element(by=By.CSS_SELECTOR, value='.CoveoFacet .coveo-facet-footer .coveo-facet-more')
+        discipline_facet_expand_button = self._get_element_by_css_selector('.CoveoFacet .coveo-facet-footer .coveo-facet-more')
         self.browser.execute_script("arguments[0].scrollIntoView({block: 'center'}); arguments[0].click();", discipline_facet_expand_button)
         time.sleep(1)
 
-        topic_elements = self.browser.find_elements(by=By.CSS_SELECTOR, value='#discipline-facet .coveo-facet-value')
+        topic_elements = self._get_elements_by_css_selector('#discipline-facet .coveo-facet-value')
         topics_dict = {}
         for element in topic_elements:
             try:
-                topic = element.find_element(by=By.CSS_SELECTOR, value=".coveo-facet-value-label .coveo-facet-value-caption").text
-                no_of_terms = int(element.find_element(by=By.CSS_SELECTOR, value=".coveo-facet-value-label .coveo-facet-value-count").text)
+                topic = self._get_element_by_css_selector(".coveo-facet-value-label .coveo-facet-value-caption", root=element).text
+                no_of_terms = int(self._get_element_by_css_selector(".coveo-facet-value-label .coveo-facet-value-count", root=element).text)
                 topics_dict[topic] = no_of_terms
             except NoSuchElementException:
                 pass
 
         if get_size is True:
-            size = int(self.browser.find_element(by=By.CSS_SELECTOR, value='.CoveoQuerySummary .coveo-highlight-total-count').text.replace(',', ''))
+            size = int(self._get_element_by_css_selector('.CoveoQuerySummary .coveo-highlight-total-count').text.replace(',', ''))
             return topics_dict, size
             
         return topics_dict
      
 
     @staticmethod
-    def get_pager_query(tab_number: int = 1, *, terms_per_tab: int = 12):
+    def get_pager_query(tab_number: int = 1, *, terms_per_tab: int = 12) -> str:
         """
         Get the query string for the pager/paginator that will be used to get the terms on the given tab
 
@@ -252,7 +350,7 @@ class SLBGlossary:
         return f'first={terms_per_tab * (tab_number - 1)}&'
 
 
-    def get_topic_match(self, topic: str):
+    def get_topic_match(self, topic: str) -> str:
         """
         Return an appropriate first match for the given topic in `self.topics_list`
 
@@ -284,7 +382,7 @@ class SLBGlossary:
         query: Optional[str] = None,  
         start_letter: Optional[str] = None,
         pager_query: Optional[str] = None
-    ):
+    ) -> str:
         """
         Returns the url to search the glossary based on the given parameters
 
@@ -320,7 +418,7 @@ class SLBGlossary:
         start_letter: Optional[str] = None, 
         count: Optional[int] = None, 
         **kwargs
-    ):
+    ) -> List[str]:
         """
         Returns a list containing the urls of the page containing the definition(s) 
         of each term found searching by the given filters.
@@ -350,7 +448,7 @@ class SLBGlossary:
         is_first_run: bool = urls != [] and retry_count is None
         
         if is_first_run:
-            old_result_text = self.browser.find_element(by=By.CSS_SELECTOR, value='.CoveoResult .CoveoResultLink').text
+            old_result_text = self._get_element_by_css_selector('.CoveoResult .CoveoResultLink').text
        
         url = self.get_search_url(
             topic=under_topic, 
@@ -364,13 +462,13 @@ class SLBGlossary:
             time.sleep(1)
             # If we're moving to a new tab, ensure page content as changed completely before proceeding to get new urls
             def results_have_changed() -> bool:
-                new_result_text = self.browser.find_element(by=By.CSS_SELECTOR, value='.CoveoResult .CoveoResultLink').text
+                new_result_text = self._get_element_by_css_selector('.CoveoResult .CoveoResultLink').text
                 return old_result_text != new_result_text
             
             while results_have_changed() is False:
                 time.sleep(1) 
 
-        results_header = self.browser.find_element(by=By.CLASS_NAME, value='coveo-results-header')
+        results_header = self._get_element_by_css_selector('.coveo-results-header')
         time.sleep(1)
         # if result header has content, results/page have been loaded else reload page
         if urls == [] and results_header.text == '':
@@ -383,7 +481,7 @@ class SLBGlossary:
             )
 
         try:
-            total_no_of_terms = int(self.browser.find_element(by=By.CSS_SELECTOR, value='.CoveoQuerySummary .coveo-highlight-total-count').text.replace(',', ''))
+            total_no_of_terms = int(self._get_element_by_css_selector('.CoveoQuerySummary .coveo-highlight-total-count').text.replace(',', ''))
         except ValueError:
             retry_count = kwargs.get('retry_count', 0)
             if retry_count <= 4:
@@ -398,7 +496,7 @@ class SLBGlossary:
             return urls
         
         kwargs.pop('retry_count', None) # remove retry_count from kwargs if it exists
-        found_terms = self.browser.find_elements(by=By.CSS_SELECTOR, value='.CoveoResult .CoveoResultLink')
+        found_terms = self._get_elements_by_css_selector('.CoveoResult .CoveoResultLink')
         max_no_of_tabs = math.ceil(total_no_of_terms / self.no_of_terms_per_tab)
         count = total_no_of_terms if count is None else count
         # Get term detail urls on tab
@@ -424,9 +522,9 @@ class SLBGlossary:
         return urls
 
 
-    def extract_definitions_from_url(self, url: str, *, under_topic: Optional[str] = None) -> List[Tuple[str, str]]:
+    def get_results_from_url(self, url: str, *, under_topic: Optional[str] = None) -> List[SearchResult]:
         """
-        Extract the definition(s) of a term from the given url
+        Extract the definition(s) of a term from the given url and creates a `slb_glossary.SearchResult` object for each definition
 
         :param url: The url containing the definitions
         :param under_topic: What topics should the definitions extracted be related to.
@@ -440,9 +538,9 @@ class SLBGlossary:
             under_topic = self.get_topic_match(under_topic)
         self.load(url)
         
-        term_name: str = self.browser.find_element(by=By.CSS_SELECTOR, value=".row .small-12 h1 strong").text
-        term_details = self.browser.find_elements(by=By.CSS_SELECTOR, value='.content-two-col__text')
-        definitions = []
+        term_name: str = self._get_element_by_css_selector(".row .small-12 h1 strong").text
+        term_details = self._get_elements_by_css_selector('.content-two-col__text')
+        results = []
 
         for detail in term_details:
             sub_details = detail.find_elements(by=By.CSS_SELECTOR, value='p')
@@ -450,17 +548,20 @@ class SLBGlossary:
             term_definition: str = sub_details[2].text if sub_details[1].text == "" else sub_details[1].text
 
             if under_topic and under_topic.lower() in term_definition_sub.lower():
-                definitions.append((term_name, term_definition))
-                return definitions
+                result = SearchResult(term_name, term_definition, under_topic)
+                results.append(result)
+                return results
             else:
-                definitions.append((term_name, f"Under {term_definition_sub.split('.')[-1].strip()} - {term_definition}"))
+                topic = term_definition_sub.split('.')[-1].strip().removesuffix(']').removeprefix('[')
+                result = SearchResult(term_name, term_definition, topic)
+                results.append(result)
 
-        if definitions == []:
-            definitions.append((term_name, ""))
-        return definitions
+        if results == []:
+            results.append(SearchResult(term_name, None, None))
+        return results
 
 
-    def get_terms_on(self, topic: str, max_results: Optional[int] = None) -> List[Tuple[str, str]]:
+    def get_terms_on(self, topic: str, max_results: Optional[int] = None) -> List[SearchResult]:
         """
         Returns the definitions of terms related to the given topic in the glossary
 
@@ -477,7 +578,7 @@ class SLBGlossary:
         If you want to get all the definitions of the terms regardless of topic, use `search(...)` instead.
         """
         term_urls = self.get_terms_urls(under_topic=topic, count=max_results)
-        return [ self.extract_definitions_from_url(term_url, under_topic=topic)[0] for term_url in term_urls ]
+        return [ self.get_results_from_url(term_url, under_topic=topic)[0] for term_url in term_urls ]
 
 
     def search(
@@ -487,7 +588,7 @@ class SLBGlossary:
         under_topic: Optional[str] = None, 
         start_letter: Optional[str] = None, 
         max_results: int = 3
-    ) -> List[str]:
+    ) -> List[SearchResult]:
         """
         Search the glossary for terms matching the given query and return their definitions
 
@@ -512,7 +613,10 @@ class SLBGlossary:
             start_letter=start_letter, 
             count=max_results
         )  
-        return [ result for url in result_urls for result in self.extract_definitions_from_url(url, under_topic=under_topic or "") ]
+        return [ 
+            result for url in result_urls 
+            for result in self.get_results_from_url(url, under_topic=under_topic or "")
+        ]
 
 
 
