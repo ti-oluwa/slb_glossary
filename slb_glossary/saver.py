@@ -1,32 +1,34 @@
-import openpyxl
+import os
 import csv
 import json
-from typing import List, Optional, Tuple
+from typing import List
+
+from .glossary import SearchResult
 
 
-class GlossaryTermsSaver:
+class Saver:
     """
     Saves term definitions from the glossary to a file based on the file extension.
 
     To add support for saving to a new file extension, create a subclass and add a new static method to the class with the name
     `save_as_<file_extension>`.
     The method should take in the following parameters:
-        - topic: The topic on which the terms are based
-        - results: The results to save
+        - results: A list of SearchResult to save
         - filename: The name of the file to save the results in. Can also be the path to the file
     The method should also return None
 
-    For example:
+    Default supported file extensions are xlsx, csv, json and txt.
+
+    For Example:
     ```python
-    class CustomSaver(GlossaryTermsSaver):
+    class CustomSaver(Saver):
         @staticmethod
-        def save_as_<file_ext>(topic: str, results: List[Tuple[str, str]], filename: Optional[str] = None):
-            filename = f'{topic.title()} Glossary.<file_extension>' if filename is None else filename
-            # Do something
+        def save_as_<file_ext>(results: List[SearchResult], filename: str):
+            # Save implementation
             return None
 
     saver = CustomSaver()
-    saver.save('topic', [('term', 'definition')], 'pathtofile/filename.<file_ext>')
+    saver.save([SearchResult, ...], 'pathtofile/filename.<file_ext>')
     ```
     """
     @property
@@ -38,111 +40,116 @@ class GlossaryTermsSaver:
         available_savers = [method for method in dir(self) if method.startswith('save_as_')]
         return [saver.split('_')[-1] for saver in available_savers]
 
-    def save(self, topic: str, results: List[Tuple[str, str]], filename: Optional[str] = None) -> bool:
+    def save(self, results: List[SearchResult], filename: str) -> None:
         """
         Save the given results to a file based on the file extension of the given filename
-        if no filename is given, the results will be saved to a text file with the name "<topic> Glossary.txt"
 
-        :param topic: The topic on which the results are based
         :param results: The results to save
         :param filename: The name of the file to save the results in. Can also be the path to the file
-        :return: True if the results were saved successfully, False otherwise
         :raises: NotImplementedError if the file extension of the given filename is not supported
         """
         file_extension = filename.split('.')[-1] if filename else 'txt'
         try:
-            getattr(self, f'save_as_{file_extension}')(topic, results, filename)
-            return True
+            getattr(self, f'save_as_{file_extension}')(results, filename)
         except AttributeError:
             raise NotImplementedError(
                 f'Cannot save to {file_extension} files. `save_as_{file_extension}` method not implemented'
             )
-        except Exception:
-            return False
     
 
     @staticmethod
-    def save_as_xlsx(topic: str, results: List[Tuple[str, str]], filename: Optional[str] = None) -> None:
+    def save_as_xlsx(results: List[SearchResult], filename: str) -> None:
         """
-        Save the given results as an excel file
+        Save the given results in an excel file.
 
-        :param topic: The topic on which the results are based
-        :param results: The results to save
+        You need to have openpyxl installed to save to xlsx files. Run `pip install openpyxl` to install it
+
+        :param results: List of SearchResult to save
         :param filename: The name of the file to save the results in. Can also be the path to the file
-        :return: None
         """
-        if filename and not filename.endswith('.xlsx'):
+        try:
+            import openpyxl
+        except ImportError:
+            raise ImportError(
+                'openpyxl is required to save to xlsx files. Run `pip install openpyxl` to install it'
+            )
+        
+        name, ext = os.path.splitext(filename)
+        if not ext.lower() == '.xlsx':
             raise ValueError('Invalid file name. File name must end with .xlsx')
+        
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = topic.title()
-        ws.append(['Term', 'Definition'])
+        ws.title = name.title()
+        ws.append(['Term', 'Definition', 'Topic']) # Add a header row
         for result in results:
-            ws.append(result)
-        filename = f'{topic.title()} Glossary.xlsx' if filename is None else filename
+            ws.append(result.astuple())
+        
         wb.save(filename)
         wb.close()
         return None
     
 
     @staticmethod
-    def save_as_csv(topic: str, results: List[Tuple[str, str]], filename: Optional[str] = None) -> None:
+    def save_as_csv(results: List[SearchResult], filename: str) -> None:
         """
         Save the given results as a csv file
 
-        :param topic: The topic on which the results are based
-        :param results: The results to save
+        :param results: A list of SearchResult to save
         :param filename: The name of the file to save the results in. Can also be the path to the file
-        :return: None
         """
-        if filename and not filename.endswith('.csv'):
+        name, ext = os.path.splitext(filename)
+        if not ext.lower() == '.csv':
             raise ValueError('Invalid file name. File name must end with .csv')
-        filename = f'{topic.title()} Glossary.csv' if filename is None else filename
-        with open(filename, 'w', newline='') as f:
-            writer = csv.writer(f, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            writer.writerow(['Term', 'Definition'])
-            f.write('\n')
+        
+        with open(filename, 'w', newline='') as file:
+            writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            writer.writerow([name.title()]) # Add a title row
+            writer.writerow(['Term', 'Definition', 'Topic']) # Add a header row
+            file.write('\n')
             for result in results:
-                writer.writerow(result)
-                f.write('\n')
+                writer.writerow(result.astuple())
+                file.write('\n')
         return None
     
 
     @staticmethod
-    def save_as_json(topic: str, results: List[Tuple[str, str]], filename: Optional[str] = None):
+    def save_as_json(results: List[SearchResult], filename: str) -> None:
         """
         Save the given results as a json file
 
-        :param topic: The topic on which the results are based
-        :param results: The results to save
+        :param results: A list of SearchResult to save
         :param filename: The name of the file to save the results in. Can also be the path to the file
-        :return: None
         """
-        if filename and not filename.endswith('.json'):
+        _, ext = os.path.splitext(filename)
+        if not ext.lower() == '.json':
             raise ValueError('Invalid file name. File name must end with .json')
-        filename = f'{topic.title()} Glossary.json' if filename is None else filename
-        with open (filename, 'w') as f:
-            d = {}
+        
+        with open (filename, 'w') as file:
+            _dict = {}
             for result in results:
-                d[result[0]] = result[1]
-            json.dump(d, f, indent=4)
+                result_dict = result.asdict()
+                _dict[result_dict.pop('term')] = result_dict
+            json.dump(_dict, file, indent=4)
         return None
     
 
     @staticmethod
-    def save_as_txt(topic: str, results: List[Tuple[str, str]], filename: Optional[str] = None):
+    def save_as_txt(results: List[SearchResult], filename: str) -> None:
         """
         Save the given results as a text file
 
-        :param topic: The topic on which the results are based
-        :param results: The results to save
+        :param results: A list of SearchResult to save
         :param filename: The name of the file to save the results in. Can also be the path to the file
-        :return: None
         """
-        if filename and not filename.endswith('.txt'):
+        name, ext = os.path.splitext(filename)
+        if not ext.lower() == '.txt':
             raise ValueError('Invalid file name. File name must end with .txt')
-        filename = f"{topic.title()} Glossary.txt" if filename is None else filename
-        with open(filename, 'w') as f:
+        
+        with open(filename, 'w') as file:
+            file.write(f'{name.title()}\n\n') # Add a title
             for i, result in enumerate(results, start=1):
-                f.write(f"({i}). {result[0].title()}:\n{result[1]}\n\n")
+                file.write(
+                    f"({i}). {result.term} ({result.topic or ""}):\n{result.definition or ""}\n\n"
+                )
         return None

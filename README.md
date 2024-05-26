@@ -17,6 +17,35 @@ pip install slb-glossary
 * [seleneium](https://pypi.org/project/selenium/)
 * [openpyxl](https://pypi.org/project/openpyxl/)
 
+## Quick Start
+
+```python
+from slb_glossary import Glossary, Browser
+
+# Create a glossary object
+glossary = Glossary(Browser.CHROME, open_browser=True)
+
+# Search for a term
+results = glossary.search("porosity")
+
+# Print the results
+for result in results:
+    print(result.asdict())
+```
+
+<!-- ## Usage
+
+### Searching for a term
+
+To begin, create a `Glossary` object and call the `search` method with the term you want to search for.
+
+```python
+from slb_glossary import Glossary
+
+glossary = Glossary()
+results = glossary.search("porosity")
+``` -->
+
 ## Contributing
 
 Contributions are welcome. Please fork the repository and submit a pull request.
