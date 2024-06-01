@@ -23,7 +23,7 @@ pip install slb-glossary
 from slb_glossary import Glossary, Browser
 
 # Create a glossary object
-glossary = Glossary(Browser.CHROME, open_browser=True)
+glossary = Glossary(Browser.CHROME)
 
 # Search for a term
 results = glossary.search("porosity")
