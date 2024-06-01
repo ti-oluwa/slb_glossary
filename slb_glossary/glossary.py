@@ -25,7 +25,6 @@ class Browser(enum.Enum):
     CHROME = "Chrome"
     EDGE = "Edge"
     FIREFOX = "Firefox"
-    PHANTOM_JS = "PhantomJS"
     CHROMIUM_EDGE = "Chromium Edge"
     SAFARI = "Safari"
 
@@ -83,7 +82,7 @@ class Glossary:
         self, 
         browser: Browser = Browser.CHROME, 
         *,
-        open_browser: bool = True,
+        open_browser: bool = False,
         page_load_timeout: Optional[int] = None,
         implicit_wait_time: Optional[Union[float, int]] = None,
         language: Language = Language.ENGLISH
@@ -97,7 +96,8 @@ class Glossary:
         The browser selected should be one you have installed on your machine and must be supported by selenium
         :param page_load_timeout: The number of seconds to wait for a page to load before throwing an error
         :param implicit_wait_time: The number of seconds to wait for an element to be found before throwing an error
-        :param open_browser: Whether to open the browser window or not. Defaults to False.
+        :param open_browser: Opens the browser window if set to True. Defaults to False. This is useful if you
+        want to see the browser window while the code is executing, probably for debugging purposes.
         Do not close the browser window while code is executing else code execution stops.
         :param language: The language to use for the glossary search. Defaults to English
         """ 
@@ -151,7 +151,11 @@ class Glossary:
         :param open_browser: Whether to open the browser window or not. Defaults to False. 
         Do not close the browser window while code is executing else code execution stops.
         """
-        options = self._get_headless_options(browser) if open_browser is False else None
+        options = self._get_browser_options(browser)
+        # Add headless options if open_browser is False
+        if options and not open_browser:
+            options = self._add_headless_options(browser, options)
+        
         try:
             webdriver_classname = browser.value.replace(" ", "")
             browser_service = _get_browser_service(browser)
@@ -165,33 +169,96 @@ class Glossary:
         return None
 
 
-    def _get_headless_options(self, browser: Browser) -> Union[webdriver.ChromeOptions, webdriver.FirefoxOptions, webdriver.EdgeOptions, SafariOptions, None]:
+    def _get_browser_options(self, browser: Browser) -> webdriver.WPEWebKitOptions | None:
         """
-        Get the browser options for the given browser
+        Get necessary options for the given browser. These options are essential to enhance speed and efficiency
 
         :param browser: The browser to get the options for
-        :return: The browser options for the given browser in headless mode
+        :return: The browser options for the given browser
         """
         options = None
+        browser = browser.value.lower()
         
-        if browser.value.lower() == 'chrome':
+        if browser == 'chrome':
             options = webdriver.ChromeOptions()
-            options.add_argument('--headless')
+            # Essential options to enhance speed and efficiency
+            options.add_argument('--no-sandbox')  # Bypass OS security model
+            options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
+            options.add_argument('--disable-extensions')  # Disable all extensions
+            options.add_argument('--disable-infobars')  # Disable infobars
+            options.add_argument('--disable-notifications')  # Disable notifications
+            options.add_argument('--disable-popup-blocking')  # Disable popup blocking
+            options.add_argument('--disable-background-networking')  # Disable background networking
+            options.add_argument('--disable-sync')  # Disable syncing to Google account
+            options.add_argument('--disable-translate')  # Disable translation
+            options.add_argument('--no-first-run')  # Skip first run wizards
+            options.add_argument('--ignore-certificate-errors')  # Ignore certificate errors
+            # Disable image loading
+            prefs = {"profile.managed_default_content_settings.images": 2}
+            options.add_experimental_option("prefs", prefs)
+
+        elif browser == 'firefox':
+            options = options or webdriver.FirefoxOptions()
+            # Set preferences to enhance speed and efficiency
+            options.set_preference('dom.webnotifications.enabled', False)  # Disable notifications
+            options.set_preference('geo.enabled', False)  # Disable geolocation
+            options.set_preference('media.navigator.enabled', False)  # Disable camera access
+            options.set_preference('media.peerconnection.enabled', False)  # Disable WebRTC
+            options.set_preference('network.cookie.cookieBehavior', 2)  # Block all cookies
+            options.set_preference('network.dns.disablePrefetch', True)  # Disable DNS prefetching
+            # Disable image loading
+            options.set_preference('permissions.default.image', 2)
+
+        elif browser in ['edge', 'chromium edge']:
+            options = webdriver.EdgeOptions()
+            # Essential options to enhance speed and efficiency
+            options.add_argument('--no-sandbox')  # Bypass OS security model
+            options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
+            options.add_argument('--disable-extensions')  # Disable all extensions
+            options.add_argument('--disable-infobars')  # Disable infobars
+            options.add_argument('--disable-notifications')  # Disable notifications
+            options.add_argument('--disable-popup-blocking')  # Disable popup blocking
+            options.add_argument('--disable-background-networking')  # Disable background networking
+            options.add_argument('--disable-sync')  # Disable syncing to Microsoft account
+            options.add_argument('--disable-translate')  # Disable translation
+            options.add_argument('--no-first-run')  # Skip first run wizards
+            options.add_argument('--ignore-certificate-errors')  # Ignore certificate errors
+            # Disable image loading
+            prefs = {"profile.managed_default_content_settings.images": 2}
+            options.add_experimental_option("prefs", prefs)
+
+        elif browser == 'safari':
+            options = SafariOptions()
+            # Safari has limited options compared to other browsers
+            options.set_capability("safari:automaticInspection", True)
+            options.set_capability("safari:automaticProfiling", True)
+            # Note: Disabling images and some other settings is not straightforward in Safari
+        return options
+    
+
+    def _add_headless_options(self, browser: Browser, options: webdriver.WPEWebKitOptions) -> webdriver.WPEWebKitOptions:
+        """
+        Add headless options to the browser options
+
+        :param browser: The browser to add the headless options to
+        :param options: The browser options to add the headless options to
+        :return: The browser options with the headless options added
+        """
+        browser = browser.value.lower()
+        
+        if browser == 'chrome':
+            options.add_argument('--headless=new')
             options.add_argument('--disable-gpu')
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
-        elif browser.value.lower() == 'firefox':
-            options = webdriver.FirefoxOptions()
-            options.headless = True
-        elif browser.value.lower() == 'edge':
-            options = webdriver.EdgeOptions()
+        elif browser == 'firefox':
             options.add_argument('--headless')
-        elif browser.value.lower() == 'chromium edge':
-            options = webdriver.EdgeOptions()
+        elif browser == 'edge':
+            options.add_argument('--headless=new')
+        elif browser == 'chromium edge':
             options.use_chromium = True
-            options.add_argument('--headless')
-        elif browser.value.lower() == 'safari':
-            options = SafariOptions()
+            options.add_argument('--headless=new')
+        elif browser == 'safari':
             # Enable automatic handling of the WebDriver extension
             options.set_capability("safari:automaticInspection", True)
             options.set_capability("safari:automaticProfiling", True)
@@ -199,7 +266,7 @@ class Glossary:
             options.add_argument("-background")
         return options
 
-    
+
     def load(self, url) -> None:
         """
         Load the given url in the browser
@@ -643,10 +710,6 @@ __INSTALLED_DRIVERS__ = {
         "driver_version": None,
     },
     Browser.SAFARI: {
-        "driver_path": None,
-        "driver_version": None,
-    },
-    Browser.PHANTOM_JS: {
         "driver_path": None,
         "driver_version": None,
     }
