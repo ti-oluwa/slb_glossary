@@ -4,11 +4,13 @@ from selenium.webdriver.common.by import By
 import math
 import time
 import sys
+import os
 import functools
 from difflib import get_close_matches
 from urllib.parse import quote
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.wpewebkit.webdriver import WebDriver
+from selenium.webdriver.wpewebkit.service import Service
 from selenium.common.exceptions import WebDriverException, NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.safari.options import Options as SafariOptions
 import enum
@@ -23,6 +25,7 @@ class Browser(enum.Enum):
     CHROME = "Chrome"
     EDGE = "Edge"
     FIREFOX = "Firefox"
+    PHANTOM_JS = "PhantomJS"
     CHROMIUM_EDGE = "Chromium Edge"
     SAFARI = "Safari"
 
@@ -80,7 +83,7 @@ class Glossary:
         self, 
         browser: Browser = Browser.CHROME, 
         *,
-        open_browser: bool = False,
+        open_browser: bool = True,
         page_load_timeout: Optional[int] = None,
         implicit_wait_time: Optional[Union[float, int]] = None,
         language: Language = Language.ENGLISH
@@ -150,7 +153,9 @@ class Glossary:
         """
         options = self._get_headless_options(browser) if open_browser is False else None
         try:
-            self.browser: WebDriver = getattr(webdriver, browser.value.replace(" ", ""))(options=options)
+            webdriver_classname = browser.value.replace(" ", "")
+            browser_service = _get_browser_service(browser)
+            self.browser: WebDriver = getattr(webdriver, webdriver_classname)(options=options, service=browser_service)
         except AttributeError:
             raise BrowserNotInstalled(f'{browser.value} is not installed on your machine')
 
@@ -620,3 +625,72 @@ class Glossary:
 
 
 
+__INSTALLED_DRIVERS__ = {
+    Browser.CHROME: {
+        "driver_path": None,
+        "driver_version": None,
+    },
+    Browser.FIREFOX: {
+        "driver_path": None,
+        "driver_version": None,
+    },
+    Browser.EDGE: {
+        "driver_path": None,
+        "driver_version": None,
+    },
+    Browser.CHROMIUM_EDGE: {
+        "driver_path": None,
+        "driver_version": None,
+    },
+    Browser.SAFARI: {
+        "driver_path": None,
+        "driver_version": None,
+    },
+    Browser.PHANTOM_JS: {
+        "driver_path": None,
+        "driver_version": None,
+    }
+}
+
+
+def install_browser(browser: Browser, driver_path: str, driver_version: Optional[str] = None):
+    """
+    Install the browser driver for Selenium. This affords you an interface
+    to specify the path to your browser installation, incase
+    your program does not run due to the package not finding a suitable browser installation.
+
+    :param browser: The browser to install the driver for.
+    :param driver_path: The path to the driver executable.
+    :param driver_version: The version of the driver executable.
+    """
+    browser = Browser(browser)
+    if browser not in __INSTALLED_DRIVERS__:
+        raise ValueError(f"Browser installation for {browser.value} is not supported.")
+    
+
+    is_valid_path = os.path.exists(driver_path)
+    if not is_valid_path:
+        raise FileNotFoundError(f"Driver path '{driver_path}' does not exist.")
+    
+    __INSTALLED_DRIVERS__[browser]["driver_path"] = driver_path
+    __INSTALLED_DRIVERS__[browser]["driver_version"] = driver_version
+    sys.stdout.write(f"Driver installed for {browser.value} browser.\n")
+    return None
+
+    
+
+def _get_browser_service(browser: Browser) -> Service | None:
+    """
+    Get the browser service for the given browser, if
+    the browser is installed.
+
+    :param browser: The browser to get the service for
+    :return: The browser service for the given browser
+    """
+    if browser not in __INSTALLED_DRIVERS__:
+        return None
+    
+    driver_path = __INSTALLED_DRIVERS__[browser]["driver_path"]
+    if not driver_path:
+        return None
+    return Service(driver_path)
