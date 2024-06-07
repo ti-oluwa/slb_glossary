@@ -7,7 +7,7 @@ class NetworkError(ConnectionError):
 
 class BrowserException(Exception):
     """
-    Exception raised when there is an error within the browser
+    Exception raised when there is an error related to browsers
     """
 
 class BrowserNotInstalled(BrowserException):
