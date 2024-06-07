@@ -1,6 +1,7 @@
 from typing import Tuple, List, Dict, Union, Optional
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.options import ArgOptions
 import math
 import time
 import sys
@@ -14,6 +15,7 @@ from selenium.webdriver.wpewebkit.service import Service
 from selenium.common.exceptions import WebDriverException, NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.safari.options import Options as SafariOptions
 import enum
+import atexit
 from dataclasses import dataclass, astuple, asdict
 
 from .exceptions import NetworkError, BrowserException, BrowserNotInstalled
@@ -53,6 +55,8 @@ class SearchResult:
     """The term found in the glossary"""
     definition: Optional[str]
     """The definition of the term found in the glossary"""
+    grammatical_label: Optional[str]
+    """Basically the part of speech of the term"""
     topic: Optional[str]
     """The topic the term is related to or the topic under which the definition was found"""
 
@@ -66,7 +70,7 @@ class SearchResult:
 
 
 
-class Glossary:
+class Glossary(object):
     """
     Search the SLB glossary programmatically using Selenium. 
     
@@ -76,7 +80,17 @@ class Glossary:
     you may want to increase the value of the implicit_wait_time attribute.
     """
     implicit_wait_time = 3.0
+    """The implicit wait time for the Selenium driver"""
     no_of_terms_per_tab = 12
+    """
+    The expected number of terms in one term on the glossary page. This is largely subject to change,
+    and is dependent on the glossary website.
+    """
+    saver_class = None
+    """
+    Preferred search result saver class. Set this if you want override the default saver class
+    with a (modified) subclass.
+    """
 
     def __init__(
         self, 
@@ -111,14 +125,15 @@ class Glossary:
             page_load_timeout=page_load_timeout,
             implicit_wait_time=implicit_wait_time,
         )
-        sys.stdout.write(f"\n{self.__class__.__name__}: Getting available topics and glossary size...\n")
+        sys.stdout.write(f"\r{type(self).__name__}: Getting available topics and glossary size...\n")
         self._topics, self._size = self.get_topics(get_size=True)
-        sys.stdout.write(f"\n{self.__class__.__name__}: Available topics and glossary size gotten\n")
+        sys.stdout.write(f"\r{type(self).__name__}: Available topics and glossary size gotten\n")
         # Switch to a new tab after instantiation process is completed
         self.browser.switch_to.new_window('tab')
         self.browser.switch_to.window(self.browser.window_handles[0])
         self.browser.close()
         self.browser.switch_to.window(self.browser.window_handles[-1])
+        atexit.register(self.browser.close)
 
     
     @functools.cached_property
@@ -129,8 +144,10 @@ class Glossary:
     @functools.cached_property
     def saver(self):
         """The saver object for saving search results to a file"""
-        from .saver import Saver
-        return Saver()
+        from .saver import Saver, _Saver
+
+        saver_class: type[_Saver] = type(self).saver_class or Saver
+        return saver_class()
         
 
     def _initialize_browser(
@@ -169,7 +186,7 @@ class Glossary:
         return None
 
 
-    def _get_browser_options(self, browser: Browser) -> webdriver.WPEWebKitOptions | None:
+    def _get_browser_options(self, browser: Browser) -> ArgOptions | None:
         """
         Get necessary options for the given browser. These options are essential to enhance speed and efficiency
 
@@ -177,9 +194,9 @@ class Glossary:
         :return: The browser options for the given browser
         """
         options = None
-        browser = browser.value.lower()
+        browser_name = browser.value.lower()
         
-        if browser == 'chrome':
+        if browser_name == 'chrome':
             options = webdriver.ChromeOptions()
             # Essential options to enhance speed and efficiency
             options.add_argument('--no-sandbox')  # Bypass OS security model
@@ -197,7 +214,7 @@ class Glossary:
             prefs = {"profile.managed_default_content_settings.images": 2}
             options.add_experimental_option("prefs", prefs)
 
-        elif browser == 'firefox':
+        elif browser_name == 'firefox':
             options = options or webdriver.FirefoxOptions()
             # Set preferences to enhance speed and efficiency
             options.set_preference('dom.webnotifications.enabled', False)  # Disable notifications
@@ -209,7 +226,7 @@ class Glossary:
             # Disable image loading
             options.set_preference('permissions.default.image', 2)
 
-        elif browser in ['edge', 'chromium edge']:
+        elif browser_name in ['edge', 'chromium edge']:
             options = webdriver.EdgeOptions()
             # Essential options to enhance speed and efficiency
             options.add_argument('--no-sandbox')  # Bypass OS security model
@@ -227,16 +244,16 @@ class Glossary:
             prefs = {"profile.managed_default_content_settings.images": 2}
             options.add_experimental_option("prefs", prefs)
 
-        elif browser == 'safari':
+        elif browser_name == 'safari':
             options = SafariOptions()
             # Safari has limited options compared to other browsers
             options.set_capability("safari:automaticInspection", True)
             options.set_capability("safari:automaticProfiling", True)
-            # Note: Disabling images and some other settings is not straightforward in Safari
+            # Disabling images and some other settings is not straightforward in Safari
         return options
     
 
-    def _add_headless_options(self, browser: Browser, options: webdriver.WPEWebKitOptions) -> webdriver.WPEWebKitOptions:
+    def _add_headless_options(self, browser: Browser, options: ArgOptions) -> ArgOptions:
         """
         Add headless options to the browser options
 
@@ -244,21 +261,21 @@ class Glossary:
         :param options: The browser options to add the headless options to
         :return: The browser options with the headless options added
         """
-        browser = browser.value.lower()
+        browser_name = browser.value.lower()
         
-        if browser == 'chrome':
+        if browser_name == 'chrome':
             options.add_argument('--headless=new')
             options.add_argument('--disable-gpu')
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
-        elif browser == 'firefox':
+        elif browser_name == 'firefox':
             options.add_argument('--headless')
-        elif browser == 'edge':
+        elif browser_name == 'edge':
             options.add_argument('--headless=new')
-        elif browser == 'chromium edge':
+        elif browser_name == 'chromium edge':
             options.use_chromium = True
             options.add_argument('--headless=new')
-        elif browser == 'safari':
+        elif browser_name == 'safari':
             # Enable automatic handling of the WebDriver extension
             options.set_capability("safari:automaticInspection", True)
             options.set_capability("safari:automaticProfiling", True)
@@ -308,9 +325,9 @@ class Glossary:
     def _get_element_by_css_selector(self, 
             css_selector: str,
             *,  
-            root: Optional[WebElement] = None, 
+            root: Optional[Union[WebDriver, WebElement]] = None, 
             max_retry: int = 3
-        ) -> WebElement:
+        ) -> WebElement | None:
         """
         Get the first element with the given css selector
 
@@ -318,28 +335,25 @@ class Glossary:
         :param root: The root element to search from. Defaults to None
         :param max_retry: The maximum number of times to retry getting the element. Defaults to 3
         """
-        element = None
         tries = 0
         root = root or self.browser
 
-        while not element and tries < max_retry:
+        while tries < max_retry:
             try:
-                element = root.find_element(by=By.CSS_SELECTOR, value=css_selector)
+                return root.find_element(by=By.CSS_SELECTOR, value=css_selector)
             except (StaleElementReferenceException, NoSuchElementException) as exc:
                 time.sleep(1)
-                element = None
                 tries += 1
                 if tries == max_retry:
                     raise exc
-        return element
-    
+
 
     def _get_elements_by_css_selector(self, 
             css_selector: str,
             *,  
-            root: Optional[WebElement] = None, 
+            root: Optional[Union[WebDriver, WebElement]] = None, 
             max_retry: int = 3
-        ) -> List[WebElement]:
+        ) -> List[WebElement] | None:
         """
         Get the all elements with the given css selector
 
@@ -347,21 +361,18 @@ class Glossary:
         :param root: The root element to search from. Defaults to None
         :param max_retry: The maximum number of times to retry getting the elements. Defaults to 3
         """
-        elements = None
         tries = 0
         root = root or self.browser
 
-        while not elements and tries < max_retry:
+        while tries < max_retry:
             try:
-                elements = root.find_elements(by=By.CSS_SELECTOR, value=css_selector)
+                return root.find_elements(by=By.CSS_SELECTOR, value=css_selector)
             except (StaleElementReferenceException, NoSuchElementException) as exc:
                 time.sleep(1)
-                elements = None
                 tries += 1
                 if tries == max_retry:
                     raise exc
-        return elements
-
+                
 
     def get_topics(self, get_size: bool = False) -> Union[Tuple[Dict, int], Dict]:
         """
@@ -393,16 +404,28 @@ class Glossary:
 
         topic_elements = self._get_elements_by_css_selector('#discipline-facet .coveo-facet-value')
         topics_dict = {}
+        if not topic_elements:
+            return topics_dict
+        
         for element in topic_elements:
             try:
-                topic = self._get_element_by_css_selector(".coveo-facet-value-label .coveo-facet-value-caption", root=element).text
-                no_of_terms = int(self._get_element_by_css_selector(".coveo-facet-value-label .coveo-facet-value-count", root=element).text)
+                topic_element = self._get_element_by_css_selector(".coveo-facet-value-label .coveo-facet-value-caption", root=element)
+                terms_count_element = self._get_element_by_css_selector(".coveo-facet-value-label .coveo-facet-value-count", root=element)
+                if not (topic_element and terms_count_element):
+                    continue
+                
+                topic = topic_element.text
+                no_of_terms = int(terms_count_element.text)
                 topics_dict[topic] = no_of_terms
             except NoSuchElementException:
                 pass
 
-        if get_size is True:
-            size = int(self._get_element_by_css_selector('.CoveoQuerySummary .coveo-highlight-total-count').text.replace(',', ''))
+        if get_size:
+            glossary_size_element = self._get_element_by_css_selector('.CoveoQuerySummary .coveo-highlight-total-count')
+            if not glossary_size_element:
+                return topics_dict, 0
+            
+            size = int(glossary_size_element.text.replace(',', ''))
             return topics_dict, size
             
         return topics_dict
@@ -439,7 +462,7 @@ class Glossary:
             if topic not in topic_list:
                 matches = get_close_matches(topic, topic_list, n=1, cutoff=0.5)
                 if not matches:
-                    sys.stdout.write(f"{self.__class__.__name__}: No match found for topic: {topic}")
+                    sys.stdout.write(f"{type(self).__name__}: No match found for topic: {topic}")
                     return ''
                 topics[index] = matches[0]
 
@@ -516,11 +539,14 @@ class Glossary:
 
         pager_query: str = self.get_pager_query(tab_number=kwargs.get('tab', 1))
         urls: List[str] = kwargs.get('urls', [])
-        retry_count: int | None = kwargs.get('retry_count', None)
+        retry_count = kwargs.get('retry_count', None)
         is_first_run: bool = urls != [] and retry_count is None
         
         if is_first_run:
-            old_result_text = self._get_element_by_css_selector('.CoveoResult .CoveoResultLink').text
+            result_text_element = self._get_element_by_css_selector('.CoveoResult .CoveoResultLink')
+            if not result_text_element:
+                return urls
+            old_result_text = result_text_element.text
        
         url = self.get_search_url(
             topic=under_topic, 
@@ -533,18 +559,23 @@ class Glossary:
         if is_first_run:
             time.sleep(1)
             # If we're moving to a new tab, ensure page content as changed completely before proceeding to get new urls
-            def results_have_changed() -> bool:
-                new_result_text = self._get_element_by_css_selector('.CoveoResult .CoveoResultLink').text
+            def _results_have_changed() -> bool:
+                new_result_text_element = self._get_element_by_css_selector('.CoveoResult .CoveoResultLink')
+                if not new_result_text_element:
+                    return False
+                new_result_text = new_result_text_element.text
                 return old_result_text != new_result_text
             
-            while results_have_changed() is False:
+            while _results_have_changed() is False:
                 time.sleep(1) 
 
         results_header = self._get_element_by_css_selector('.coveo-results-header')
+        if not results_header:
+            return urls
         time.sleep(1)
         # if result header has content, results/page have been loaded else reload page
         if urls == [] and results_header.text == '':
-            sys.stdout.write(f"\n{self.__class__.__name__}: Content not loaded yet. Reloading page...\n")
+            sys.stdout.write(f"\n{type(self).__name__}: Content not loaded yet. Reloading page...\n")
             return self.get_terms_urls(
                 query=query, 
                 under_topic=under_topic, 
@@ -553,9 +584,12 @@ class Glossary:
             )
 
         try:
-            total_no_of_terms = int(self._get_element_by_css_selector('.CoveoQuerySummary .coveo-highlight-total-count').text.replace(',', ''))
+            terms_count_element = self._get_element_by_css_selector('.CoveoQuerySummary .coveo-highlight-total-count')
+            if not terms_count_element:
+                return urls
+            total_no_of_terms = int(terms_count_element.text.replace(',', ''))
         except ValueError:
-            retry_count = kwargs.get('retry_count', 0)
+            retry_count: int = kwargs.get('retry_count', 0)
             if retry_count <= 4:
                 kwargs['retry_count'] = retry_count + 1
                 return self.get_terms_urls(
@@ -564,15 +598,25 @@ class Glossary:
                     start_letter=start_letter, 
                     count=count, **kwargs
                 )
-            sys.stdout.write(f"\n{self.__class__.__name__}: There seems to be no result on this page!\n")
+            sys.stdout.write(f"\n{type(self).__name__}: There seems to be no result on this page!\n")
             return urls
         
         kwargs.pop('retry_count', None) # remove retry_count from kwargs if it exists
-        found_terms = self._get_elements_by_css_selector('.CoveoResult .CoveoResultLink')
+        found_term_elements = self._get_elements_by_css_selector('.CoveoResult .CoveoResultLink')
+        if not found_term_elements:
+            return urls
         max_no_of_tabs = math.ceil(total_no_of_terms / self.no_of_terms_per_tab)
         count = total_no_of_terms if count is None else count
+
         # Get term detail urls on tab
-        found_urls = [ term.get_attribute('href') for term in found_terms ][:count]
+        found_urls: List[str] = []
+        for term_element in found_term_elements:
+            href = term_element.get_attribute('href')
+            if href:
+                found_urls.append(href)
+            if len(found_urls) >= count:
+                break
+        
         urls.extend(found_urls)
         count -= len(found_urls)
     
@@ -594,7 +638,7 @@ class Glossary:
         return urls
 
 
-    def get_results_from_url(self, url: str, *, under_topic: Optional[str] = None) -> List[SearchResult]:
+    def get_results_from_url(self, url: str, *, under_topic: Optional[str] = None) -> List[SearchResult] | None:
         """
         Extract the definition(s) of a term from the given url and creates a `slb_glossary.SearchResult` object for each definition
 
@@ -610,26 +654,32 @@ class Glossary:
             under_topic = self.get_topic_match(under_topic)
         self.load(url)
         
-        term_name: str = self._get_element_by_css_selector(".row .small-12 h1 strong").text
-        term_details = self._get_elements_by_css_selector('.content-two-col__text')
+        term_name_element = self._get_element_by_css_selector(".row .small-12 h1 strong")
+        term_detail_elements = self._get_elements_by_css_selector('.content-two-col__text')
+
+        if not (term_name_element and term_detail_elements):
+            return None
+        term_name = term_name_element.text
         results = []
 
-        for detail in term_details:
-            sub_details = detail.find_elements(by=By.CSS_SELECTOR, value='p')
-            term_definition_sub: str = sub_details[0].text
-            term_definition: str = sub_details[2].text if sub_details[1].text == "" else sub_details[1].text
+        for detail_element in term_detail_elements:
+            sub_detail_elements = detail_element.find_elements(by=By.CSS_SELECTOR, value='p')
+            term_definition_sub = sub_detail_elements[0].text
+            term_definition = sub_detail_elements[2].text if sub_detail_elements[1].text == "" else sub_detail_elements[1].text
+            grammatical_label_abbreviation = term_definition_sub.split()[1]
+            grammatical_label = _full_grammatical_label(grammatical_label_abbreviation)
 
             if under_topic and under_topic.lower() in term_definition_sub.lower():
-                result = SearchResult(term_name, term_definition, under_topic)
+                result = SearchResult(term_name, term_definition, grammatical_label, under_topic)
                 results.append(result)
                 return results
             else:
                 topic = term_definition_sub.split('.')[-1].strip().removesuffix(']').removeprefix('[')
-                result = SearchResult(term_name, term_definition, topic)
+                result = SearchResult(term_name, term_definition, grammatical_label, topic)
                 results.append(result)
 
         if results == []:
-            results.append(SearchResult(term_name, None, None))
+            results.append(SearchResult(term_name, None, None, None))
         return results
 
 
@@ -650,7 +700,12 @@ class Glossary:
         If you want to get all the definitions of the terms regardless of topic, use `search(...)` instead.
         """
         term_urls = self.get_terms_urls(under_topic=topic, count=max_results)
-        return [ self.get_results_from_url(term_url, under_topic=topic)[0] for term_url in term_urls ]
+        results: List[SearchResult] = []
+        for url in term_urls:
+            urls_results = self.get_results_from_url(url, under_topic=topic)
+            if urls_results:
+                results.append(urls_results[0])
+        return results
 
 
     def search(
@@ -679,20 +734,23 @@ class Glossary:
         (except a topic is provided) and each definition is a tuple of the term and its definition.
         So the number of results returned is, `max_results` multiplied by the number of definitions per result.
         """
-        result_urls = self.get_terms_urls(
+        terms_urls = self.get_terms_urls(
             query=query, 
             under_topic=under_topic, 
             start_letter=start_letter, 
             count=max_results
-        )  
-        return [ 
-            result for url in result_urls 
-            for result in self.get_results_from_url(url, under_topic=under_topic or "")
-        ]
+        )
+
+        results: List[SearchResult] = []
+        for url in terms_urls:
+            url_results = self.get_results_from_url(url, under_topic=under_topic or "")
+            if url_results:
+                results.extend(url_results)
+        return results
 
 
 
-__INSTALLED_DRIVERS__ = {
+driver_installations: Dict[Browser, Dict[str, Union[str, None]]] = {
     Browser.CHROME: {
         "driver_path": None,
         "driver_version": None,
@@ -716,28 +774,28 @@ __INSTALLED_DRIVERS__ = {
 }
 
 
-def install_browser(browser: Browser, driver_path: str, driver_version: Optional[str] = None):
+def install_driver(browser: Browser, driver_path: str, driver_version: Optional[str] = None) -> None:
     """
     Install the browser driver for Selenium. This affords you an interface
-    to specify the path to your browser installation, incase
-    your program does not run due to the package not finding a suitable browser installation.
+    to specify the path to your browser driver installation, incase
+    your program does not run due to the package not finding a suitable browser driver installation.
 
     :param browser: The browser to install the driver for.
     :param driver_path: The path to the driver executable.
     :param driver_version: The version of the driver executable.
     """
     browser = Browser(browser)
-    if browser not in __INSTALLED_DRIVERS__:
-        raise ValueError(f"Browser installation for {browser.value} is not supported.")
+    if browser not in driver_installations:
+        raise BrowserException(f"Browser installation for {browser.value} is not supported.")
     
 
     is_valid_path = os.path.exists(driver_path)
     if not is_valid_path:
         raise FileNotFoundError(f"Driver path '{driver_path}' does not exist.")
     
-    __INSTALLED_DRIVERS__[browser]["driver_path"] = driver_path
-    __INSTALLED_DRIVERS__[browser]["driver_version"] = driver_version
-    sys.stdout.write(f"Driver installed for {browser.value} browser.\n")
+    driver_installations[browser]["driver_path"] = driver_path
+    driver_installations[browser]["driver_version"] = driver_version
+    sys.stdout.write(f"Driver was successfully installed for {browser.value}.\n")
     return None
 
     
@@ -750,10 +808,43 @@ def _get_browser_service(browser: Browser) -> Service | None:
     :param browser: The browser to get the service for
     :return: The browser service for the given browser
     """
-    if browser not in __INSTALLED_DRIVERS__:
+    if browser not in driver_installations:
         return None
     
-    driver_path = __INSTALLED_DRIVERS__[browser]["driver_path"]
+    driver_path = driver_installations[browser]["driver_path"]
     if not driver_path:
         return None
-    return Service(driver_path)
+    return Service(executable_path=driver_path)
+
+
+
+_grammatical_label_mappings: Dict[str, str] = {
+    "n.": "Noun",
+    "pron.": "Pronoun",
+    "v.": "Verb",
+    "adj.": "Adjective",
+    "adv.": "Adverb",
+    "prep.": "Preposition",
+    "conj.": "Conjunction",
+    "interj.": "Interjection",
+    "art.": "Article",
+    "det.": "Determiner",
+    "num.": "Numeral",
+    "aux.": "Auxiliary Verb",
+    "modal": "Modal Verb",
+    "participle": "Participle",
+    "gerund": "Gerund"
+}
+
+
+def _full_grammatical_label(abbr: str) -> str:
+    """
+    Returns the non-abbreviated version of the abbreviated grammatical label
+    from `_grammatical_label_mappings`.
+
+    Returns the abbreviation as is, if non-abbreviated version is not available.
+    """
+    try:
+        return _grammatical_label_mappings[abbr]
+    except KeyError:
+        return abbr

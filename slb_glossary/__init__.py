@@ -10,12 +10,12 @@ suitable for production.
 @Author: Daniel T. Afolayan (ti-oluwa)
 """
 
-from .glossary import Glossary, Browser, Language, SearchResult, install_browser
+from .glossary import Glossary, Browser, Language, SearchResult, install_driver
 from .saver import Saver
 
 
 __version__ = '0.0.1b'
 __all__ = [
-    'Glossary', 'Saver', "Browser", "Language", "SearchResult", "install_browser"
+    'Glossary', 'Saver', "Browser", "Language", "SearchResult", "install_driver"
 ]
 

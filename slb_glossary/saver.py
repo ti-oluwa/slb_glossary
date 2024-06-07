@@ -1,12 +1,14 @@
 import os
 import csv
 import json
-from typing import List
+import sys
+from typing import List, TypeVar
 
 from .glossary import SearchResult
 
 
-class Saver:
+
+class Saver(object):
     """
     Saves term definitions from the glossary to a file based on the file extension.
 
@@ -50,7 +52,7 @@ class Saver:
         """
         file_extension = filename.split('.')[-1] if filename else 'txt'
         try:
-            getattr(self, f'save_as_{file_extension}')(results, filename)
+            return getattr(self, f'save_as_{file_extension}')(results, filename)
         except AttributeError:
             raise NotImplementedError(
                 f'Cannot save to {file_extension} files. `save_as_{file_extension}` method not implemented'
@@ -71,7 +73,7 @@ class Saver:
             import openpyxl
         except ImportError:
             raise ImportError(
-                'openpyxl is required to save to xlsx files. Run `pip install openpyxl` to install it'
+                '"openpyxl" is required to save to xlsx files. Run `pip install openpyxl` in yut terminal to install it'
             )
         
         name, ext = os.path.splitext(filename)
@@ -81,7 +83,7 @@ class Saver:
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = name.title()
-        ws.append(['Term', 'Definition', 'Topic']) # Add a header row
+        ws.append(('Term', 'Definition', 'Grammatical Label', 'Topic')) # Add a header row
         for result in results:
             ws.append(result.astuple())
         
@@ -102,14 +104,14 @@ class Saver:
         if not ext.lower() == '.csv':
             raise ValueError('Invalid file name. File name must end with .csv')
         
-        with open(filename, 'w', newline='') as file:
-            writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            writer.writerow([name.title()]) # Add a title row
-            writer.writerow(['Term', 'Definition', 'Topic']) # Add a header row
+        with open(filename, 'w', newline='\n') as file:
+            writer = csv.writer(file, delimiter=', ', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            writer.writerow((name.title(),)) # Add a title row
+            file.write('\n')
+            writer.writerow(('Term', 'Definition', 'Grammatical Label', 'Topic')) # Add a header row
             file.write('\n')
             for result in results:
                 writer.writerow(result.astuple())
-                file.write('\n')
         return None
     
 
@@ -150,6 +152,10 @@ class Saver:
             file.write(f'{name.title()}\n\n') # Add a title
             for i, result in enumerate(results, start=1):
                 file.write(
-                    f"({i}). {result.term} ({result.topic or ""}):\n{result.definition or ""}\n\n"
+                    f"({i}). {result.term} ({result.topic or ""}) - {result.grammatical_label}:\n"
+                    f"{result.definition or ""}\r\n"
                 )
         return None
+
+
+_Saver = TypeVar("_Saver", bound=Saver)
