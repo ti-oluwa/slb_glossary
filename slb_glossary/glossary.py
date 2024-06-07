@@ -21,6 +21,13 @@ from dataclasses import dataclass, astuple, asdict
 from .exceptions import NetworkError, BrowserException, BrowserNotInstalled
 
 
+__all__ = [
+    "Browser",
+    "Language",
+    "SearchResult",
+    "Glossary",
+]
+
 
 class Browser(enum.Enum):
     """Supported browsers for the glossary search"""

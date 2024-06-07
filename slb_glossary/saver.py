@@ -1,11 +1,12 @@
 import os
 import csv
 import json
-import sys
 from typing import List, TypeVar
 
 from .glossary import SearchResult
 
+
+__all__ = ["Saver"]
 
 
 class Saver(object):
