@@ -62,12 +62,14 @@ class SearchResult:
     """The term found in the glossary"""
     definition: Optional[str]
     """The definition of the term found in the glossary"""
-    grammatical_label: Optional[str]
+    grammatical_label: Optional[str] = None
     """Basically the part of speech of the term"""
     topic: Optional[str]
     """The topic the term is related to or the topic under which the definition was found"""
+    url: Optional[str] = None
+    """The url of the page containing the definition of the term in the glossary"""
 
-    def astuple(self) -> Tuple[str, Optional[str], Optional[str]]:
+    def astuple(self) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
         """Return the search result as a tuple"""
         return astuple(self)
     
@@ -330,11 +332,11 @@ class Glossary(object):
     
 
     def _get_element_by_css_selector(self, 
-            css_selector: str,
-            *,  
-            root: Optional[Union[WebDriver, WebElement]] = None, 
-            max_retry: int = 3
-        ) -> WebElement | None:
+        css_selector: str,
+        *,  
+        root: Optional[Union[WebDriver, WebElement]] = None, 
+        max_retry: int = 3
+    ) -> WebElement | None:
         """
         Get the first element with the given css selector
 
@@ -348,7 +350,10 @@ class Glossary(object):
         while tries < max_retry:
             try:
                 return root.find_element(by=By.CSS_SELECTOR, value=css_selector)
-            except (StaleElementReferenceException, NoSuchElementException) as exc:
+            except (
+                StaleElementReferenceException, 
+                NoSuchElementException
+            ) as exc:
                 time.sleep(1)
                 tries += 1
                 if tries == max_retry:
@@ -356,11 +361,11 @@ class Glossary(object):
 
 
     def _get_elements_by_css_selector(self, 
-            css_selector: str,
-            *,  
-            root: Optional[Union[WebDriver, WebElement]] = None, 
-            max_retry: int = 3
-        ) -> List[WebElement] | None:
+        css_selector: str,
+        *,  
+        root: Optional[Union[WebDriver, WebElement]] = None, 
+        max_retry: int = 3
+    ) -> List[WebElement] | None:
         """
         Get the all elements with the given css selector
 
@@ -374,7 +379,10 @@ class Glossary(object):
         while tries < max_retry:
             try:
                 return root.find_elements(by=By.CSS_SELECTOR, value=css_selector)
-            except (StaleElementReferenceException, NoSuchElementException) as exc:
+            except (
+                StaleElementReferenceException, 
+                NoSuchElementException
+            ) as exc:
                 time.sleep(1)
                 tries += 1
                 if tries == max_retry:
@@ -677,16 +685,13 @@ class Glossary(object):
             grammatical_label = _full_grammatical_label(grammatical_label_abbreviation)
 
             if under_topic and under_topic.lower() in term_definition_sub.lower():
-                result = SearchResult(term_name, term_definition, grammatical_label, under_topic)
+                result = SearchResult(term_name, term_definition, grammatical_label, under_topic, url)
                 results.append(result)
                 return results
             else:
                 topic = term_definition_sub.split('.')[-1].strip().removesuffix(']').removeprefix('[')
-                result = SearchResult(term_name, term_definition, grammatical_label, topic)
+                result = SearchResult(term_name, term_definition, grammatical_label, topic, url)
                 results.append(result)
-
-        if results == []:
-            results.append(SearchResult(term_name, None, None, None))
         return results
 
 
@@ -727,7 +732,7 @@ class Glossary(object):
         Search the glossary for terms matching the given query and return their definitions
 
         :param query: The search query
-        :param under_topic: What topics should the definitions extracted be related to.
+        :param under_topic: What topics should the definitions extracted be related to. Streamline search to this topic.
         
         NOTE: It is advisable to use a topic that is available on the glossary website.
         If topic is not available it uses the nearest match for topics available on the slb glossary website. If no match is found,
