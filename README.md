@@ -213,4 +213,4 @@ Contributions are welcome. Please fork the repository and submit a pull request.
 
 ## Credits
 
-This project was inspired by the 2023/24/25 Petrobowl Team of the Federal University of Petroleum Resources, Effurun, Delta state, Nigeria. It aided the team's preparation for the PetroQuiz and PetroBowl Conpetitions organized by the Society of Petroleum Engineers(SPE).
+This project was inspired by the 2023/24/25 Petrobowl Team of the Federal University of Petroleum Resources, Effurun, Delta state, Nigeria. It aided the team's preparation for the PetroQuiz and PetroBowl competitions organized by the Society of Petroleum Engineers(SPE).
