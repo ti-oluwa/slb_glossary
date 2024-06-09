@@ -74,7 +74,7 @@ class Saver(object):
             import openpyxl
         except ImportError:
             raise ImportError(
-                '"openpyxl" is required to save to xlsx files. Run `pip install openpyxl` in yut terminal to install it'
+                '"openpyxl" is required to save to xlsx files. Run `pip install openpyxl` in your terminal to install it'
             )
         
         name, ext = os.path.splitext(filename)
@@ -84,7 +84,7 @@ class Saver(object):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = name.title()
-        ws.append(('Term', 'Definition', 'Grammatical Label', 'Topic')) # Add a header row
+        ws.append(('Term', 'Definition', 'Grammatical Label', 'Topic', "URL")) # Add a header row
         for result in results:
             ws.append(result.astuple())
         
@@ -109,7 +109,7 @@ class Saver(object):
             writer = csv.writer(file, delimiter=', ', quotechar='"', quoting=csv.QUOTE_MINIMAL)
             writer.writerow((name.title(),)) # Add a title row
             file.write('\n')
-            writer.writerow(('Term', 'Definition', 'Grammatical Label', 'Topic')) # Add a header row
+            writer.writerow(('Term', 'Definition', 'Grammatical Label', 'Topic', "URL")) # Add a header row
             file.write('\n')
             for result in results:
                 writer.writerow(result.astuple())
@@ -154,7 +154,7 @@ class Saver(object):
             for i, result in enumerate(results, start=1):
                 file.write(
                     f"({i}). {result.term} ({result.topic or ""}) - {result.grammatical_label}:\n"
-                    f"{result.definition or ""}\r\n"
+                    f"{result.definition or ""}.\nReference; {result.url}\r\n"
                 )
         return None
 
