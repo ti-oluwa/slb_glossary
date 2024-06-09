@@ -2,10 +2,10 @@
 Search the Schlumberger Oilfield Glossary programmatically using Selenium.
 https://glossary.slb.com/
 
-This package is meant for educational/instructional use only and may not be 
+This package is meant for research/instructional use only and may not be 
 suitable for production.
 
-#### Internet Connection Required!!!
+#### Stable Internet Connection Required!!!
 
 @Author: Daniel T. Afolayan (ti-oluwa)
 """

@@ -62,11 +62,11 @@ class SearchResult:
     """The term found in the glossary"""
     definition: Optional[str]
     """The definition of the term found in the glossary"""
-    grammatical_label: Optional[str] = None
+    grammatical_label: Optional[str]
     """Basically the part of speech of the term"""
     topic: Optional[str]
     """The topic the term is related to or the topic under which the definition was found"""
-    url: Optional[str] = None
+    url: Optional[str]
     """The url of the page containing the definition of the term in the glossary"""
 
     def astuple(self) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:

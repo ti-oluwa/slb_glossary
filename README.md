@@ -1,10 +1,10 @@
 # Schlumberger Petroleum Glossary
 
-Search the Schlumberger Petroleum Glossary using Selenium.
+Browse the Schlumberger Petroleum Glossary in Python.
 
 **For optimum performance, Use the Chrome browser and a fast and stable internet connection.**
 
-> This is not production stable code and is intended for research or instructional use only.
+> This package is intended for research or instructional use only.
 
 ## Installation
 
