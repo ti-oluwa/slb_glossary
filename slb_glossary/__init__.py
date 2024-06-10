@@ -14,7 +14,7 @@ from .glossary import Glossary, Browser, Language, SearchResult
 from .saver import Saver
 
 
-__version__ = '0.0.1b'
+__version__ = '0.0.1'
 __all__ = [
     'Glossary', 
     'Saver', 

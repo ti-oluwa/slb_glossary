@@ -100,7 +100,7 @@ class Glossary(object):
     Preferred search result saver class. Set this if you want override the default saver class
     with a (modified) subclass.
     """
-
+    
     def __init__(
         self, 
         browser: Browser = Browser.CHROME, 
@@ -142,7 +142,15 @@ class Glossary(object):
         self.browser.switch_to.window(self.browser.window_handles[0])
         self.browser.close()
         self.browser.switch_to.window(self.browser.window_handles[-1])
-        atexit.register(self.browser.close)
+        atexit.register(self.close)
+
+    # Just to enable usage as a context manager
+    def __enter__(self) -> 'Glossary':
+        return self
+    
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+        return None
 
     
     @functools.cached_property
@@ -330,6 +338,30 @@ class Glossary(object):
         """Total number of terms in the glossary"""
         return self._size
     
+    @property
+    def closed(self) -> bool:
+        """Check if the glossary has been closed or not"""
+        try:
+            return not self.browser.window_handles
+        except WebDriverException:
+            # Browser has been closed
+            return True
+    
+
+    def close(self) -> None:
+        """
+        Close the glossary and free up resources.
+        This should be called after you're done with the glossary.
+        """
+        if self.closed:
+            return
+        
+        no_of_open_windows = len(self.browser.window_handles)
+        # Close all open windows
+        for _ in range(no_of_open_windows):
+            self.browser.close()
+        return None
+    
 
     def _get_element_by_css_selector(self, 
         css_selector: str,
@@ -354,7 +386,7 @@ class Glossary(object):
                 StaleElementReferenceException, 
                 NoSuchElementException
             ) as exc:
-                time.sleep(1)
+                time.sleep(0.8)
                 tries += 1
                 if tries == max_retry:
                     raise exc
@@ -383,7 +415,7 @@ class Glossary(object):
                 StaleElementReferenceException, 
                 NoSuchElementException
             ) as exc:
-                time.sleep(1)
+                time.sleep(0.8)
                 tries += 1
                 if tries == max_retry:
                     raise exc
@@ -408,14 +440,14 @@ class Glossary(object):
             else:
                 break
 
-        time.sleep(1)
+        time.sleep(0.8)
         # if facet header has content, facet items have been loaded else reload page
         if not facet_header or facet_header.text == '':
             return self.get_topics(get_size=get_size)
         
         discipline_facet_expand_button = self._get_element_by_css_selector('.CoveoFacet .coveo-facet-footer .coveo-facet-more')
         self.browser.execute_script("arguments[0].scrollIntoView({block: 'center'}); arguments[0].click();", discipline_facet_expand_button)
-        time.sleep(1)
+        time.sleep(0.8)
 
         topic_elements = self._get_elements_by_css_selector('#discipline-facet .coveo-facet-value')
         topics_dict = {}
@@ -430,7 +462,7 @@ class Glossary(object):
                     continue
                 
                 topic = topic_element.text
-                no_of_terms = int(terms_count_element.text)
+                no_of_terms = _text_to_int(terms_count_element.text)
                 topics_dict[topic] = no_of_terms
             except NoSuchElementException:
                 pass
@@ -440,7 +472,7 @@ class Glossary(object):
             if not glossary_size_element:
                 return topics_dict, 0
             
-            size = int(glossary_size_element.text.replace(',', ''))
+            size = _text_to_int(glossary_size_element.text)
             return topics_dict, size
             
         return topics_dict
@@ -464,7 +496,8 @@ class Glossary(object):
         """
         Return an appropriate first match for the given topic in `self.topics_list`
 
-        :param topic: The topic to get a match for
+        :param topic: The topic(s) to get a match for. If you have multiple topics, separate them with a comma
+        like so: 'Geophysics,Geology'
         :return: first match for `topic`
         """
         if topic == "":
@@ -496,7 +529,8 @@ class Glossary(object):
         """
         Returns the url to search the glossary based on the given parameters
 
-        :param topic: The topic to get the terms for
+        :param topic: The topic(s) to base the search on. If you want to search for terms under multiple topics,
+        separate the topics with a comma. For example, 'Geophysics,Geology'
         
         NOTE: It is advisable to use a topic that is available on the glossary website. 
         To get an idea of the available topics check the properties `topics` or `topics_list`
@@ -534,7 +568,8 @@ class Glossary(object):
         of each term found searching by the given filters.
 
         :param query: The search query
-        :param under_topic: What topic should the found terms be related to.
+        :param under_topic: What topic(s) should the found terms be related to. Streamline search to the given topic(s).
+        If you want to search for terms under multiple topics, separate the topics with a comma. For example, 'Geophysics,Geology'
 
         NOTE: It is advisable to use a topic that is available on the glossary website.
         If topic is not available it uses the nearest match for topics available on the slb glossary website. If no match is found,
@@ -547,8 +582,6 @@ class Glossary(object):
         if count and count < 1:
             raise ValueError('Count must be greater than 0')
         
-        if under_topic is not None:
-            under_topic = self.get_topic_match(under_topic)
         if not under_topic and not(query or start_letter):
             return []
 
@@ -572,7 +605,7 @@ class Glossary(object):
         self.load(url)
 
         if is_first_run:
-            time.sleep(1)
+            # time.sleep(1)
             # If we're moving to a new tab, ensure page content as changed completely before proceeding to get new urls
             def _results_have_changed() -> bool:
                 new_result_text_element = self._get_element_by_css_selector('.CoveoResult .CoveoResultLink')
@@ -582,12 +615,12 @@ class Glossary(object):
                 return old_result_text != new_result_text
             
             while _results_have_changed() is False:
-                time.sleep(1) 
+                time.sleep(0.8) 
 
         results_header = self._get_element_by_css_selector('.coveo-results-header')
         if not results_header:
             return urls
-        time.sleep(1)
+        # time.sleep(1)
         # if result header has content, results/page have been loaded else reload page
         if urls == [] and results_header.text == '':
             sys.stdout.write(f"\n{type(self).__name__}: Content not loaded yet. Reloading page...\n")
@@ -602,7 +635,7 @@ class Glossary(object):
             terms_count_element = self._get_element_by_css_selector('.CoveoQuerySummary .coveo-highlight-total-count')
             if not terms_count_element:
                 return urls
-            total_no_of_terms = int(terms_count_element.text.replace(',', ''))
+            total_no_of_terms = _text_to_int(terms_count_element.text)
         except ValueError:
             retry_count: int = kwargs.get('retry_count', 0)
             if retry_count <= 4:
@@ -659,6 +692,7 @@ class Glossary(object):
 
         :param url: The url containing the definitions
         :param under_topic: What topics should the definitions extracted be related to.
+        If you want to use multiple topics, separate the topics with a comma. For example, 'Drilling,Geology'
         
         NOTE: It is advisable to use a topic that is available on the glossary website. 
         To get an idea of the available topics check the properties `topics` or `topics_list` 
@@ -682,7 +716,7 @@ class Glossary(object):
             term_definition_sub = sub_detail_elements[0].text
             term_definition = sub_detail_elements[2].text if sub_detail_elements[1].text == "" else sub_detail_elements[1].text
             grammatical_label_abbreviation = term_definition_sub.split()[1]
-            grammatical_label = _full_grammatical_label(grammatical_label_abbreviation)
+            grammatical_label = _full_grammatical_label(self.language, grammatical_label_abbreviation)
 
             if under_topic and under_topic.lower() in term_definition_sub.lower():
                 result = SearchResult(term_name, term_definition, grammatical_label, under_topic, url)
@@ -699,7 +733,8 @@ class Glossary(object):
         """
         Returns the definitions of terms related to the given topic in the glossary
 
-        :param topic: The topic to base the search on
+        :param topic: The topic to base the search on. If you want to search for terms under multiple topics,
+        separate the topics with a comma. For example, 'Well completions,Perforating'
         
         NOTE: It is advisable to use a topic that is available on the glossary website.
         If topic is not available it uses the nearest match for topics available on the slb glossary website. If no match is found,
@@ -733,6 +768,7 @@ class Glossary(object):
 
         :param query: The search query
         :param under_topic: What topics should the definitions extracted be related to. Streamline search to this topic.
+        If you want to search for terms under multiple topics, separate the topics with a comma. For example, 'Geophysics,Geology'
         
         NOTE: It is advisable to use a topic that is available on the glossary website.
         If topic is not available it uses the nearest match for topics available on the slb glossary website. If no match is found,
@@ -742,9 +778,8 @@ class Glossary(object):
         :param max_results: The maximum number of results to return. Defaults to 3. If None, all results will be returned
         :return: A list of containing the details on the first `max_results` results of the search. 
 
-        Note that each search results can have multiple definitions on different topics 
-        (except a topic is provided) and each definition is a tuple of the term and its definition.
-        So the number of results returned is, `max_results` multiplied by the number of definitions per result.
+        Note that each search results can have multiple definitions on different topics (except a topic is provided).
+        Hence, the number of results returned is; `max_results` multiplied by the number of definitions per term.
         """
         terms_urls = self.get_terms_urls(
             query=query, 
@@ -830,26 +865,45 @@ def _get_browser_service(browser: Browser) -> Service | None:
 
 
 
-_grammatical_label_mappings: Dict[str, str] = {
-    "n.": "Noun",
-    "pron.": "Pronoun",
-    "v.": "Verb",
-    "adj.": "Adjective",
-    "adv.": "Adverb",
-    "prep.": "Preposition",
-    "conj.": "Conjunction",
-    "interj.": "Interjection",
-    "art.": "Article",
-    "det.": "Determiner",
-    "num.": "Numeral",
-    "aux.": "Auxiliary Verb",
-    "modal": "Modal Verb",
-    "participle": "Participle",
-    "gerund": "Gerund"
+_grammatical_label_mappings: Dict[Language, Dict[str, str]] = {
+    Language.ENGLISH: {
+        "n.": "Noun",
+        "pron.": "Pronoun",
+        "vb.": "Verb",
+        "adj.": "Adjective",
+        "adv.": "Adverb",
+        "prep.": "Preposition",
+        "conj.": "Conjunction",
+        "interj.": "Interjection",
+        "art.": "Article",
+        "det.": "Determiner",
+        "num.": "Numeral",
+        "aux.": "Auxiliary Verb",
+        "modal": "Modal Verb",
+        "participle": "Participle",
+        "gerund": "Gerund"
+    },
+    Language.SPANISH: {
+        "s.": "Sustantivo",
+        "pron.": "Pronombre",
+        "v.": "Verbo",
+        "adj.": "Adjetivo",
+        "adv.": "Adverbio",
+        "prep.": "Preposición",
+        "conj.": "Conjunción",
+        "interj.": "Interjección",
+        "art.": "Artículo",
+        "det.": "Determinante",
+        "num.": "Número",
+        "aux.": "Verbo Auxiliar",
+        "modal": "Verbo Modal",
+        "participio": "Participio",
+        "gerundio": "Gerundio"
+    }
 }
 
 
-def _full_grammatical_label(abbr: str) -> str:
+def _full_grammatical_label(language: Language, abbr: str) -> str:
     """
     Returns the non-abbreviated version of the abbreviated grammatical label
     from `_grammatical_label_mappings`.
@@ -857,6 +911,16 @@ def _full_grammatical_label(abbr: str) -> str:
     Returns the abbreviation as is, if non-abbreviated version is not available.
     """
     try:
-        return _grammatical_label_mappings[abbr]
+        return _grammatical_label_mappings[language][abbr.lower()]
     except KeyError:
         return abbr
+
+
+def _text_to_int(text: str) -> int:
+    """
+    Convert a string to an integer
+
+    :param text: The string to convert to an integer
+    :return: The integer representation of the string
+    """
+    return int(text.replace(",", "").replace(" ", ""))
