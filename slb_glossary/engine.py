@@ -1,4 +1,4 @@
-"""Lazy, async-generator search API for the SLB glossary."""
+"""Search engine API for the SLB glossary."""
 
 import asyncio
 import logging
@@ -21,7 +21,7 @@ from .urls import build_pager_query, build_search_url
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["iter_term_urls", "iter_results_from_url", "search", "get_terms_on"]
+__all__ = ["get_terms_on", "iter_results_from_url", "iter_term_urls", "search"]
 
 
 async def _wait_for_results_to_settle(
@@ -56,7 +56,7 @@ async def _wait_for_results_to_settle(
             return
         await asyncio.sleep(session.poll_interval)
     logger.debug(
-        "Results list did not change within %.1fs of loading %s", session.settle_timeout, url
+        "Results list did not change within %.2fs of loading %s", session.settle_timeout, url
     )
 
 

@@ -1,15 +1,13 @@
 """Pure helpers for building glossary search URLs."""
 
-import typing
 from urllib.parse import quote
 
 from .models import Language
 
-
 __all__ = [
-    "get_glossary_base_url",
     "build_pager_query",
     "build_search_url",
+    "get_glossary_base_url",
 ]
 
 
@@ -39,10 +37,10 @@ def build_pager_query(*, tab_number: int = 1, terms_per_tab: int = 12) -> str:
 def build_search_url(
     *,
     base_url: str,
-    topic: typing.Optional[str] = None,
-    query: typing.Optional[str] = None,
-    start_letter: typing.Optional[str] = None,
-    pager_query: typing.Optional[str] = None,
+    topic: str | None = None,
+    query: str | None = None,
+    start_letter: str | None = None,
+    pager_query: str | None = None,
 ) -> str:
     """
     Build a full glossary search URL from its constituent filters.
@@ -62,9 +60,9 @@ def build_search_url(
 
     query_part = f"q={quote(query)}&" if query else ""
     start_letter_part = (
-        f"&f:TermStartLetterFacet=[{quote(start_letter[0].upper())}]"
-        if start_letter
-        else ""
+        f"&f:TermStartLetterFacet=[{quote(start_letter[0].upper())}]" if start_letter else ""
     )
     topic_part = f"&f:DisciplineFacet=[{quote(topic)}]" if topic else ""
-    return f"{base_url}#{query_part}{pager_query or ''}sort=relevancy{topic_part}{start_letter_part}"
+    return (
+        f"{base_url}#{query_part}{pager_query or ''}sort=relevancy{topic_part}{start_letter_part}"
+    )

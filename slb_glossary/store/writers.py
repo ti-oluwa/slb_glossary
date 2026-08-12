@@ -8,7 +8,7 @@ import typing
 
 from .records import RecordLike
 
-__all__ = ["Writer", "WRITERS", "write_csv", "write_json", "write_txt", "write_xlsx"]
+__all__ = ["WRITERS", "Writer", "write_csv", "write_json", "write_txt", "write_xlsx"]
 
 
 Writer = typing.Callable[[list[RecordLike], pathlib.Path], typing.Awaitable[None]]
@@ -17,7 +17,7 @@ Writer = typing.Callable[[list[RecordLike], pathlib.Path], typing.Awaitable[None
 
 def field_names(records: list[RecordLike]) -> list[str]:
     """Return the field names of `records`, or `[]` if `records` is empty."""
-    return list(records[0]._fields) if records else []
+    return list(records[0].fields) if records else []
 
 
 ACRONYMS = frozenset({"url", "id"})
@@ -39,7 +39,7 @@ async def write_csv(records: list[RecordLike], destination: pathlib.Path) -> Non
             writer = csv.writer(file)
             writer.writerow([humanize_field(field) for field in fields])
             for record in records:
-                writer.writerow(record._asdict().values())
+                writer.writerow(record.asdict().values())
 
     await asyncio.to_thread(_write)
 
@@ -55,8 +55,8 @@ async def write_json(records: list[RecordLike], destination: pathlib.Path) -> No
     def _write() -> None:
         data: dict[typing.Any, dict[str, typing.Any]] = {}
         for record in records:
-            as_dict = record._asdict()
-            key_field = record._fields[0]
+            as_dict = record.asdict()
+            key_field = record.fields[0]
             key = as_dict.pop(key_field)
             data[key] = as_dict
         with open(destination, "w", encoding="utf-8") as file:
@@ -71,11 +71,11 @@ async def write_txt(records: list[RecordLike], destination: pathlib.Path) -> Non
     def _write() -> None:
         lines: list[str] = []
         for index, record in enumerate(records, start=1):
-            as_dict = record._asdict()
-            fields = record._fields
-            title_field, *rest_fields = fields
+            as_dict = record.asdict()
+            fields = record.fields
+            title_field, *restfields = fields
             lines.append(f"({index}) {as_dict[title_field]}")
-            for field in rest_fields:
+            for field in restfields:
                 value = as_dict[field]
                 lines.append(f"    {humanize_field(field)}: {value if value is not None else ''}")
             lines.append("")
@@ -92,22 +92,24 @@ async def write_xlsx(records: list[RecordLike], destination: pathlib.Path) -> No
     :raises ImportError: If `openpyxl` is not installed. Install it with
         `uv add openpyxl` or `pip install openpyxl`.
     """
+    try:
+        import openpyxl
+    except ImportError as exc:
+        raise ImportError(
+            '"openpyxl" is required to save .xlsx files. '
+            "Install it with `uv add openpyxl` or `pip install openpyxl`."
+        ) from exc
 
     def _write() -> None:
-        try:
-            import openpyxl
-        except ImportError as exc:
-            raise ImportError(
-                '"openpyxl" is required to save .xlsx files. '
-                "Install it with `uv add openpyxl` or `pip install openpyxl`."
-            ) from exc
-
         fields = field_names(records)
         workbook = openpyxl.Workbook()
         sheet = workbook.active
+        if sheet is None:
+            raise RuntimeError("openpyxl failed to create a workbook sheet")
+
         sheet.append([humanize_field(field) for field in fields])
         for record in records:
-            sheet.append(list(record._asdict().values()))
+            sheet.append(list(record.asdict().values()))
         workbook.save(destination)
 
     await asyncio.to_thread(_write)

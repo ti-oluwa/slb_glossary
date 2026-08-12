@@ -1,4 +1,4 @@
-"""Launching and tearing down browser sessions used to search the glossary."""
+"""API for launching and tearing down browser sessions used to search the glossary."""
 
 import contextlib
 import logging
@@ -16,17 +16,14 @@ from .urls import get_glossary_base_url
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["open_search_session", "close_search_session", "glossary_session"]
+__all__ = ["close_session", "search_session", "open_session"]
 
 
 SUPPORTED_BROWSER_TYPES = ("chromium", "firefox", "webkit")
-"""Playwright browser families `open_search_session` can launch."""
+"""Playwright browser families `open_session` can launch."""
 
-DEFAULT_BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
+DEFAULT_BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font", "stylesheet"})
 """Resource types blocked when `block=True` (the default)."""
-
-DEFAULT_VIEWPORT = {"width": 1920, "height": 1080}
-"""Viewport large enough for every facet panel element to render normally."""
 
 CHROMIUM_LAUNCH_ARGS = [
     "--disable-extensions",
@@ -96,7 +93,7 @@ async def _launch_browser(
     return await launcher.launch(**launch_kwargs)
 
 
-async def open_search_session(
+async def open_session(
     *,
     language: Language = Language.ENGLISH,
     browser_type: str = "chromium",
@@ -109,6 +106,8 @@ async def open_search_session(
     poll_interval: float = 0.3,
     executable_path: str | None = None,
     proxy: dict[str, str] | None = None,
+    viewport: dict[str, int] | None = None,
+    use_stealth: bool = True,
 ) -> SearchSession:
     """
     Launch a stealth browser session and load the glossary's topics and size.
@@ -141,20 +140,26 @@ async def open_search_session(
         Defaults to the build patchright installs for `browser_type`.
     :param proxy: Playwright proxy settings, e.g.
         `{"server": "http://myproxy:3128"}`.
+    :param viewport: A Playwright viewport dict such as
+        `{"width": 1920, "height": 1080}`. Defaults to `None` so the
+        session is created without an explicit viewport and the browser uses
+        the available full-screen size.
+    :param use_stealth: Whether to apply Playwright stealth patches to the
+        browser context. Defaults to `True`.
     :return: An open `SearchSession` ready to pass to `slb_glossary.search`
-        functions. Close it with `close_search_session` when done, or use
-        `glossary_session` instead of calling this function directly.
+        functions. Close it with `close_session` when done, or use
+        `search_session` instead of calling this function directly.
     :raises NetworkError: If the glossary site could not be reached.
     :raises BrowserError: If the browser failed to launch for any other
         reason, including an unsupported `browser_type`.
     """
     if browser_type not in SUPPORTED_BROWSER_TYPES:
         raise BrowserError(
-            f"Unsupported browser_type {browser_type!r}. "
+            f"Unsupported `browser_type` {browser_type!r}. "
             f"Supported types: {', '.join(SUPPORTED_BROWSER_TYPES)}."
         )
 
-    logger.info("Opening a %s glossary search session over %s", language.value, browser_type)
+    logger.info("Opening a '%s' glossary search session over %s", language.value, browser_type)
     playwright = await async_playwright().start()
     try:
         browser = await _launch_browser(
@@ -164,8 +169,9 @@ async def open_search_session(
             executable_path=executable_path,
             proxy=proxy,
         )
-        context = await browser.new_context(viewport=DEFAULT_VIEWPORT)
-        await Stealth().apply_stealth_async(context)
+        context = await browser.new_context(viewport=viewport)
+        if use_stealth:
+            await Stealth().apply_stealth_async(context)
 
         page = await context.new_page()
         page.set_default_timeout(timeout)
@@ -178,7 +184,12 @@ async def open_search_session(
 
         base_url = get_glossary_base_url(language)
         try:
-            topics, size = await fetch_topics(page, base_url=base_url, backoff=backoff)
+            topics, size = await fetch_topics(
+                page,
+                base_url=base_url,
+                settle_delay=settle_timeout,
+                backoff=backoff,
+            )
         except Exception as exc:
             raise NetworkError(f"Could not reach the glossary at {base_url}") from exc
 
@@ -201,16 +212,16 @@ async def open_search_session(
         logger.info("Glossary search session ready: %d topics, %d terms", len(topics), size)
         return session
     except NetworkError:
-        logger.error("Could not reach the glossary at startup", exc_info=True)
+        logger.exception("Could not reach the glossary at startup")
         await playwright.stop()
         raise
     except Exception as exc:
-        logger.error("Failed to launch the glossary browser session", exc_info=True)
+        logger.exception("Failed to launch the glossary browser session")
         await playwright.stop()
         raise BrowserError("Failed to launch the glossary browser session") from exc
 
 
-async def close_search_session(session: SearchSession) -> None:
+async def close_session(session: SearchSession) -> None:
     """
     Close every resource opened for `session`.
 
@@ -228,7 +239,7 @@ async def close_search_session(session: SearchSession) -> None:
 
 
 @contextlib.asynccontextmanager
-async def glossary_session(
+async def search_session(
     *,
     language: Language = Language.ENGLISH,
     browser_type: str = "chromium",
@@ -241,20 +252,44 @@ async def glossary_session(
     poll_interval: float = 0.3,
     executable_path: str | None = None,
     proxy: dict[str, str] | None = None,
+    viewport: dict[str, int] | None = None,
+    use_stealth: bool = True,
 ) -> typing.AsyncIterator[SearchSession]:
     """
     Open a `SearchSession` for the duration of an `async with` block.
 
     ```python
-    async with glossary_session() as session:
+    async with search_session() as session:
         async for result in search(session, "porosity"):
             print(result)
     ```
 
-    Arguments are the same as `open_search_session`. The session is always
+    :param language: Glossary language edition to search.
+    :param browser_type: Playwright browser family to launch: `"chromium"`,
+        `"firefox"` or `"webkit"`.
+    :param headless: Run the browser without a visible window. Set this to
+        `False` for debugging.
+    :param block: Which request resource types to drop for speed. `True`
+        blocks the default resource types, `False` blocks nothing, or pass
+        an iterable of resource type strings.
+    :param timeout: Milliseconds to wait for page loads and element lookups.
+    :param terms_per_tab: Number of results returned per glossary results page.
+    :param backoff: Policy used when retrying the initial topic-list load.
+    :param settle_timeout: Seconds to wait for the results list to settle.
+    :param poll_interval: Poll interval used while waiting for results updates.
+    :param executable_path: Path to a specific browser build to launch.
+    :param proxy: Playwright proxy settings, e.g.
+        `{"server": "http://myproxy:3128"}`.
+    :param viewport: A Playwright viewport dict such as
+        `{"width": 1920, "height": 1080}`. Defaults to `None` so the
+        session is created without an explicit viewport.
+    :param use_stealth: Whether to apply Playwright stealth patches to the
+        browser context. Defaults to `True`.
+
+    Arguments are the same as `open_session`. The session is always
     closed on exit, including when the block raises.
     """
-    session = await open_search_session(
+    session = await open_session(
         language=language,
         browser_type=browser_type,
         headless=headless,
@@ -266,8 +301,10 @@ async def glossary_session(
         poll_interval=poll_interval,
         executable_path=executable_path,
         proxy=proxy,
+        viewport=viewport,
+        use_stealth=use_stealth,
     )
     try:
         yield session
     finally:
-        await close_search_session(session)
+        await close_session(session)

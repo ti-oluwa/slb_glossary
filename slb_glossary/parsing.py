@@ -2,7 +2,7 @@
 Low-level DOM extraction for glossary pages.
 
 Every CSS selector the scraper depends on lives in this module, so a change
-to the glossary site's markup only ever needs to be fixed in one place.
+to the glossary site's markup only ever needs to be fixed here.
 """
 
 import logging
@@ -15,22 +15,22 @@ logger = logging.getLogger(__name__)
 
 
 __all__ = [
-    "FACET_HEADER_SELECTOR",
     "FACET_EXPAND_SELECTOR",
-    "TOPIC_VALUE_SELECTOR",
+    "FACET_HEADER_SELECTOR",
     "RESULTS_HEADER_SELECTOR",
-    "TOTAL_COUNT_SELECTOR",
     "RESULT_LINK_SELECTOR",
-    "TERM_NAME_SELECTOR",
     "TERM_DETAIL_SELECTOR",
+    "TERM_NAME_SELECTOR",
+    "TOPIC_VALUE_SELECTOR",
+    "TOTAL_COUNT_SELECTOR",
     "get_element_text",
     "get_facet_topics",
     "get_glossary_size",
-    "get_results_header_text",
-    "get_total_term_count",
     "get_result_links",
-    "get_term_name",
+    "get_results_header_text",
     "get_term_detail_blocks",
+    "get_term_name",
+    "get_total_term_count",
 ]
 
 
@@ -72,8 +72,8 @@ async def get_element_text(page: Page, selector: str, *, timeout: float = 5_000)
     locator = page.locator(selector).first
     try:
         text = await locator.text_content(timeout=timeout)
-    except Exception:
-        logger.debug("Selector %r had no text within %sms", selector, timeout)
+    except Exception as exc:
+        logger.debug("Selector %r had no text within %sms", selector, timeout, exc_info=exc)
         return ""
     return (text or "").strip()
 

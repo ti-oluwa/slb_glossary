@@ -16,10 +16,11 @@ from .writers import WRITERS, Writer
 
 __all__ = [
     "RecordLike",
-    "Writer",
     "UnsupportedFormatError",
-    "save",
+    "Writer",
+    "writer",
     "register_writer",
+    "save",
     "supported_formats",
 ]
 
@@ -78,6 +79,22 @@ def register_writer(format: str, writer: Writer) -> None:
         for examples.
     """
     WRITERS[format.lower().lstrip(".")] = writer
+
+
+def writer(format: str) -> typing.Callable[[Writer], Writer]:
+    """
+    Decorator to register a writer function for a given file format.
+
+    :param format: File extension the writer handles, without a leading
+        dot, e.g. `"yaml"`.
+    :return: A decorator that registers the decorated function as a writer.
+    """
+
+    def decorator(func: Writer) -> Writer:
+        register_writer(format, func)
+        return func
+
+    return decorator
 
 
 def supported_formats() -> list[str]:

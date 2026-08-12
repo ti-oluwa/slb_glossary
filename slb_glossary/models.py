@@ -1,4 +1,4 @@
-"""Core data structures shared across the `slb_glossary` package."""
+"""Core data structures."""
 
 import dataclasses
 import enum
@@ -40,14 +40,23 @@ class SearchResult(typing.NamedTuple):
     url: str | None
     """URL of the glossary page the definition was extracted from."""
 
+    @property
+    def fields(self) -> list[str]:
+        """Return a list of the field names in this result."""
+        return list(self._fields)
 
-@dataclasses.dataclass
+    def asdict(self) -> dict[str, typing.Any]:
+        """Return a dictionary representation of this result."""
+        return self._asdict()
+
+
+@dataclasses.dataclass(slots=True)
 class SearchSession:
     """
     An open, ready-to-query session against the SLB glossary.
 
-    Obtain one with `slb_glossary.browser.open_search_session` or the
-    `slb_glossary.browser.glossary_session` context manager, then pass it to
+    Obtain one with `slb_glossary.browser.open_session` or the
+    `slb_glossary.browser.search_session` context manager, then pass it to
     the search functions in `slb_glossary.search`. A session is single-page
     and not safe to use concurrently from multiple coroutines at once; open
     one session per concurrent task if you need parallelism.

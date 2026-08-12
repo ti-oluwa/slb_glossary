@@ -13,7 +13,7 @@ T = typing.TypeVar("T")
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["BackoffType", "BackoffPolicy", "DEFAULT_BACKOFF_POLICY", "retry_async"]
+__all__ = ["DEFAULT_BACKOFF_POLICY", "BackoffPolicy", "BackoffType", "retry"]
 
 
 class BackoffType(enum.Enum):
@@ -34,7 +34,9 @@ class BackoffType(enum.Enum):
 
 @dataclasses.dataclass(frozen=True)
 class BackoffPolicy:
-    """How `retry_async` should space out and bound its retry attempts."""
+    """
+    Retry policy controlling how `retry` should space out and bound its retry attempts.
+    """
 
     attempts: int = 3
     """Maximum number of times to call the retried function."""
@@ -79,19 +81,19 @@ class BackoffPolicy:
         return max(delay, 0.0)
 
     @classmethod
-    def constant(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> "BackoffPolicy":
+    def constant(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> typing.Self:
         """Build a `CONSTANT` policy waiting `base_delay` between attempts."""
         return cls(base_delay=base_delay, backoff_type=BackoffType.CONSTANT, **kwargs)
 
     @classmethod
-    def linear(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> "BackoffPolicy":
+    def linear(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> typing.Self:
         """Build a `LINEAR` policy growing the delay by `base_delay` each attempt."""
         return cls(base_delay=base_delay, backoff_type=BackoffType.LINEAR, **kwargs)
 
     @classmethod
     def exponential(
         cls, base_delay: float = 0.8, factor: float = 2.0, **kwargs: typing.Any
-    ) -> "BackoffPolicy":
+    ) -> typing.Self:
         """Build an `EXPONENTIAL` policy, the default and generally safest choice."""
         return cls(
             base_delay=base_delay,
@@ -103,7 +105,7 @@ class BackoffPolicy:
     @classmethod
     def logarithmic(
         cls, base_delay: float = 0.8, factor: float = 2.0, **kwargs: typing.Any
-    ) -> "BackoffPolicy":
+    ) -> typing.Self:
         """Build a `LOGARITHMIC` policy, for retries that should barely grow."""
         return cls(
             base_delay=base_delay,
@@ -117,7 +119,7 @@ DEFAULT_BACKOFF_POLICY = BackoffPolicy()
 """The `BackoffPolicy` used wherever a retry isn't given one explicitly."""
 
 
-async def retry_async(
+async def retry(
     func: typing.Callable[[], typing.Awaitable[T | None]],
     *,
     policy: BackoffPolicy = DEFAULT_BACKOFF_POLICY,

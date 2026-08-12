@@ -15,9 +15,9 @@ class RecordLike(typing.Protocol):
     protocol, never on `SearchResult` itself.
     """
 
-    _fields: tuple[str, ...]
+    fields: tuple[str, ...]
 
-    def _asdict(self) -> dict[str, typing.Any]: ...
+    def asdict(self) -> dict[str, typing.Any]: ...
 
 
 async def materialize_records(
@@ -32,4 +32,4 @@ async def materialize_records(
     """
     if hasattr(records, "__aiter__"):
         return [record async for record in records]  # type: ignore[union-attr]
-    return list(records)
+    return list(records)  # type: ignore[union-attr]

@@ -1,14 +1,11 @@
 """Grammatical label lookups for glossary term definitions."""
 
-import typing
-
 from .models import Language
-
 
 __all__ = ["resolve_grammatical_label"]
 
 
-_GRAMMATICAL_LABELS: typing.Dict[Language, typing.Dict[str, str]] = {
+_GRAMMATICAL_LABELS: dict[Language, dict[str, str]] = {
     Language.ENGLISH: {
         "n.": "Noun",
         "pron.": "Pronoun",

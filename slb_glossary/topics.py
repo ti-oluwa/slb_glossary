@@ -1,4 +1,4 @@
-"""Fetching and matching glossary topics (disciplines)."""
+"""API for fetching and matching glossary topics (disciplines)."""
 
 import asyncio
 import logging
@@ -7,7 +7,7 @@ from difflib import get_close_matches
 
 from patchright.async_api import Page
 
-from .backoff import DEFAULT_BACKOFF_POLICY, BackoffPolicy, retry_async
+from .backoff import DEFAULT_BACKOFF_POLICY, BackoffPolicy, retry
 from .models import SearchSession
 from .parsing import (
     FACET_EXPAND_SELECTOR,
@@ -20,7 +20,7 @@ from .parsing import (
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["fetch_topics", "refresh_topics", "get_topic_match"]
+__all__ = ["fetch_topics", "get_topic_match", "refresh_topics"]
 
 
 async def fetch_topics(
@@ -50,7 +50,7 @@ async def fetch_topics(
         await page.goto(base_url, wait_until="domcontentloaded")
         return await get_element_text(page, FACET_HEADER_SELECTOR)
 
-    header_text = await retry_async(_load_facet_header, policy=backoff)
+    header_text = await retry(_load_facet_header, policy=backoff)
     if not header_text:
         logger.warning("Topics did not load after %d attempts", backoff.attempts)
         return {}, 0

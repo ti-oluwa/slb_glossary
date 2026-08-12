@@ -1,25 +1,45 @@
 """
-Search the Schlumberger Oilfield Glossary programmatically using Selenium.
-https://glossary.slb.com/
-
-This package is meant for research/instructional use only and may not be 
-suitable for production.
-
-#### Stable Internet Connection Required!!!
+Search the Schlumberger Oilfield Glossary (https://glossary.slb.com/).
 
 @Author: Daniel T. Afolayan (ti-oluwa)
 """
 
-from .glossary import Glossary, Browser, Language, SearchResult
-from .saver import Saver
+import logging
 
+from . import store
+from .backoff import BackoffPolicy, BackoffType
+from .browser import close_session, open_session, search_session
+from .engine import get_terms_on, iter_results_from_url, iter_term_urls, search
+from .exceptions import BrowserError, NetworkError, ParsingError
+from .models import Language, SearchResult, SearchSession
+from .topics import get_topic_match, refresh_topics
+from .utils import print_results, print_results_async
 
-__version__ = '0.0.1'
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+logging.basicConfig(
+    format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s", level=logging.INFO
+)
+
+__version__ = "0.2.0"
 __all__ = [
-    'Glossary', 
-    'Saver', 
-    "Browser", 
-    "Language", 
-    "SearchResult"
+    "store",
+    "open_session",
+    "close_session",
+    "search_session",
+    "SearchSession",
+    "Language",
+    "SearchResult",
+    "search",
+    "get_terms_on",
+    "iter_term_urls",
+    "iter_results_from_url",
+    "print_results",
+    "print_results_async",
+    "get_topic_match",
+    "refresh_topics",
+    "BackoffPolicy",
+    "BackoffType",
+    "NetworkError",
+    "BrowserError",
+    "ParsingError",
 ]
-
