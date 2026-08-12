@@ -1,0 +1,152 @@
+"""Configurable backoff strategies for retrying flaky page loads."""
+
+import asyncio
+import dataclasses
+import enum
+import logging
+import math
+import random
+import typing
+
+T = typing.TypeVar("T")
+
+logger = logging.getLogger(__name__)
+
+
+__all__ = ["BackoffType", "BackoffPolicy", "DEFAULT_BACKOFF_POLICY", "retry_async"]
+
+
+class BackoffType(enum.Enum):
+    """A strategy for spacing out retry attempts."""
+
+    CONSTANT = "constant"
+    """Wait `base_delay` before every attempt."""
+
+    LINEAR = "linear"
+    """Wait `base_delay * attempt` before each attempt."""
+
+    EXPONENTIAL = "exponential"
+    """Wait `base_delay * factor ** (attempt - 1)` before each attempt."""
+
+    LOGARITHMIC = "logarithmic"
+    """Wait `base_delay * log(attempt + 1, factor)` before each attempt."""
+
+
+@dataclasses.dataclass(frozen=True)
+class BackoffPolicy:
+    """How `retry_async` should space out and bound its retry attempts."""
+
+    attempts: int = 3
+    """Maximum number of times to call the retried function."""
+
+    base_delay: float = 0.8
+    """Seconds used as the base of the backoff calculation."""
+
+    backoff_type: BackoffType = BackoffType.EXPONENTIAL
+    """Strategy used to grow the delay between attempts."""
+
+    factor: float = 2.0
+    """Growth base for `EXPONENTIAL`, or log base for `LOGARITHMIC`."""
+
+    max_delay: float | None = 10.0
+    """Upper bound on any single delay. Uncapped if `None`."""
+
+    jitter: bool = True
+    """Randomize each delay by up to +/-50% to avoid retry storms."""
+
+    def delay_for_attempt(self, attempt: int) -> float:
+        """
+        Compute the delay to wait after the given attempt number.
+
+        :param attempt: The 1-indexed attempt that just failed.
+        :return: Seconds to wait before the next attempt.
+        """
+        if self.backoff_type is BackoffType.CONSTANT:
+            delay = self.base_delay
+        elif self.backoff_type is BackoffType.LINEAR:
+            delay = self.base_delay * attempt
+        elif self.backoff_type is BackoffType.EXPONENTIAL:
+            delay = self.base_delay * (self.factor ** (attempt - 1))
+        elif self.backoff_type is BackoffType.LOGARITHMIC:
+            delay = self.base_delay * math.log(attempt + 1, self.factor)
+        else:  # pragma: no cover - exhaustive over BackoffType
+            raise ValueError(f"Unsupported backoff type: {self.backoff_type!r}")
+
+        if self.max_delay is not None:
+            delay = min(delay, self.max_delay)
+        if self.jitter:
+            delay *= random.uniform(0.5, 1.5)
+        return max(delay, 0.0)
+
+    @classmethod
+    def constant(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> "BackoffPolicy":
+        """Build a `CONSTANT` policy waiting `base_delay` between attempts."""
+        return cls(base_delay=base_delay, backoff_type=BackoffType.CONSTANT, **kwargs)
+
+    @classmethod
+    def linear(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> "BackoffPolicy":
+        """Build a `LINEAR` policy growing the delay by `base_delay` each attempt."""
+        return cls(base_delay=base_delay, backoff_type=BackoffType.LINEAR, **kwargs)
+
+    @classmethod
+    def exponential(
+        cls, base_delay: float = 0.8, factor: float = 2.0, **kwargs: typing.Any
+    ) -> "BackoffPolicy":
+        """Build an `EXPONENTIAL` policy, the default and generally safest choice."""
+        return cls(
+            base_delay=base_delay,
+            backoff_type=BackoffType.EXPONENTIAL,
+            factor=factor,
+            **kwargs,
+        )
+
+    @classmethod
+    def logarithmic(
+        cls, base_delay: float = 0.8, factor: float = 2.0, **kwargs: typing.Any
+    ) -> "BackoffPolicy":
+        """Build a `LOGARITHMIC` policy, for retries that should barely grow."""
+        return cls(
+            base_delay=base_delay,
+            backoff_type=BackoffType.LOGARITHMIC,
+            factor=factor,
+            **kwargs,
+        )
+
+
+DEFAULT_BACKOFF_POLICY = BackoffPolicy()
+"""The `BackoffPolicy` used wherever a retry isn't given one explicitly."""
+
+
+async def retry_async(
+    func: typing.Callable[[], typing.Awaitable[T | None]],
+    *,
+    policy: BackoffPolicy = DEFAULT_BACKOFF_POLICY,
+) -> T | None:
+    """
+    Call `func` repeatedly, backing off per `policy`, until it returns truthy.
+
+    Useful for glossary pages that briefly render empty content while their
+    JavaScript search widget finishes loading.
+
+    :param func: A zero-argument async callable to retry.
+    :param policy: Controls how many attempts are made and how long to wait
+        between them.
+    :return: The first truthy result of `func`, or its last (falsy) result
+        once `policy.attempts` is exhausted.
+    """
+    result: T | None = None
+    for attempt in range(1, policy.attempts + 1):
+        result = await func()
+        if result:
+            return result
+        if attempt < policy.attempts:
+            delay = policy.delay_for_attempt(attempt)
+            logger.debug(
+                "Attempt %d/%d returned nothing, retrying in %.2fs",
+                attempt,
+                policy.attempts,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    logger.warning("Gave up after %d attempts calling %s", policy.attempts, func)
+    return result
