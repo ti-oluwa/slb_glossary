@@ -2,7 +2,7 @@
 
 from urllib.parse import quote
 
-from .models import Language
+from slb_glossary.models import Language
 
 __all__ = [
     "build_pager_query",

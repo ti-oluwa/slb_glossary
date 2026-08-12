@@ -1,6 +1,6 @@
 """Grammatical label lookups for glossary term definitions."""
 
-from .models import Language
+from slb_glossary.models import Language
 
 __all__ = ["resolve_grammatical_label"]
 

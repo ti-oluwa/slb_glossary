@@ -9,7 +9,7 @@ import logging
 
 from patchright.async_api import Page
 
-from .utils import parse_int
+from slb_glossary.utils import parse_int
 
 logger = logging.getLogger(__name__)
 

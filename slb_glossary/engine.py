@@ -6,17 +6,17 @@ import math
 import time
 import typing
 
-from .grammar import resolve_grammatical_label
-from .models import SearchResult, SearchSession
-from .parsing import (
+from slb_glossary.grammar import resolve_grammatical_label
+from slb_glossary.models import SearchResult, SearchSession
+from slb_glossary.parsers import (
     get_result_links,
     get_results_header_text,
     get_term_detail_blocks,
     get_term_name,
     get_total_term_count,
 )
-from .topics import get_topic_match
-from .urls import build_pager_query, build_search_url
+from slb_glossary.topics import get_topic_match
+from slb_glossary.urls import build_pager_query, build_search_url
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,10 @@ async def _wait_for_results_to_settle(
         return
 
     deadline = time.monotonic() + session.settle_timeout
+    previous_links = list(previous_links)
     while time.monotonic() < deadline:
         current_links = await get_result_links(session.page)
-        if current_links != list(previous_links):
+        if current_links != previous_links:
             return
         await asyncio.sleep(session.poll_interval)
     logger.debug(
@@ -92,7 +93,7 @@ async def iter_term_urls(
     if not under_topic and not (query or start_letter):
         return
 
-    topic_match = get_topic_match(session.topics, under_topic) if under_topic else None
+    topic_match = get_topic_match(session.topics, topic=under_topic) if under_topic else None
     logger.debug(
         "Iterating term URLs: query=%r under_topic=%r start_letter=%r limit=%r",
         query,
@@ -184,10 +185,8 @@ async def iter_results_from_url(
         definition = block[2] if len(block) > 2 and block[1] == "" else block[1]
 
         summary_words = summary_line.split()
-        grammatical_label_abbreviation = summary_words[1] if len(summary_words) > 1 else ""
-        grammatical_label = resolve_grammatical_label(
-            session.language, grammatical_label_abbreviation
-        )
+        label_abbreviation = summary_words[1] if len(summary_words) > 1 else ""
+        grammatical_label = resolve_grammatical_label(session.language, label_abbreviation)
 
         if resolved_topic and resolved_topic.lower() in summary_line.lower():
             topic = resolved_topic

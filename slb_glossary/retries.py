@@ -13,7 +13,7 @@ T = typing.TypeVar("T")
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["DEFAULT_BACKOFF_POLICY", "BackoffPolicy", "BackoffType", "retry"]
+__all__ = ["DEFAULT_RETRY_POLICY", "RetryPolicy", "BackoffType", "retry"]
 
 
 class BackoffType(enum.Enum):
@@ -33,7 +33,7 @@ class BackoffType(enum.Enum):
 
 
 @dataclasses.dataclass(frozen=True)
-class BackoffPolicy:
+class RetryPolicy:
     """
     Retry policy controlling how `retry` should space out and bound its retry attempts.
     """
@@ -115,14 +115,14 @@ class BackoffPolicy:
         )
 
 
-DEFAULT_BACKOFF_POLICY = BackoffPolicy()
-"""The `BackoffPolicy` used wherever a retry isn't given one explicitly."""
+DEFAULT_RETRY_POLICY = RetryPolicy()
+"""The `RetryPolicy` used wherever a retry isn't given one explicitly."""
 
 
 async def retry(
     func: typing.Callable[[], typing.Awaitable[T | None]],
     *,
-    policy: BackoffPolicy = DEFAULT_BACKOFF_POLICY,
+    policy: RetryPolicy = DEFAULT_RETRY_POLICY,
 ) -> T | None:
     """
     Call `func` repeatedly, backing off per `policy`, until it returns truthy.

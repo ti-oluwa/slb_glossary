@@ -7,15 +7,14 @@ Search the Schlumberger Oilfield Glossary (https://glossary.slb.com/).
 import logging
 
 from . import store
-from .backoff import BackoffPolicy, BackoffType
-from .browser import close_session, open_session, search_session
+from .browser import BrowserType, ResourceType, close_session, open_session, search_session
 from .engine import get_terms_on, iter_results_from_url, iter_term_urls, search
 from .exceptions import BrowserError, NetworkError, ParsingError
 from .models import Language, SearchResult, SearchSession
+from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics
 from .utils import print_results, print_results_async
 
-logging.getLogger(__name__).addHandler(logging.NullHandler())
 logging.basicConfig(
     format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -37,9 +36,11 @@ __all__ = [
     "print_results_async",
     "get_topic_match",
     "refresh_topics",
-    "BackoffPolicy",
+    "RetryPolicy",
     "BackoffType",
     "NetworkError",
     "BrowserError",
     "ParsingError",
+    "BrowserType",
+    "ResourceType",
 ]

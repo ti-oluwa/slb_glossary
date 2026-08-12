@@ -7,15 +7,16 @@ from difflib import get_close_matches
 
 from patchright.async_api import Page
 
-from .backoff import DEFAULT_BACKOFF_POLICY, BackoffPolicy, retry
-from .models import SearchSession
-from .parsing import (
+from slb_glossary.models import SearchSession
+from slb_glossary.parsers import (
     FACET_EXPAND_SELECTOR,
     FACET_HEADER_SELECTOR,
     get_element_text,
     get_facet_topics,
     get_glossary_size,
 )
+from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
+from slb_glossary.retries import retry as retry_func
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ async def fetch_topics(
     *,
     base_url: str,
     settle_delay: float = 0.8,
-    backoff: BackoffPolicy = DEFAULT_BACKOFF_POLICY,
+    retry: RetryPolicy = DEFAULT_RETRY_POLICY,
 ) -> tuple[dict[str, int], int]:
     """
     Load `base_url` and read the glossary's topic list and total term count.
@@ -39,7 +40,7 @@ async def fetch_topics(
     :param settle_delay: Seconds to wait after the facet panel first renders
         and after expanding it, giving the site's search widget time to
         finish populating both.
-    :param backoff: Policy for retrying the page load if the facet panel
+    :param retry: Policy for retrying the page load if the facet panel
         renders empty.
     :return: A `(topics, size)` pair: a mapping of topic name to term count,
         and the total number of terms in the glossary.
@@ -50,9 +51,9 @@ async def fetch_topics(
         await page.goto(base_url, wait_until="domcontentloaded")
         return await get_element_text(page, FACET_HEADER_SELECTOR)
 
-    header_text = await retry(_load_facet_header, policy=backoff)
+    header_text = await retry_func(_load_facet_header, policy=retry)
     if not header_text:
-        logger.warning("Topics did not load after %d attempts", backoff.attempts)
+        logger.warning("Topics did not load after %d attempts", retry.attempts)
         return {}, 0
 
     await asyncio.sleep(settle_delay)
@@ -79,9 +80,7 @@ async def refresh_topics(session: SearchSession) -> SearchSession:
     :param session: The session to refresh.
     :return: `session`, with `topics` and `size` updated in place.
     """
-    topics, size = await fetch_topics(
-        session.page, base_url=session.base_url, backoff=session.backoff
-    )
+    topics, size = await fetch_topics(session.page, base_url=session.base_url, retry=session.retry)
     session.topics = topics
     session.size = size
     return session

@@ -6,7 +6,7 @@ import typing
 
 from patchright.async_api import Browser, BrowserContext, Page, Playwright
 
-from .backoff import BackoffPolicy
+from slb_glossary.retries import RetryPolicy
 
 __all__ = [
     "Language",
@@ -50,16 +50,17 @@ class SearchResult(typing.NamedTuple):
         return self._asdict()
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, kw_only=True)
 class SearchSession:
     """
     An open, ready-to-query session against the SLB glossary.
 
     Obtain one with `slb_glossary.browser.open_session` or the
     `slb_glossary.browser.search_session` context manager, then pass it to
-    the search functions in `slb_glossary.search`. A session is single-page
-    and not safe to use concurrently from multiple coroutines at once; open
-    one session per concurrent task if you need parallelism.
+    the search functions in `slb_glossary.engine`.
+
+    A session is single-page and not safe to use concurrently from multiple
+    coroutines at once; open one session per concurrent task if you need parallelism.
     """
 
     playwright: Playwright
@@ -96,7 +97,7 @@ class SearchSession:
     blocked_resource_types: frozenset[str] = dataclasses.field(default_factory=frozenset)
     """Request resource types (e.g. `"image"`) dropped for this session."""
 
-    backoff: BackoffPolicy = dataclasses.field(default_factory=BackoffPolicy)
+    retry: RetryPolicy = dataclasses.field(default_factory=RetryPolicy)
     """Policy used to retry page loads that render before their JavaScript
     search widget has finished populating."""
 

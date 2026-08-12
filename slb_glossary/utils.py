@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
-from .models import SearchResult
+from slb_glossary.models import SearchResult
 
 __all__ = ["parse_int", "print_results", "print_results_async"]
 

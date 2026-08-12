@@ -107,7 +107,7 @@ async with slb.search_session(headless=True) as session:
 | `block`              | `True`                 | Resource types to drop for speed. `True` blocks images/media/fonts, `False` blocks nothing, or pass your own iterable, e.g. `{"image", "stylesheet"}`. |
 | `timeout`            | `30_000`               | Milliseconds to wait for page loads and element lookups.                                            |
 | `terms_per_tab`      | `12`                   | Results per page, as returned by the glossary site. Rarely needs changing.                          |
-| `backoff`            | `BackoffPolicy()`      | Retry policy for the initial topic load, reused by search functions. See [Retries and backoff](#retries-and-backoff). |
+| `backoff`            | `RetryPolicy()`      | Retry policy for the initial topic load, reused by search functions. See [Retries and backoff](#retries-and-backoff). |
 | `settle_timeout`     | `8.0`                  | Seconds to wait for results to update after a search filter changes (the site updates via JS, not a full page load). |
 | `poll_interval`      | `0.3`                  | Seconds between polls while waiting on `settle_timeout`.                                            |
 | `executable_path`    | `None`                 | Path to a specific browser build, if not using patchright's own install.                            |
@@ -117,17 +117,17 @@ async with slb.search_session(headless=True) as session:
 
 ### Retries and backoff
 
-Page loads that briefly render before the glossary's JavaScript widget finishes populating are retried using a `BackoffPolicy`:
+Page loads that briefly render before the glossary's JavaScript widget finishes populating are retried using a `RetryPolicy`:
 
 ```python
-from slb_glossary import BackoffPolicy
+from slb_glossary import RetryPolicy
 
-policy = BackoffPolicy.exponential(base_delay=0.5, attempts=5, max_delay=8.0)
-async with slb.search_session(backoff=policy) as session:
+policy = RetryPolicy.exponential(base_delay=0.5, attempts=5, max_delay=8.0)
+async with slb.search_session(retry=policy) as session:
     ...
 ```
 
-Four strategies are available, each with a constructor shortcut: `BackoffPolicy.constant()`, `.linear()`, `.exponential()` (the default) and `.logarithmic()`. All accept `attempts`, `base_delay`, `factor`, `max_delay` and `jitter` (randomizes each delay by +/-50% to avoid retry storms; on by default).
+Four strategies are available, each with a constructor shortcut: `RetryPolicy.constant()`, `.linear()`, `.exponential()` (the default) and `.logarithmic()`. All accept `attempts`, `base_delay`, `factor`, `max_delay` and `jitter` (randomizes each delay by +/-50% to avoid retry storms; on by default).
 
 ### Searching
 

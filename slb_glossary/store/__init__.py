@@ -1,12 +1,4 @@
-"""
-Save search results to a file.
-
-This package has no dependency on the rest of `slb_glossary`: `save` accepts
-any sequence (or async iterable) of namedtuple-like records - anything with
-`_asdict()` and `_fields`, which `slb_glossary.models.SearchResult` already
-provides - so it can save results from this package, results you built
-yourself, or records from an entirely different project.
-"""
+"""API for persisting search results to a store."""
 
 import pathlib
 import typing

@@ -6,7 +6,7 @@ import json
 import pathlib
 import typing
 
-from .records import RecordLike
+from slb_glossary.store.records import RecordLike
 
 __all__ = ["WRITERS", "Writer", "write_csv", "write_json", "write_txt", "write_xlsx"]
 
