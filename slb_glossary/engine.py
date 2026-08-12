@@ -125,11 +125,11 @@ async def iter_term_urls(
     # The glossary auto-runs an unfiltered query as soon as the search
     # screen loads (that's what populates the facet panel), so the page
     # always has *some* results-panel state to diff a filtered search
-    # against - read it now rather than starting from an empty baseline.
+    # against. So we read it now rather than starting from an empty baseline.
     # An empty baseline previously meant "nothing to wait for", so the
     # very first search of every session read that pre-filter panel
-    # before the site's JS had applied the query - which looked exactly
-    # like every search returning the same (default) results.
+    # before the site's JS had applied the query. Which looks exactly
+    # like every search was returning the same (default) results.
     previous_links = await get_result_links(session.page)
     previous_header = await get_results_header_text(session.page)
 

@@ -145,10 +145,16 @@ async def _launch_browser(
     """
     Launch `browser_type` off `playwright`, however it happens to be named.
 
-    Uses `getattr` rather than a fixed `playwright.chromium` reference so any
-    browser family the installed Playwright/patchright driver exposes -
-    including ones added in a later release - can be launched without a code
-    change here.
+    :param playwright: The Playwright instance to launch the browser from.
+    :param browser_type: The browser family to launch.
+    :param headless: Whether to launch the browser headless.
+    :param executable_path: Path to a specific browser build to launch.
+    :param proxy: Playwright proxy settings, e.g. `{"server": "http://myproxy:3128"}`.
+    :param launch_kwargs: Additional keyword arguments to pass
+        to Playwright's `browser.launch()` call. Values passed here are merged
+        with the library defaults, and Chromium gets a default `args` list if
+        none is provided.
+    :return: The launched browser.
     """
     browser_type = BrowserType(browser_type) if isinstance(browser_type, str) else browser_type
     launcher = getattr(playwright, browser_type.value, None)
