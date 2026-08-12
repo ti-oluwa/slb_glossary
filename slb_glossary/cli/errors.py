@@ -23,8 +23,10 @@ EXIT_CODES: dict[type[BaseException], int] = {
     BrowserError: 3,
     ParsingError: 4,
 }
-"""Maps a known library exception type to the process exit code it should
-produce, so scripts calling this CLI can distinguish failure causes."""
+"""
+Maps a known library exception type to the process exit code it should
+produce, so scripts calling this CLI can distinguish failure causes.
+"""
 
 
 def _describe(exc: BaseException) -> str:

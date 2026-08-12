@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 __all__ = ["get_terms_on", "iter_results_from_url", "iter_term_urls", "search"]
 
 
-async def _wait_for_results_to_settle(
+async def _load_url(
     session: SearchSession,
     url: str,
     *,
     previous_links: typing.Sequence[str],
-) -> None:
+) -> list[str] | None:
     """
     Load `url` and wait until the results list differs from `previous_links`.
 
@@ -54,7 +54,7 @@ async def _wait_for_results_to_settle(
     while time.monotonic() < deadline:
         current_links = await get_result_links(session.page)
         if current_links != previous_links:
-            return
+            return current_links
         await asyncio.sleep(session.poll_interval)
     logger.debug(
         "Results list did not change within %.2fs of loading %s", session.settle_timeout, url
@@ -65,7 +65,7 @@ async def iter_term_urls(
     session: SearchSession,
     *,
     query: str | None = None,
-    under_topic: str | None = None,
+    topic: str | None = None,
     start_letter: str | None = None,
     limit: int | None = None,
 ) -> typing.AsyncIterator[str]:
@@ -77,7 +77,7 @@ async def iter_term_urls(
 
     :param session: An open glossary session.
     :param query: A free-text search query.
-    :param under_topic: Restrict results to this topic, or several
+    :param topic: Restrict results to this topic, or several
         comma-separated topics, e.g. `"Well completions,Perforating"`. Need
         not be an exact match; the closest topic(s) in `session.topics` are
         used. See `slb_glossary.topics.get_topic_match`.
@@ -90,14 +90,14 @@ async def iter_term_urls(
     """
     if limit is not None and limit < 1:
         raise ValueError("limit must be greater than 0")
-    if not under_topic and not (query or start_letter):
+    if not topic and not (query or start_letter):
         return
 
-    topic_match = get_topic_match(session.topics, topic=under_topic) if under_topic else None
+    topic_match = get_topic_match(session.topics, topic=topic) if topic else None
     logger.debug(
-        "Iterating term URLs: query=%r under_topic=%r start_letter=%r limit=%r",
+        "Iterating term URLs: query=%r topic=%r start_letter=%r limit=%r",
         query,
-        under_topic,
+        topic,
         start_letter,
         limit,
     )
@@ -116,7 +116,15 @@ async def iter_term_urls(
             start_letter=start_letter,
             pager_query=pager_query,
         )
-        await _wait_for_results_to_settle(session, url, previous_links=previous_links)
+        result = await _load_url(session, url, previous_links=previous_links)
+        if result is None:
+            links = await get_result_links(session.page)
+        else:
+            links = result
+
+        if not links:
+            logger.debug("No result links on tab %d, stopping", tab)
+            return
 
         header_text = await get_results_header_text(session.page)
         if not header_text:
@@ -130,11 +138,6 @@ async def iter_term_urls(
         if max_tabs is None:
             max_tabs = math.ceil(total_terms / session.terms_per_tab)
             logger.debug("Search matched %d terms across %d tabs", total_terms, max_tabs)
-
-        links = await get_result_links(session.page)
-        if not links:
-            logger.debug("No result links on tab %d, stopping", tab)
-            return
 
         for href in links:
             yield href
@@ -152,7 +155,7 @@ async def iter_results_from_url(
     session: SearchSession,
     url: str,
     *,
-    under_topic: str | None = None,
+    topic: str | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Load a term detail page and lazily yield each definition found on it.
@@ -162,13 +165,13 @@ async def iter_results_from_url(
 
     :param session: An open glossary session.
     :param url: A term detail page URL, as yielded by `iter_term_urls`.
-    :param under_topic: If a definition's source topic matches this topic
+    :param topic: If a definition's source topic matches this topic
         (or one of several comma-separated topics), that resolved topic
         name is used for its `SearchResult.topic` instead of the topic
         parsed off the page.
     :yield: One `SearchResult` per definition found on the page.
     """
-    resolved_topic = get_topic_match(session.topics, under_topic) if under_topic else None
+    resolved_topic = get_topic_match(session.topics, topic) if topic else None
 
     await session.page.goto(url, wait_until="domcontentloaded")
     term_name = await get_term_name(session.page)
@@ -206,7 +209,7 @@ async def search(
     session: SearchSession,
     query: str,
     *,
-    under_topic: str | None = None,
+    topic: str | None = None,
     start_letter: str | None = None,
     limit: int | None = 3,
 ) -> typing.AsyncIterator[SearchResult]:
@@ -219,7 +222,7 @@ async def search(
 
     :param session: An open glossary session.
     :param query: The search query.
-    :param under_topic: Restrict results to this topic, or several
+    :param topic: Restrict results to this topic, or several
         comma-separated topics. See `iter_term_urls` for matching rules.
     :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of terms to look up. Looks up every
@@ -231,11 +234,11 @@ async def search(
     async for url in iter_term_urls(
         session,
         query=query,
-        under_topic=under_topic,
+        topic=topic,
         start_letter=start_letter,
         limit=limit,
     ):
-        async for result in iter_results_from_url(session, url, under_topic=under_topic):
+        async for result in iter_results_from_url(session, url, topic=topic):
             count += 1
             yield result
     logger.info("Search for %r yielded %d result(s)", query, count)
@@ -263,8 +266,8 @@ async def get_terms_on(
     """
     logger.info("Fetching terms under topic %r (limit=%r)", topic, limit)
     count = 0
-    async for url in iter_term_urls(session, under_topic=topic, limit=limit):
-        async for result in iter_results_from_url(session, url, under_topic=topic):
+    async for url in iter_term_urls(session, topic=topic, limit=limit):
+        async for result in iter_results_from_url(session, url, topic=topic):
             count += 1
             yield result
             break

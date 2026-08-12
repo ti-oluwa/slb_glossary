@@ -55,10 +55,10 @@ async def write_json(records: list[RecordLike], destination: pathlib.Path) -> No
     def _write() -> None:
         data: dict[typing.Any, dict[str, typing.Any]] = {}
         for record in records:
-            as_dict = record.asdict()
+            record_dict = record.asdict()
             key_field = record.fields[0]
-            key = as_dict.pop(key_field)
-            data[key] = as_dict
+            key = record_dict.pop(key_field)
+            data[key] = record_dict
         with open(destination, "w", encoding="utf-8") as file:
             json.dump(data, file, indent=2, ensure_ascii=False)
 
@@ -71,12 +71,12 @@ async def write_txt(records: list[RecordLike], destination: pathlib.Path) -> Non
     def _write() -> None:
         lines: list[str] = []
         for index, record in enumerate(records, start=1):
-            as_dict = record.asdict()
+            record_dict = record.asdict()
             fields = record.fields
             title_field, *restfields = fields
-            lines.append(f"({index}) {as_dict[title_field]}")
+            lines.append(f"({index}) {record_dict[title_field]}")
             for field in restfields:
-                value = as_dict[field]
+                value = record_dict[field]
                 lines.append(f"    {humanize_field(field)}: {value if value is not None else ''}")
             lines.append("")
         with open(destination, "w", encoding="utf-8") as file:

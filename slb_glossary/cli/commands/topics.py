@@ -39,7 +39,9 @@ def topics() -> None:
     """List or refresh the glossary's topic (discipline) list."""
 
 
-async def _topic_records(topic_counts: typing.Mapping[str, int]) -> typing.AsyncIterator[TopicRecord]:
+async def _topic_records(
+    topic_counts: typing.Mapping[str, int],
+) -> typing.AsyncIterator[TopicRecord]:
     """Yield a `TopicRecord` for each entry in `topic_counts`, sorted by name."""
     for name, count in sorted(topic_counts.items()):
         yield TopicRecord(topic=name, term_count=count)

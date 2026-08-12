@@ -139,7 +139,7 @@ async for result in slb.search(session, "gas lift", limit=5):
     ...
 
 # Search within one or more topics (comma-separated)
-async for result in slb.search(session, "flow", under_topic="Well completions,Production"):
+async for result in slb.search(session, "flow", topic="Well completions,Production"):
     ...
 
 # Every term filed under a topic - one result per term

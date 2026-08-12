@@ -31,9 +31,27 @@ __all__ = ["terms"]
     is_flag=True,
     help="Don't print results to the console (useful with --save).",
 )
-@click.option("--url/--no-url", "show_url", default=True, show_default=True, help="Show/hide the source URL column.")
-@click.option("--topic-column/--no-topic-column", "show_topic", default=True, show_default=True, help="Show/hide the topic column.")
-@click.option("--grammar-column/--no-grammar-column", "show_grammar", default=True, show_default=True, help="Show/hide the grammatical label column.")
+@click.option(
+    "--url/--no-url",
+    "show_url",
+    default=True,
+    show_default=True,
+    help="Show/hide the source URL column.",
+)
+@click.option(
+    "--topic-column/--no-topic-column",
+    "show_topic",
+    default=True,
+    show_default=True,
+    help="Show/hide the topic column.",
+)
+@click.option(
+    "--grammar-column/--no-grammar-column",
+    "show_grammar",
+    default=True,
+    show_default=True,
+    help="Show/hide the grammatical label column.",
+)
 @session_options
 @store_options
 @click.option(

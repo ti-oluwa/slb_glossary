@@ -109,9 +109,7 @@ def _run_driver(args: typing.Sequence[str]) -> None:
         raise BrowserInstallError(f"Could not run the patchright driver: {exc}") from exc
 
     if result.returncode != 0:
-        raise BrowserInstallError(
-            f"`{' '.join(command)}` exited with status {result.returncode}."
-        )
+        raise BrowserInstallError(f"`{' '.join(command)}` exited with status {result.returncode}.")
 
 
 def install_browsers(

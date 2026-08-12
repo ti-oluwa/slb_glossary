@@ -104,7 +104,7 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
             url_iter = iter_term_urls(
                 session,
                 query=params["query"],
-                under_topic=params["topic"],
+                topic=params["topic"],
                 start_letter=params["start_letter"],
                 limit=limit,
             )
@@ -138,9 +138,27 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
     is_flag=True,
     help="Don't print results to the console (useful with --save).",
 )
-@click.option("--url-column/--no-url-column", "show_url", default=True, show_default=True, help="Show/hide the source URL column.")
-@click.option("--topic-column/--no-topic-column", "show_topic", default=True, show_default=True, help="Show/hide the topic column.")
-@click.option("--grammar-column/--no-grammar-column", "show_grammar", default=True, show_default=True, help="Show/hide the grammatical label column.")
+@click.option(
+    "--url-column/--no-url-column",
+    "show_url",
+    default=True,
+    show_default=True,
+    help="Show/hide the source URL column.",
+)
+@click.option(
+    "--topic-column/--no-topic-column",
+    "show_topic",
+    default=True,
+    show_default=True,
+    help="Show/hide the topic column.",
+)
+@click.option(
+    "--grammar-column/--no-grammar-column",
+    "show_grammar",
+    default=True,
+    show_default=True,
+    help="Show/hide the grammatical label column.",
+)
 @session_options
 @store_options
 @click.option(
@@ -166,7 +184,7 @@ def fetch_url(ctx: click.Context, url: str, use_tui: bool, **params: typing.Any)
 
     async def _run() -> int:
         async with search_session(**session_kwargs_from_params(params)) as session:
-            results = iter_results_from_url(session, url, under_topic=params["topic"])
+            results = iter_results_from_url(session, url, topic=params["topic"])
             return await save_and_print(
                 results,
                 save_paths=params["save_paths"],

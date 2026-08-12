@@ -3,7 +3,13 @@
 import logging
 import typing
 
-import click
+try:
+    import click  # noqa: F401
+except ImportError:
+    raise SystemExit(
+        "The slb-glossary CLI requires the 'click' package. "
+        "Install it with `pip install slb-glossary[cli]`."
+    ) from None
 
 from slb_glossary.cli.commands import install, search, terms, topics, urls
 from slb_glossary.cli.tui import TuiUnavailableError, launch_tui
@@ -16,7 +22,7 @@ def _configure_logging(level_name: str) -> None:
     logging.getLogger("slb_glossary").setLevel(getattr(logging, level_name.upper()))
 
 
-@click.group("slb-glossary")
+@click.group("slb-glossary", invoke_without_command=True, no_args_is_help=True)
 @click.option(
     "--log-level",
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
@@ -50,19 +56,12 @@ def cli(ctx: click.Context, log_level: str, use_tui: bool) -> None:
 
 
 for command in (install, search, terms, topics, urls):
-    cli.add_command(typing.cast(click.Command, command))
+    cli.add_command(typing.cast(click.Command, command))  # type: ignore[attr-defined]
 
 
 def main() -> None:
     """Entry point installed as the `slb-glossary` console script."""
-    try:
-        import click as _click  # noqa: F401
-    except ImportError:
-        raise SystemExit(
-            "The slb-glossary CLI requires the 'click' package. "
-            "Install it with `pip install slb-glossary[cli]`."
-        ) from None
-    cli()
+    cli()  # type: ignore
 
 
 if __name__ == "__main__":

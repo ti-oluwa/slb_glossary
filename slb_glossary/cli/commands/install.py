@@ -111,7 +111,9 @@ def install(
             return
         for browser in installed:
             size_mb = browser.size_bytes / (1024 * 1024)
-            click.echo(f"{browser.family:<10} {browser.name:<24} {size_mb:8.1f} MB  {browser.path}")
+            click.echo(
+                f"{browser.family:<10} {browser.name:<24} {size_mb:8.1f} MB  {browser.path}"
+            )
         return
 
     if remove_only:
@@ -124,8 +126,14 @@ def install(
         return
 
     if update_only:
-        targets = browsers or [b.family for b in list_installed_browsers()] or list(KNOWN_BROWSERS)
-        install_browsers(sorted(set(targets)), force=True, with_deps=with_deps, only_shell=only_shell)
+        targets = (
+            browsers
+            or [browser.family for browser in list_installed_browsers()]
+            or list(KNOWN_BROWSERS)
+        )
+        install_browsers(
+            sorted(set(targets)), force=True, with_deps=with_deps, only_shell=only_shell
+        )
         click.echo(f"Updated: {', '.join(sorted(set(targets)))}")
         return
 
