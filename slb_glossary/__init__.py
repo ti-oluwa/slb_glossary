@@ -20,7 +20,7 @@ logging.basicConfig(
     format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-__version__ = "0.2.0"
+__version__ = "0.1.0"
 __all__ = [
     "store",
     "open_session",

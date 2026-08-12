@@ -9,7 +9,7 @@ async def main():
         backoff=policy,
         headless=True,
         use_stealth=True,
-        language=slb.Language.SPANISH,
+        language=slb.Language.ENGLISH,
     ) as session:
         await slb.print_results_async(slb.search(session, "autotracking", limit=5))
 

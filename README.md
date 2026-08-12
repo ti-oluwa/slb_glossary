@@ -4,6 +4,13 @@ Search the [Schlumberger Oilfield Glossary](https://glossary.slb.com/) programma
 
 > This package is intended for research or instructional use only.
 
+Attribution and disclaimer: this project uses content from the Schlumberger
+Oilfield Glossary (<https://glossary.slb.com>). That content is owned by
+Schlumberger; this project does not claim ownership of glossary entries or
+their text. Users should consult the original site and follow its terms of
+use when reusing or redistributing glossary content. See the NOTICE file for
+details and the project `LICENSE` for code licensing.
+
 ## Highlights
 
 * **Pure async.** Every glossary lookup is an `async` function; nothing blocks the event loop.
