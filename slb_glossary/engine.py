@@ -24,41 +24,58 @@ logger = logging.getLogger(__name__)
 __all__ = ["get_terms_on", "iter_results_from_url", "iter_term_urls", "search"]
 
 
-async def _load_url(
+async def _wait_for_settle(
     session: SearchSession,
     url: str,
     *,
     previous_links: typing.Sequence[str],
-) -> list[str] | None:
+    previous_header: str,
+) -> tuple[list[str], str]:
     """
-    Load `url` and wait until the results list differs from `previous_links`.
+    Load `url` and wait until the results panel differs from the given baseline.
 
     The glossary is a single-page application: navigating between search
     filters changes only the URL fragment, so a fresh `page.goto` can
     resolve before the site's JavaScript has actually re-rendered the
-    results list. This polls the rendered result links until they change,
-    or until `session.settle_timeout` elapses.
+    results panel. This polls the rendered result links and results header
+    until at least one of them differs from the caller's baseline, or
+    until `session.settle_timeout` elapses - whichever comes first.
 
     :param session: The session to load `url` on.
     :param url: The search URL to load.
-    :param previous_links: Result links rendered before this navigation, to
-        detect once the page has actually updated. Pass an empty sequence
-        on the first navigation of a session.
+    :param previous_links: Result links rendered on the page *before* this
+        navigation. Always pass the page's actual current state here, even
+        for the first search of a session - the glossary auto-runs an
+        unfiltered query as soon as the search screen loads, so there is
+        always something real to diff against. An empty sequence here
+        means "nothing rendered yet", which skips the wait entirely and
+        risks reading a stale, pre-filter panel.
+    :param previous_header: Results header text rendered before this
+        navigation - a second, independent signal that the panel actually
+        updated, so a coincidental match on `previous_links` alone (e.g.
+        the same top result happens to rank first for two different
+        queries) doesn't return before the panel has really changed.
+    :return: The `(links, header_text)` pair read once the panel changed,
+        or the last values read if `session.settle_timeout` elapsed first
+        without any observed change.
     """
     await session.page.goto(url, wait_until="domcontentloaded")
-    if not previous_links:
-        return
 
     deadline = time.monotonic() + session.settle_timeout
     previous_links = list(previous_links)
-    while time.monotonic() < deadline:
+    while True:
         current_links = await get_result_links(session.page)
-        if current_links != previous_links:
-            return current_links
+        current_header = await get_results_header_text(session.page)
+        if current_links != previous_links or current_header != previous_header:
+            return current_links, current_header
+        if time.monotonic() >= deadline:
+            logger.debug(
+                "Results panel did not change within %.2fs of loading %s",
+                session.settle_timeout,
+                url,
+            )
+            return current_links, current_header
         await asyncio.sleep(session.poll_interval)
-    logger.debug(
-        "Results list did not change within %.2fs of loading %s", session.settle_timeout, url
-    )
 
 
 async def iter_term_urls(
@@ -105,7 +122,16 @@ async def iter_term_urls(
     yielded = 0
     tab = 1
     max_tabs: int | None = None
-    previous_links: list[str] = []
+    # The glossary auto-runs an unfiltered query as soon as the search
+    # screen loads (that's what populates the facet panel), so the page
+    # always has *some* results-panel state to diff a filtered search
+    # against - read it now rather than starting from an empty baseline.
+    # An empty baseline previously meant "nothing to wait for", so the
+    # very first search of every session read that pre-filter panel
+    # before the site's JS had applied the query - which looked exactly
+    # like every search returning the same (default) results.
+    previous_links = await get_result_links(session.page)
+    previous_header = await get_results_header_text(session.page)
 
     while True:
         pager_query = build_pager_query(tab_number=tab, terms_per_tab=session.terms_per_tab)
@@ -116,17 +142,16 @@ async def iter_term_urls(
             start_letter=start_letter,
             pager_query=pager_query,
         )
-        result = await _load_url(session, url, previous_links=previous_links)
-        if result is None:
-            links = await get_result_links(session.page)
-        else:
-            links = result
+        links, header_text = await _wait_for_settle(
+            session,
+            url,
+            previous_links=previous_links,
+            previous_header=previous_header,
+        )
 
         if not links:
             logger.debug("No result links on tab %d, stopping", tab)
             return
-
-        header_text = await get_results_header_text(session.page)
         if not header_text:
             logger.debug("No results header on tab %d, stopping", tab)
             return
@@ -146,6 +171,7 @@ async def iter_term_urls(
                 return
 
         previous_links = links
+        previous_header = header_text
         if tab >= max_tabs:
             return
         tab += 1
