@@ -69,7 +69,7 @@ async def iter_term_urls(
     limit: int | None = None,
 ) -> typing.AsyncIterator[str]:
     """
-    Lazily yield term detail page URLs matching the given filters.
+    Yield term detail page URLs matching the given filters.
 
     Pages through the glossary site's results one tab at a time, only
     loading the next tab once the caller asks for another URL.
@@ -212,7 +212,7 @@ async def search(
     limit: int | None = 3,
 ) -> typing.AsyncIterator[SearchResult]:
     """
-    Lazily search the glossary for `query` and yield matching definitions.
+    Search the glossary for `query` and yield matching definitions.
 
     A matched term can carry several definitions (one per topic), so more
     than `limit` results may be yielded; `limit` bounds the number of terms
@@ -249,7 +249,7 @@ async def get_terms_on(
     limit: int | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
-    Lazily yield the definition of every term filed under `topic`.
+    Yield the definition of every term filed under `topic`.
 
     Unlike `search`, this yields at most one `SearchResult` per term: the
     definition filed under `topic` itself, rather than every definition a
