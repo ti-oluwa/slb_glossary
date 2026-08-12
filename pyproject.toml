@@ -28,6 +28,11 @@ dependencies = [
 
 [project.optional-dependencies]
 xlsx = ["openpyxl>=3.1"]
+cli = ["click>=8.1.7"]
+tui = ["trogon>=0.6.0", "textual>=0.58"]
+
+[project.scripts]
+slb-glossary = "slb_glossary.cli.main:main"
 
 [project.urls]
 Homepage = "https://github.com/ti-oluwa/slb_glossary"
