@@ -30,6 +30,49 @@ def humanize_field(field: str) -> str:
     return " ".join(word.upper() if word in ACRONYMS else word.title() for word in words)
 
 
+def _json_safe(value: typing.Any) -> typing.Any:
+    """
+    Recursively convert `value` into something `json.dump` can serialize.
+
+    Handles the shapes `slb_glossary` records actually nest: `NamedTuple`
+    values (e.g. `RelatedTerm`), and plain lists/tuples/dicts of those.
+    Anything else is returned unchanged and left to `json.dump` itself.
+
+    :param value: A field value from `record.asdict()`.
+    :return: A JSON-serializable equivalent of `value`.
+    """
+    if hasattr(value, "_asdict"):
+        return {key: _json_safe(item) for key, item in value._asdict().items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    return value
+
+
+def _display_text(value: typing.Any) -> str:
+    """
+    Render a field value as flat, human-readable text for a CSV/TXT/XLSX cell.
+
+    `None` becomes `""`. A nested `NamedTuple` (e.g. a single `RelatedTerm`)
+    renders as its most identifying field. A list/tuple of values (e.g.
+    `SearchResult.related`) renders as a `"; "`-joined list of each item's
+    display text.
+
+    :param value: A field value from `record.asdict()`.
+    :return: Flat text suitable for a single spreadsheet/CSV cell.
+    """
+    if value is None:
+        return ""
+    if hasattr(value, "_asdict"):
+        record_dict = value._asdict()
+        fallback = next(iter(record_dict.values()), "")
+        return str(record_dict.get("term") or record_dict.get("name") or fallback)
+    if isinstance(value, (list, tuple)):
+        return "; ".join(_display_text(item) for item in value)
+    return str(value)
+
+
 async def write_csv(records: list[RecordLike], destination: pathlib.Path) -> None:
     """Write `records` to `destination` as CSV, with a humanized header row."""
 
@@ -39,7 +82,7 @@ async def write_csv(records: list[RecordLike], destination: pathlib.Path) -> Non
             writer = csv.writer(file)
             writer.writerow([humanize_field(field) for field in fields])
             for record in records:
-                writer.writerow(record.asdict().values())
+                writer.writerow([_display_text(value) for value in record.asdict().values()])
 
     await asyncio.to_thread(_write)
 
@@ -49,13 +92,15 @@ async def write_json(records: list[RecordLike], destination: pathlib.Path) -> No
     Write `records` to `destination` as JSON, keyed by each record's first field.
 
     Records whose first field repeats overwrite earlier entries with the
-    same key.
+    same key. Nested values (e.g. a `SearchResult.related` list of
+    `RelatedTerm`) are preserved as native JSON arrays/objects rather than
+    flattened to text.
     """
 
     def _write() -> None:
         data: dict[typing.Any, dict[str, typing.Any]] = {}
         for record in records:
-            record_dict = record.asdict()
+            record_dict = {key: _json_safe(value) for key, value in record.asdict().items()}
             key_field = record.fields[0]
             key = record_dict.pop(key_field)
             data[key] = record_dict
@@ -76,8 +121,7 @@ async def write_txt(records: list[RecordLike], destination: pathlib.Path) -> Non
             title_field, *restfields = fields
             lines.append(f"({index}) {record_dict[title_field]}")
             for field in restfields:
-                value = record_dict[field]
-                lines.append(f"    {humanize_field(field)}: {value if value is not None else ''}")
+                lines.append(f"    {humanize_field(field)}: {_display_text(record_dict[field])}")
             lines.append("")
         with open(destination, "w", encoding="utf-8") as file:
             file.write("\n".join(lines))
@@ -109,7 +153,7 @@ async def write_xlsx(records: list[RecordLike], destination: pathlib.Path) -> No
 
         sheet.append([humanize_field(field) for field in fields])
         for record in records:
-            sheet.append(list(record.asdict().values()))
+            sheet.append([_display_text(value) for value in record.asdict().values()])
         workbook.save(destination)
 
     await asyncio.to_thread(_write)

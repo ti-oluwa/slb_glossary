@@ -10,6 +10,7 @@ from slb_glossary.retries import RetryPolicy
 
 __all__ = [
     "Language",
+    "RelatedTerm",
     "SearchResult",
     "SearchSession",
 ]
@@ -20,6 +21,16 @@ class Language(enum.Enum):
 
     ENGLISH = "en"
     SPANISH = "es"
+
+
+class RelatedTerm(typing.NamedTuple):
+    """A single term linked from within another term's definition."""
+
+    term: str
+    """Display text of the link - usually the related term's name."""
+
+    url: str
+    """Glossary URL the link points to."""
 
 
 class SearchResult(typing.NamedTuple):
@@ -39,6 +50,21 @@ class SearchResult(typing.NamedTuple):
 
     url: str | None
     """URL of the glossary page the definition was extracted from."""
+
+    image: str | None = None
+    """URL of the term's illustrative image, or `None` if the page has none.
+
+    Trails the original fields with a default so existing positional
+    `SearchResult(...)` construction keeps working unchanged.
+    """
+
+    related: tuple[RelatedTerm, ...] | None = None
+    """Terms linked from this definition's "See related terms" list, or
+    `None` if the page has none.
+
+    Trails the original fields with a default so existing positional
+    `SearchResult(...)` construction keeps working unchanged.
+    """
 
     @property
     def fields(self) -> list[str]:

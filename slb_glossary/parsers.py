@@ -6,9 +6,11 @@ to the glossary site's markup only ever needs to be fixed here.
 """
 
 import logging
+import typing
 
 from patchright.async_api import Page
 
+from slb_glossary.models import RelatedTerm
 from slb_glossary.utils import parse_int
 
 logger = logging.getLogger(__name__)
@@ -20,15 +22,20 @@ __all__ = [
     "RESULTS_HEADER_SELECTOR",
     "RESULT_LINK_SELECTOR",
     "TERM_DETAIL_SELECTOR",
+    "TERM_IMAGE_CAPTION_SELECTOR",
+    "TERM_IMAGE_SELECTOR",
     "TERM_NAME_SELECTOR",
     "TOPIC_VALUE_SELECTOR",
     "TOTAL_COUNT_SELECTOR",
+    "TermImage",
+    "TermParagraph",
     "get_element_text",
     "get_facet_topics",
     "get_glossary_size",
     "get_result_links",
     "get_results_header_text",
     "get_term_detail_blocks",
+    "get_term_image",
     "get_term_name",
     "get_total_term_count",
 ]
@@ -57,6 +64,12 @@ TERM_NAME_SELECTOR = ".row .small-12 h1 strong"
 
 TERM_DETAIL_SELECTOR = ".content-two-col__text"
 """One definition block on a term detail page; a term may have several."""
+
+TERM_IMAGE_SELECTOR = ".content-two-col__image img"
+"""The term's illustrative image on a term detail page, if it has one."""
+
+TERM_IMAGE_CAPTION_SELECTOR = ".content-two-col__image figcaption, .content-two-col__image p"
+"""Caption text accompanying `TERM_IMAGE_SELECTOR`, if any."""
 
 
 async def get_element_text(page: Page, selector: str, *, timeout: float = 5_000) -> str:
@@ -181,27 +194,87 @@ async def get_term_name(page: Page) -> str | None:
     return text or None
 
 
-async def get_term_detail_blocks(page: Page) -> list[list[str]]:
+class TermParagraph(typing.NamedTuple):
+    """One paragraph of a term detail block, with any terms it links to."""
+
+    text: str
+    """The paragraph's trimmed text content."""
+
+    links: tuple[RelatedTerm, ...]
+    """Terms linked from this paragraph, e.g. in a "See related terms:" list.
+    Empty if the paragraph has no links."""
+
+
+async def get_term_detail_blocks(page: Page) -> list[list[TermParagraph]]:
     """
-    Return the raw paragraph text of every definition block on a term page.
+    Return the paragraphs (text and links) of every definition block on a term page.
 
     A term detail page holds one `TERM_DETAIL_SELECTOR` block per definition
     (a term can have several, one per topic). Each block's paragraphs are
     returned in document order; the first paragraph carries the grammatical
-    label and source topic, and the definition text follows in the next
-    non-empty paragraph.
+    label and source topic, the definition text follows in the next
+    non-empty paragraph, and a later paragraph may link out to related
+    terms (see `TermParagraph.links`).
 
     :param page: A page currently showing a term detail page.
-    :return: One list of paragraph texts per definition block.
+    :return: One list of `TermParagraph`s per definition block.
     """
-    blocks = await page.eval_on_selector_all(
+    raw_blocks = await page.eval_on_selector_all(
         TERM_DETAIL_SELECTOR,
         """
         (elements) => elements.map((element) =>
-            Array.from(element.querySelectorAll("p")).map(
-                (paragraph) => paragraph.textContent.trim()
-            )
+            Array.from(element.querySelectorAll("p")).map((paragraph) => ({
+                text: paragraph.textContent.trim(),
+                links: Array.from(paragraph.querySelectorAll("a"))
+                    .map((anchor) => ({
+                        term: anchor.textContent.trim(),
+                        url: anchor.getAttribute("href") || "",
+                    }))
+                    .filter((link) => link.url),
+            }))
         )
         """,
     )
-    return blocks
+    return [
+        [
+            TermParagraph(
+                text=paragraph["text"],
+                links=tuple(
+                    RelatedTerm(term=link["term"], url=link["url"])
+                    for link in paragraph["links"]
+                ),
+            )
+            for paragraph in block
+        ]
+        for block in raw_blocks
+    ]
+
+
+class TermImage(typing.NamedTuple):
+    """A term's illustrative image, if the term detail page has one."""
+
+    url: str
+    """URL of the image."""
+
+    caption: str
+    """Caption text accompanying the image, or `""` if it has none."""
+
+
+async def get_term_image(page: Page) -> TermImage | None:
+    """
+    Read the illustrative image on a term detail page, if it has one.
+
+    :param page: A page currently showing a term detail page.
+    :return: The page's `TermImage`, or `None` if it has no image.
+    """
+    locator = page.locator(TERM_IMAGE_SELECTOR).first
+    try:
+        src = await locator.get_attribute("src", timeout=2_000)
+    except Exception as exc:
+        logger.debug("No term image found", exc_info=exc)
+        return None
+    if not src:
+        return None
+
+    caption = await get_element_text(page, TERM_IMAGE_CAPTION_SELECTOR, timeout=2_000)
+    return TermImage(url=src, caption=caption)

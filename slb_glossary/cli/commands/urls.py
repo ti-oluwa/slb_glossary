@@ -159,6 +159,20 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
     show_default=True,
     help="Show/hide the grammatical label column.",
 )
+@click.option(
+    "--image-column/--no-image-column",
+    "show_image",
+    default=False,
+    show_default=True,
+    help="Show/hide the illustrative image URL column.",
+)
+@click.option(
+    "--related-column/--no-related-column",
+    "show_related",
+    default=False,
+    show_default=True,
+    help="Show/hide the related-terms column.",
+)
 @session_options
 @store_options
 @click.option(
@@ -193,6 +207,8 @@ def fetch_url(ctx: click.Context, url: str, use_tui: bool, **params: typing.Any)
                 show_url=params["show_url"],
                 show_topic=params["show_topic"],
                 show_grammar=params["show_grammar"],
+                show_image=params["show_image"],
+                show_related=params["show_related"],
             )
 
     count = run_async(_run())

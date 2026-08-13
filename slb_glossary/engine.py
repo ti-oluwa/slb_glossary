@@ -7,11 +7,12 @@ import time
 import typing
 
 from slb_glossary.grammar import resolve_grammatical_label
-from slb_glossary.models import SearchResult, SearchSession
+from slb_glossary.models import RelatedTerm, SearchResult, SearchSession
 from slb_glossary.parsers import (
     get_result_links,
     get_results_header_text,
     get_term_detail_blocks,
+    get_term_image,
     get_term_name,
     get_total_term_count,
 )
@@ -22,6 +23,33 @@ logger = logging.getLogger(__name__)
 
 
 __all__ = ["get_terms_on", "iter_results_from_url", "iter_term_urls", "search"]
+
+
+def _find_related_links(
+    paragraphs: typing.Sequence[typing.Any],
+) -> tuple[RelatedTerm, ...]:
+    """
+    Return the related-term links from a definition block's paragraphs.
+
+    Looks for the paragraph that introduces a "See related terms:" (or
+    plain "See:") list and returns the terms it links to; most definition
+    blocks have at most one such paragraph.
+
+    :param paragraphs: A definition block's `TermParagraph`s, as returned
+        by `slb_glossary.parsers.get_term_detail_blocks`.
+    :return: The related terms found, in the order they're linked. Empty
+        if no paragraph in the block links to any related terms.
+    """
+    for paragraph in paragraphs:
+        text_lower = paragraph.text.lower()
+        if paragraph.links and ("related term" in text_lower or "see:" in text_lower):
+            return paragraph.links
+    # Fall back to any paragraph with links at all, in case the site's
+    # wording of the "related terms" lead-in ever changes.
+    for paragraph in paragraphs:
+        if paragraph.links:
+            return paragraph.links
+    return ()
 
 
 async def _wait_for_settle(
@@ -125,11 +153,11 @@ async def iter_term_urls(
     # The glossary auto-runs an unfiltered query as soon as the search
     # screen loads (that's what populates the facet panel), so the page
     # always has *some* results-panel state to diff a filtered search
-    # against. So we read it now rather than starting from an empty baseline.
+    # against - read it now rather than starting from an empty baseline.
     # An empty baseline previously meant "nothing to wait for", so the
     # very first search of every session read that pre-filter panel
-    # before the site's JS had applied the query. Which looks exactly
-    # like every search was returning the same (default) results.
+    # before the site's JS had applied the query - which looked exactly
+    # like every search returning the same (default) results.
     previous_links = await get_result_links(session.page)
     previous_header = await get_results_header_text(session.page)
 
@@ -195,7 +223,9 @@ async def iter_results_from_url(
         (or one of several comma-separated topics), that resolved topic
         name is used for its `SearchResult.topic` instead of the topic
         parsed off the page.
-    :yield: One `SearchResult` per definition found on the page.
+    :yield: One `SearchResult` per definition found on the page. Each
+        result's `image` and `related` fields are `None`/empty when the
+        page has no illustrative image or no related-term links.
     """
     resolved_topic = get_topic_match(session.topics, topic) if topic else None
 
@@ -206,12 +236,18 @@ async def iter_results_from_url(
         logger.debug("No definitions found at %s", url)
         return
 
+    # A term page carries at most one illustrative image, shared across
+    # every definition block on it (not one image per topic/definition).
+    term_image = await get_term_image(session.page)
+    image_url = term_image.url if term_image else None
+
     for block in detail_blocks:
         if len(block) < 2:
             continue
 
-        summary_line = block[0]
-        definition = block[2] if len(block) > 2 and block[1] == "" else block[1]
+        summary_line = block[0].text
+        definition = block[2].text if len(block) > 2 and block[1].text == "" else block[1].text
+        related = _find_related_links(block) or None
 
         summary_words = summary_line.split()
         label_abbreviation = summary_words[1] if len(summary_words) > 1 else ""
@@ -228,6 +264,8 @@ async def iter_results_from_url(
             grammatical_label=grammatical_label,
             topic=topic,
             url=url,
+            image=image_url,
+            related=related,
         )
 
 

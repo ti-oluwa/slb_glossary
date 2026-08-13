@@ -2,7 +2,7 @@
 
 This module only knows the shape of `slb_glossary.store` (a `save(records,
 destination, format=...)` coroutine); it imports `slb_glossary.store` lazily,
-inside `save_results`, so the CLI stays loosely coupled to that module and
+inside `save_and_print`, so the CLI stays loosely coupled to that module and
 keeps working even while the store API is still being revamped.
 """
 
@@ -61,6 +61,8 @@ async def save_and_print(
     show_url: bool = True,
     show_topic: bool = True,
     show_grammar: bool = True,
+    show_image: bool = False,
+    show_related: bool = False,
 ) -> int:
     """
     Collect an async stream of results, then print and/or save it.
@@ -69,8 +71,9 @@ async def save_and_print(
     printed to the console and saved to one or more files without
     re-running the (network-bound) search that produced them.
 
-    :param results: The async stream of results to consume, e.g. from
-        `slb_glossary.search` or `slb_glossary.get_terms_on`.
+    :param results: The async stream of records to consume, e.g. from
+        `slb_glossary.search`, `slb_glossary.get_terms_on`, or any other
+        `slb_glossary.store.RecordLike`-yielding source.
     :param save_paths: File paths to save the collected results to. Each
         path's format is inferred from its extension unless `format` is
         given. May be empty to skip saving.
@@ -80,9 +83,11 @@ async def save_and_print(
         `save_paths` are written.
     :param print_limit: Maximum number of results to print. Every collected
         result is still saved regardless of this limit.
-    :param show_url: Whether to print the result's source URL column.
-    :param show_topic: Whether to print the result's topic column.
-    :param show_grammar: Whether to print the result's grammatical label column.
+    :param show_url: For `SearchResult`s, whether to print the source URL column.
+    :param show_topic: For `SearchResult`s, whether to print the topic column.
+    :param show_grammar: For `SearchResult`s, whether to print the grammatical label column.
+    :param show_image: For `SearchResult`s, whether to print the image URL column.
+    :param show_related: For `SearchResult`s, whether to print the related-terms column.
     :return: The total number of results collected.
     :raises slb_glossary.store.UnsupportedFormatError: If a save path (or
         `format`) resolves to a file format with no registered writer.
@@ -98,6 +103,8 @@ async def save_and_print(
             show_url=show_url,
             show_topic=show_topic,
             show_grammar=show_grammar,
+            show_image=show_image,
+            show_related=show_related,
         )
 
     if save_paths:
