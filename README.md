@@ -23,6 +23,8 @@ details and the project `LICENSE` for code licensing.
 
 ## Installation
 
+### As a library
+
 This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 
 ```bash
@@ -47,6 +49,46 @@ To save results as `.xlsx`, also install the optional `xlsx` extra:
 uv add "slb-glossary[xlsx]"
 ```
 
+### As a CLI tool
+
+`click` is a core dependency, so installing `slb-glossary` by any of the methods below gets you two equivalent commands, `slb-glossary` and the shorter `slb`, with no extra flags needed.
+
+With [uv](https://docs.astral.sh/uv/) (recommended - installs into an isolated tool environment):
+
+```bash
+uv tool install slb-glossary
+```
+
+Or try it once without installing anything, via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+
+```bash
+uvx slb-glossary search porosity
+```
+
+With [pipx](https://pipx.pypa.io/):
+
+```bash
+pipx install slb-glossary
+```
+
+Or, on macOS/Linux (including WSL), with a one-line installer that picks `uv` or `pipx` for you, installing `uv` first if neither is already on your machine:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ti-oluwa/slb-glossary/main/scripts/install.sh | sh
+```
+
+On Windows, without WSL, use uv's native installer instead, then `uv tool install`:
+
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex; uv tool install slb-glossary"
+```
+
+Whichever method you use, finish with the one-time browser install:
+
+```bash
+slb-glossary install
+```
+
 ## Quick start
 
 ```python
@@ -62,6 +104,26 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+## Command-line interface
+
+Installing `slb-glossary` (see [As a CLI tool](#as-a-cli-tool) above) gets you the `slb-glossary` command, and the shorter `slb` alias for it:
+
+```bash
+slb search porosity
+slb terms Geophysics --limit 20
+slb topics list
+slb urls fetch "https://glossary.slb.com/en/terms/p/porosity"
+```
+
+Every command that prints results also supports `--save PATH` (repeatable, for saving to several files/formats at once), `--format FORMAT` to override the format PATH's extension implies, and `--json` to print results as a JSON array to stdout instead of a table - handy for piping into `jq` or another program:
+
+```bash
+slb search "drilling fluid" --json | jq '.[].term'
+slb terms Drilling --save drilling_terms.json --quiet
+```
+
+Run `slb --help`, or `--help` after any subcommand, for the full set of options - or pass `--tui` to fill them in interactively instead of memorizing flags.
 
 ## Logging
 
@@ -190,7 +252,7 @@ The file format is chosen from the destination's extension, or pass `format=` ex
 await slb.store.save(results_list, "results.data", format="csv")
 ```
 
-Built-in formats: `csv`, `json`, `txt`, and `xlsx` (requires the `xlsx` extra). Check what's available with `slb.store.supported_formats()`.
+Built-in formats: `csv`, `json`, `jsonl`/`ndjson`, `txt`, and `xlsx` (requires the `xlsx` extra). Check what's available with `slb.store.supported_formats()`.
 
 Add support for a new format with `register_writer` - no subclassing required:
 
@@ -224,6 +286,7 @@ await slb.store.save(results_list, "results.yaml")
 * `slb_glossary.BrowserError` - the browser failed to launch or crashed outside of a network issue, including an unsupported `browser_type`.
 * `slb_glossary.ParsingError` - reserved for glossary pages that don't match the markup the parser expects.
 * `slb_glossary.store.UnsupportedFormatError` - `save` was asked for a format with no registered writer.
+* `slb_glossary.store.WriterError` - the registered writer raised while writing, e.g. a permissions error or a full disk. The original exception is chained as `__cause__`.
 
 ## Development
 
