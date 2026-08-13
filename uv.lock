@@ -303,15 +303,13 @@ name = "slb-glossary"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "patchright" },
     { name = "playwright-stealth" },
     { name = "rich" },
 ]
 
 [package.optional-dependencies]
-cli = [
-    { name = "click" },
-]
 tui = [
     { name = "textual" },
     { name = "trogon" },
@@ -327,7 +325,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", marker = "extra == 'cli'", specifier = ">=8.1.7" },
+    { name = "click", specifier = ">=8.1.7" },
     { name = "openpyxl", marker = "extra == 'xlsx'", specifier = ">=3.1" },
     { name = "patchright", specifier = ">=1.61.0" },
     { name = "playwright-stealth", specifier = ">=2.0.3" },

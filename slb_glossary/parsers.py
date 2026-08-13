@@ -65,10 +65,10 @@ TERM_NAME_SELECTOR = ".row .small-12 h1 strong"
 TERM_DETAIL_SELECTOR = ".content-two-col__text"
 """One definition block on a term detail page; a term may have several."""
 
-TERM_IMAGE_SELECTOR = ".content-two-col__image img"
+TERM_IMAGE_SELECTOR = ".content-two-col .bordered-img .image img"
 """The term's illustrative image on a term detail page, if it has one."""
 
-TERM_IMAGE_CAPTION_SELECTOR = ".content-two-col__image figcaption, .content-two-col__image p"
+TERM_IMAGE_CAPTION_SELECTOR = ".content-two-col .bordered-img .desc"
 """Caption text accompanying `TERM_IMAGE_SELECTOR`, if any."""
 
 
@@ -240,8 +240,7 @@ async def get_term_detail_blocks(page: Page) -> list[list[TermParagraph]]:
             TermParagraph(
                 text=paragraph["text"],
                 links=tuple(
-                    RelatedTerm(term=link["term"], url=link["url"])
-                    for link in paragraph["links"]
+                    RelatedTerm(term=link["term"], url=link["url"]) for link in paragraph["links"]
                 ),
             )
             for paragraph in block

@@ -52,19 +52,14 @@ class SearchResult(typing.NamedTuple):
     """URL of the glossary page the definition was extracted from."""
 
     image: str | None = None
-    """URL of the term's illustrative image, or `None` if the page has none.
+    """URL of the term's illustrative image, or `None` if the page has none."""
 
-    Trails the original fields with a default so existing positional
-    `SearchResult(...)` construction keeps working unchanged.
-    """
+    image_caption: str | None = None
+    """Caption text accompanying `image`, or `None` if the page has none."""
 
     related: tuple[RelatedTerm, ...] | None = None
     """Terms linked from this definition's "See related terms" list, or
-    `None` if the page has none.
-
-    Trails the original fields with a default so existing positional
-    `SearchResult(...)` construction keeps working unchanged.
-    """
+    `None` if the page has none."""
 
     @property
     def fields(self) -> list[str]:

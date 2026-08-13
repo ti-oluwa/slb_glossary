@@ -29,11 +29,6 @@ dependencies = [
 
 [project.optional-dependencies]
 xlsx = ["openpyxl>=3.1"]
-# Kept for backwards compatibility with `pip install slb-glossary[cli]`;
-# click is now a core dependency so the `slb-glossary`/`slb` console
-# scripts work out of the box for `pipx install`, `uvx`, and the curl
-# installer, none of which let a user opt into an extra first.
-cli = []
 tui = ["trogon>=0.6.0", "textual>=0.58"]
 
 [project.scripts]

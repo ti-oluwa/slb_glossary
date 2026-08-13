@@ -239,7 +239,9 @@ async def iter_results_from_url(
     # A term page carries at most one illustrative image, shared across
     # every definition block on it (not one image per topic/definition).
     term_image = await get_term_image(session.page)
-    image_url = term_image.url if term_image else None
+    image_url, image_caption = (
+        (term_image.url, term_image.caption) if term_image is not None else (None, None)
+    )
 
     for block in detail_blocks:
         if len(block) < 2:
@@ -265,6 +267,7 @@ async def iter_results_from_url(
             topic=topic,
             url=url,
             image=image_url,
+            image_caption=image_caption,
             related=related,
         )
 
