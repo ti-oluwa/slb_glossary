@@ -3,13 +3,7 @@
 import logging
 import typing
 
-try:
-    import click  # noqa: F401
-except ImportError:
-    raise SystemExit(
-        "The slb-glossary CLI requires the 'click' package. "
-        "Install it with `pip install slb-glossary[cli]`."
-    ) from None
+import click
 
 from slb_glossary.cli.commands import install, search, terms, topics, urls
 from slb_glossary.cli.tui import TuiUnavailableError, launch_tui
@@ -60,7 +54,7 @@ for command in (install, search, terms, topics, urls):
 
 
 def main() -> None:
-    """Entry point installed as the `slb-glossary` console script."""
+    """Entry point installed as both the `slb-glossary` and `slb` console scripts."""
     cli()  # type: ignore
 
 

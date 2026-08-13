@@ -1,4 +1,22 @@
-"""Built-in writers for `slb_glossary.store.save`."""
+"""
+Built-in writers for `slb_glossary.store.save`.
+
+A writer is just an async callable: `(records, destination) -> None`. This
+module ships four (`csv`, `json`, `txt`, `xlsx`), all built from the same
+small set of helpers below, so a custom writer - registered with
+`slb_glossary.store.register_writer` - can reuse them too:
+
+* `field_names` / `humanize_field` - consistent, human-readable headers.
+* `records_to_dicts` - records as plain, JSON-safe `dict`s (also what
+  powers the CLI's `--json` output and `write_json`'s per-record shape).
+* `_display_text` - a flat, single-line rendering of a field for
+  cell-oriented formats (CSV/TXT/XLSX).
+
+None of these helpers - or the writers themselves - need to create
+`destination`'s parent directory or translate I/O errors; `slb_glossary.store.save`
+does both centrally (see that module's `WriterError`), so every writer,
+built-in or custom, gets that behavior for free.
+"""
 
 import asyncio
 import csv
@@ -8,11 +26,44 @@ import typing
 
 from slb_glossary.store.records import RecordLike
 
-__all__ = ["WRITERS", "Writer", "write_csv", "write_json", "write_txt", "write_xlsx"]
+__all__ = [
+    "WRITERS",
+    "Writer",
+    "field_names",
+    "humanize_field",
+    "records_to_dicts",
+    "write_csv",
+    "write_json",
+    "write_jsonl",
+    "write_txt",
+    "write_xlsx",
+]
 
 
 Writer = typing.Callable[[list[RecordLike], pathlib.Path], typing.Awaitable[None]]
-"""An async callable that writes a list of records to a destination path."""
+"""
+An async callable that writes a list of records to a destination path.
+
+Register one with `slb_glossary.store.register_writer(format, writer)` (or
+the `@slb_glossary.store.writer(format)` decorator) to teach `store.save`
+a new file format:
+
+```python
+async def write_yaml(records: list[RecordLike], destination: pathlib.Path) -> None:
+    import yaml
+
+    with open(destination, "w") as file:
+        yaml.dump(records_to_dicts(records), file)
+
+
+register_writer("yaml", write_yaml)
+```
+
+A writer only needs to write the file; it does not need to create
+`destination`'s parent directory (`store.save` does that first) or catch
+I/O errors (`store.save` wraps those in `WriterError` with format/path
+context already attached).
+"""
 
 
 def field_names(records: list[RecordLike]) -> list[str]:
@@ -73,6 +124,26 @@ def _display_text(value: typing.Any) -> str:
     return str(value)
 
 
+def records_to_dicts(records: list[RecordLike]) -> list[dict[str, typing.Any]]:
+    """
+    Convert `records` into a list of plain, JSON-safe `dict`s, one per record.
+
+    Field order is preserved from each record's `asdict()`, and nested
+    values (e.g. a `SearchResult.related` list of `RelatedTerm`) are
+    recursively converted rather than flattened to text - unlike
+    `write_json`, which additionally re-keys the list by each record's
+    first field for on-disk storage, this stays a flat list, which is
+    usually what you want for `json.dumps`, piping to `jq`, or embedding
+    in a larger JSON payload. It's what powers the CLI's `--json` output.
+
+    :param records: The records to convert.
+    :return: One JSON-safe `dict` per record, in the same order as `records`.
+    """
+    return [
+        {key: _json_safe(value) for key, value in record.asdict().items()} for record in records
+    ]
+
+
 async def write_csv(records: list[RecordLike], destination: pathlib.Path) -> None:
     """Write `records` to `destination` as CSV, with a humanized header row."""
 
@@ -99,13 +170,31 @@ async def write_json(records: list[RecordLike], destination: pathlib.Path) -> No
 
     def _write() -> None:
         data: dict[typing.Any, dict[str, typing.Any]] = {}
-        for record in records:
-            record_dict = {key: _json_safe(value) for key, value in record.asdict().items()}
+        for record, record_dict in zip(records, records_to_dicts(records), strict=True):
+            record_dict = dict(record_dict)
             key_field = record.fields[0]
             key = record_dict.pop(key_field)
             data[key] = record_dict
         with open(destination, "w", encoding="utf-8") as file:
             json.dump(data, file, indent=2, ensure_ascii=False)
+
+    await asyncio.to_thread(_write)
+
+
+async def write_jsonl(records: list[RecordLike], destination: pathlib.Path) -> None:
+    """
+    Write `records` to `destination` as newline-delimited JSON (one object per line).
+
+    Unlike `write_json`, records keep their original field order and are
+    not re-keyed or deduplicated by their first field - useful for
+    streaming/appending workflows, or piping straight into tools like `jq`.
+    """
+
+    def _write() -> None:
+        with open(destination, "w", encoding="utf-8") as file:
+            for record_dict in records_to_dicts(records):
+                file.write(json.dumps(record_dict, ensure_ascii=False))
+                file.write("\n")
 
     await asyncio.to_thread(_write)
 
@@ -162,6 +251,8 @@ async def write_xlsx(records: list[RecordLike], destination: pathlib.Path) -> No
 WRITERS: dict[str, Writer] = {
     "csv": write_csv,
     "json": write_json,
+    "jsonl": write_jsonl,
+    "ndjson": write_jsonl,
     "txt": write_txt,
     "xlsx": write_xlsx,
 }

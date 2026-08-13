@@ -24,15 +24,21 @@ dependencies = [
     "patchright>=1.61.0",
     "playwright-stealth>=2.0.3",
     "rich>=13.0.0",
+    "click>=8.1.7",
 ]
 
 [project.optional-dependencies]
 xlsx = ["openpyxl>=3.1"]
-cli = ["click>=8.1.7"]
+# Kept for backwards compatibility with `pip install slb-glossary[cli]`;
+# click is now a core dependency so the `slb-glossary`/`slb` console
+# scripts work out of the box for `pipx install`, `uvx`, and the curl
+# installer, none of which let a user opt into an extra first.
+cli = []
 tui = ["trogon>=0.6.0", "textual>=0.58"]
 
 [project.scripts]
 slb-glossary = "slb_glossary.cli.main:main"
+slb = "slb_glossary.cli.main:main"
 
 [project.urls]
 Homepage = "https://github.com/ti-oluwa/slb_glossary"

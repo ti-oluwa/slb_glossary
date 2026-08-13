@@ -104,6 +104,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
+                json_output=params["json_output"],
                 show_url=params["show_url"],
                 show_topic=params["show_topic"],
                 show_grammar=params["show_grammar"],

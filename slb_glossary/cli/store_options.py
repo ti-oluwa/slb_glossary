@@ -6,6 +6,7 @@ inside `save_and_print`, so the CLI stays loosely coupled to that module and
 keeps working even while the store API is still being revamped.
 """
 
+import json
 import pathlib
 import typing
 
@@ -24,12 +25,19 @@ def store_options(func: F) -> F:
     Attach `--save`/`-o` and `--format` options to a click command.
 
     Stack this directly above a command's `def`, alongside `@click.command()`.
-    The decorated callback receives `save_paths: tuple[pathlib.Path, ...]`
-    and `format: str | None`; pass both through to `save_and_print`.
+    The decorated callback receives `save_paths: tuple[pathlib.Path, ...]`,
+    `format: str | None` and `json_output: bool`; pass all three through to
+    `save_and_print`.
 
     :param func: The click command callback to attach options to.
     :return: `func`, with the save options attached.
     """
+    func = click.option(
+        "--json",
+        "json_output",
+        is_flag=True,
+        help="Print results as JSON to stdout instead of a table. Ignored with --quiet.",
+    )(func)
     func = click.option(
         "--format",
         "-f",
@@ -57,6 +65,7 @@ async def save_and_print(
     save_paths: typing.Sequence[pathlib.Path],
     format: str | None,
     quiet: bool,
+    json_output: bool = False,
     print_limit: int | None = None,
     show_url: bool = True,
     show_topic: bool = True,
@@ -79,10 +88,16 @@ async def save_and_print(
         given. May be empty to skip saving.
     :param format: File format to force for every path in `save_paths`,
         overriding each path's extension. Ignored if `save_paths` is empty.
-    :param quiet: If `True`, skip printing results to the console; only
-        `save_paths` are written.
-    :param print_limit: Maximum number of results to print. Every collected
-        result is still saved regardless of this limit.
+    :param quiet: If `True`, skip printing results to the console entirely
+        (neither a table nor JSON); only `save_paths` are written.
+    :param json_output: If `True` (and not `quiet`), print `collected` as a
+        JSON array to stdout instead of a Rich table - suited to piping
+        into `jq` or another program. `print_limit`/`show_*` are ignored
+        in this mode, since JSON output is meant to be complete and
+        machine-readable rather than trimmed for terminal display.
+    :param print_limit: Maximum number of results to print as a table.
+        Ignored when `json_output` is `True`. Every collected result is
+        still saved regardless of this limit.
     :param show_url: For `SearchResult`s, whether to print the source URL column.
     :param show_topic: For `SearchResult`s, whether to print the topic column.
     :param show_grammar: For `SearchResult`s, whether to print the grammatical label column.
@@ -91,21 +106,27 @@ async def save_and_print(
     :return: The total number of results collected.
     :raises slb_glossary.store.UnsupportedFormatError: If a save path (or
         `format`) resolves to a file format with no registered writer.
+    :raises slb_glossary.store.WriterError: If writing to a save path fails.
     """
     collected = [result async for result in results]
 
     if not quiet:
-        from slb_glossary.utils import print_results
+        if json_output:
+            from slb_glossary.store import records_to_dicts
 
-        print_results(
-            collected,
-            limit=print_limit,
-            show_url=show_url,
-            show_topic=show_topic,
-            show_grammar=show_grammar,
-            show_image=show_image,
-            show_related=show_related,
-        )
+            click.echo(json.dumps(records_to_dicts(collected), indent=2, ensure_ascii=False))
+        else:
+            from slb_glossary.utils import print_results
+
+            print_results(
+                collected,
+                limit=print_limit,
+                show_url=show_url,
+                show_topic=show_topic,
+                show_grammar=show_grammar,
+                show_image=show_image,
+                show_related=show_related,
+            )
 
     if save_paths:
         from slb_glossary import store
