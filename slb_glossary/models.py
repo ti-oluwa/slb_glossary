@@ -8,6 +8,11 @@ from patchright.async_api import Browser, BrowserContext, Page, Playwright
 
 from slb_glossary.retries import RetryPolicy
 
+if typing.TYPE_CHECKING:
+    import pathlib
+
+    from slb_glossary.config import Config
+
 __all__ = [
     "Language",
     "RelatedTerm",
@@ -76,9 +81,9 @@ class SearchSession:
     """
     An open, ready-to-query session against the SLB glossary.
 
-    Obtain one with `slb_glossary.browser.open_session` or the
-    `slb_glossary.browser.search_session` context manager, then pass it to
-    the search functions in `slb_glossary.engine`.
+    Obtain one with `slb_glossary.browser.open_session`, `search_session`,
+    or `SearchSession.from_config`, then pass it to the search functions in
+    `slb_glossary.engine`.
 
     A session is single-page and not safe to use concurrently from multiple
     coroutines at once; open one session per concurrent task if you need parallelism.
@@ -129,3 +134,32 @@ class SearchSession:
 
     poll_interval: float = 0.3
     """Seconds to wait between polls while waiting on `settle_timeout`."""
+
+    @classmethod
+    async def from_config(
+        cls, config: "Config | str | pathlib.Path", **overrides: typing.Any
+    ) -> "SearchSession":
+        """
+        Open a `SearchSession` using a `Config`, or a path to a config file.
+
+        ```python
+        session = await SearchSession.from_config("~/.config/slb-glossary/config.toml")
+        ```
+
+        :param config: A `slb_glossary.config.Config`, or a path to a JSON/
+            TOML/YAML file `Config.from_file` can load.
+        :param overrides: Keyword arguments forwarded to
+            `slb_glossary.browser.open_session`, overriding whatever
+            `config` specifies (e.g. `headless=False` for a one-off debug run).
+        :return: An open `SearchSession`. Close it with
+            `slb_glossary.browser.close_session`, or prefer
+            `slb_glossary.browser.search_session_from_config` for automatic
+            cleanup via `async with`.
+        """
+        from slb_glossary.browser import open_session
+        from slb_glossary.config import Config
+
+        resolved_config = config if isinstance(config, Config) else Config.from_file(config)
+        kwargs = resolved_config.to_session_kwargs()
+        kwargs.update(overrides)
+        return await open_session(**kwargs)

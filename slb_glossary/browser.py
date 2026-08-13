@@ -3,6 +3,7 @@
 import contextlib
 import enum
 import logging
+import pathlib
 import typing
 
 from patchright.async_api import Browser, Playwright, Route, async_playwright
@@ -14,10 +15,21 @@ from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
 from slb_glossary.topics import fetch_topics
 from slb_glossary.urls import get_glossary_base_url
 
+if typing.TYPE_CHECKING:
+    from slb_glossary.config import Config
+
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["close_session", "search_session", "open_session", "ResourceType", "BrowserType"]
+__all__ = [
+    "close_session",
+    "search_session",
+    "search_session_from_config",
+    "open_session",
+    "open_session_from_config",
+    "ResourceType",
+    "BrowserType",
+]
 
 
 class BrowserType(enum.StrEnum):
@@ -317,6 +329,31 @@ async def open_session(
         raise BrowserError("Failed to launch the glossary browser session") from exc
 
 
+async def open_session_from_config(
+    config: "Config | str | pathlib.Path", **overrides: typing.Any
+) -> SearchSession:
+    """
+    Open a `SearchSession` using a `Config`, or a path to a config file.
+
+    Equivalent to `SearchSession.from_config`; provided here as well so
+    `slb_glossary.browser` stays a complete, self-contained entry point for
+    opening sessions without needing an import from `slb_glossary.models`.
+
+    :param config: A `slb_glossary.config.Config`, or a path to a JSON/
+        TOML/YAML file `Config.from_file` can load.
+    :param overrides: Keyword arguments forwarded to `open_session`,
+        overriding whatever `config` specifies.
+    :return: An open `SearchSession`. Close it with `close_session`, or
+        prefer `search_session_from_config` for automatic cleanup.
+    """
+    from slb_glossary.config import Config
+
+    resolved_config = config if isinstance(config, Config) else Config.from_file(config)
+    kwargs = resolved_config.to_session_kwargs()
+    kwargs.update(overrides)
+    return await open_session(**kwargs)
+
+
 async def close_session(session: SearchSession) -> None:
     """
     Close every resource opened for `session`.
@@ -410,6 +447,33 @@ async def search_session(
         context_kwargs=context_kwargs,
         use_stealth=use_stealth,
     )
+    try:
+        yield session
+    finally:
+        await close_session(session)
+
+
+@contextlib.asynccontextmanager
+async def search_session_from_config(
+    config: "Config | str | pathlib.Path", **overrides: typing.Any
+) -> typing.AsyncIterator[SearchSession]:
+    """
+    Open a `SearchSession` from a `Config` (or config file path) for an `async with` block.
+
+    ```python
+    async with search_session_from_config("config.toml") as session:
+        async for result in search(session, "porosity"):
+            print(result)
+    ```
+
+    :param config: A `slb_glossary.config.Config`, or a path to a JSON/
+        TOML/YAML file `Config.from_file` can load.
+    :param overrides: Keyword arguments forwarded to `open_session`,
+        overriding whatever `config` specifies.
+
+    The session is always closed on exit, including when the block raises.
+    """
+    session = await open_session_from_config(config, **overrides)
     try:
         yield session
     finally:

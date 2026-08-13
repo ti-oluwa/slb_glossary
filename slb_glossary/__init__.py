@@ -7,15 +7,30 @@ Visit <https://www.slb.com/en/terms-of-service> for the terms of use.
 
 **Not for commercial use. This package is intended for educational and research purposes only.**
 
+This package can optionally cache glossary data locally (see `slb_glossary.localdb`)
+so repeat lookups don't have to re-visit the site. That local copy is still SLB's
+data: anyone who enables local storage is solely responsible for keeping its
+retention, refresh, and deletion in compliance with SLB's terms of use linked
+above. See `slb_glossary.paths` and `slb_glossary.localdb` for details.
+
 @Author: Daniel T. Afolayan (ti-oluwa)
 """
 
 import logging
 
 from . import store
-from .browser import BrowserType, ResourceType, close_session, open_session, search_session
+from .browser import (
+    BrowserType,
+    ResourceType,
+    close_session,
+    open_session,
+    open_session_from_config,
+    search_session,
+    search_session_from_config,
+)
+from .config import Config
 from .engine import get_terms_on, iter_results_from_url, iter_term_urls, search
-from .errors import BrowserError, NetworkError, ParsingError
+from .errors import BrowserError, ConfigError, NetworkError, ParsingError
 from .models import Language, SearchResult, SearchSession
 from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics
@@ -29,9 +44,12 @@ __version__ = "0.1.0"
 __all__ = [
     "store",
     "open_session",
+    "open_session_from_config",
     "close_session",
     "search_session",
+    "search_session_from_config",
     "SearchSession",
+    "Config",
     "Language",
     "SearchResult",
     "search",
@@ -47,6 +65,7 @@ __all__ = [
     "NetworkError",
     "BrowserError",
     "ParsingError",
+    "ConfigError",
     "BrowserType",
     "ResourceType",
 ]

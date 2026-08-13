@@ -5,6 +5,7 @@ import typing
 import click
 
 from slb_glossary.browser import BrowserType, ResourceType
+from slb_glossary.config import RetryConfig, SessionConfig
 from slb_glossary.models import Language
 from slb_glossary.retries import BackoffType, RetryPolicy
 
@@ -218,19 +219,23 @@ def build_retry_policy(params: typing.Mapping[str, typing.Any]) -> RetryPolicy:
         or a command callback's `**kwargs`). Only the `retry_*` keys are read.
     :return: A `RetryPolicy` matching the parsed `--retry-*` options.
     """
-    return RetryPolicy(
+    return RetryConfig(
         attempts=params["retry_attempts"],
         base_delay=params["retry_base_delay"],
-        backoff_type=BackoffType(params["retry_backoff"]),
+        backoff=params["retry_backoff"],
         factor=params["retry_factor"],
         max_delay=params["retry_max_delay"],
         jitter=params["retry_jitter"],
-    )
+    ).to_retry_policy()
 
 
 def get_session_kwargs(params: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
     """
     Turn parsed `session_options` parameters into `open_session`/`search_session` kwargs.
+
+    Routes through `slb_glossary.config.SessionConfig` so the click options
+    here and a `Config` file loaded via `Config.load` produce identical
+    `open_session` kwargs for the same settings.
 
     :param params: The click command's parsed parameters (e.g. `ctx.params`
         or a command callback's `**kwargs`). Extra keys (e.g. a command's
@@ -238,23 +243,27 @@ def get_session_kwargs(params: typing.Mapping[str, typing.Any]) -> dict[str, typ
     :return: A keyword-argument dict ready to splat into
         `slb_glossary.browser.open_session` or `search_session`.
     """
-    block: bool | frozenset[str] = params["block"]
-    block_resources = params.get("block_resources") or ()
-    if block_resources:
-        block = frozenset(name.lower() for name in block_resources)
-
-    return {
-        "language": Language(params["language"]),
-        "browser_type": BrowserType(params["browser_type"]),
-        "headless": params["headless"],
-        "block": block,
-        "timeout": params["timeout"],
-        "terms_per_tab": params["terms_per_tab"],
-        "retry": build_retry_policy(params),
-        "settle_timeout": params["settle_timeout"],
-        "poll_interval": params["poll_interval"],
-        "executable_path": params["executable_path"],
-        "proxy": params["proxy"],
-        "viewport": params["viewport"],
-        "use_stealth": params["use_stealth"],
-    }
+    session_config = SessionConfig(
+        language=params["language"],
+        browser_type=params["browser_type"],
+        headless=params["headless"],
+        block=params["block"],
+        block_resources=list(params.get("block_resources") or ()),
+        timeout=params["timeout"],
+        terms_per_tab=params["terms_per_tab"],
+        settle_timeout=params["settle_timeout"],
+        poll_interval=params["poll_interval"],
+        executable_path=params["executable_path"],
+        proxy=params["proxy"],
+        viewport=params["viewport"],
+        use_stealth=params["use_stealth"],
+        retry=RetryConfig(
+            attempts=params["retry_attempts"],
+            base_delay=params["retry_base_delay"],
+            backoff=params["retry_backoff"],
+            factor=params["retry_factor"],
+            max_delay=params["retry_max_delay"],
+            jitter=params["retry_jitter"],
+        ),
+    )
+    return session_config.to_session_kwargs()
