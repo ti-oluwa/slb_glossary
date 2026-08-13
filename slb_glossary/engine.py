@@ -1,6 +1,7 @@
 """Search engine API for the SLB glossary."""
 
 import asyncio
+import dataclasses
 import logging
 import math
 import time
@@ -22,7 +23,13 @@ from slb_glossary.urls import build_pager_query, build_search_url
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["get_terms_on", "iter_results_from_url", "iter_term_urls", "search"]
+__all__ = [
+    "get_terms_on",
+    "iter_results_from_url",
+    "iter_results_from_urls",
+    "iter_term_urls",
+    "search",
+]
 
 
 def _find_related_links(
@@ -217,15 +224,19 @@ async def iter_results_from_url(
     A term can carry several definitions, one per topic it appears under;
     this yields one `SearchResult` per definition.
 
-    :param session: An open glossary session.
+    :param session: An open glossary session. Its `session.page` is
+        navigated directly - use a session with a dedicated page (e.g. one
+        of the child sessions `iter_results_from_urls` opens) if you're
+        fetching several URLs concurrently.
     :param url: A term detail page URL, as yielded by `iter_term_urls`.
     :param topic: If a definition's source topic matches this topic
         (or one of several comma-separated topics), that resolved topic
         name is used for its `SearchResult.topic` instead of the topic
         parsed off the page.
     :yield: One `SearchResult` per definition found on the page. Each
-        result's `image` and `related` fields are `None`/empty when the
-        page has no illustrative image or no related-term links.
+        result's `image`/`image_caption` and `related` fields are
+        `None`/empty when the page has no illustrative image or no
+        related-term links.
     """
     resolved_topic = get_topic_match(session.topics, topic) if topic else None
 
@@ -272,6 +283,117 @@ async def iter_results_from_url(
         )
 
 
+def _as_async_iter(
+    urls: typing.Iterable[str] | typing.AsyncIterable[str],
+) -> typing.AsyncIterator[str]:
+    """Normalize a sync or async iterable of URLs into an async iterator."""
+
+    async def _wrap_sync(sync_urls: typing.Iterable[str]) -> typing.AsyncIterator[str]:
+        for url in sync_urls:
+            yield url
+
+    if hasattr(urls, "__aiter__"):
+        return typing.cast(typing.AsyncIterator[str], urls.__aiter__())  # type: ignore[attr-defined]
+    return _wrap_sync(typing.cast(typing.Iterable[str], urls))
+
+
+async def iter_results_from_urls(
+    session: SearchSession,
+    urls: typing.Iterable[str] | typing.AsyncIterable[str],
+    *,
+    topic: str | None = None,
+    concurrency: int = 1,
+    first_only: bool = False,
+) -> typing.AsyncIterator[SearchResult]:
+    """
+    Fetch term detail pages for `urls` and yield their definitions.
+
+    With `concurrency` > 1, extra browser pages are opened on `session`'s
+    existing browser context (child pages of the same session, not new
+    sessions - they share cookies/auth/stealth patches) so several term
+    pages can be fetched in parallel. Results are still yielded one at a
+    time as they become available, not collected into batches, though not
+    necessarily in the same order as `urls` when running concurrently.
+
+    :param session: An open glossary session. With `concurrency` > 1, its
+        `session.page` becomes one of several worker pages; the others are
+        opened and closed by this function.
+    :param urls: Term detail page URLs to fetch, e.g. from `iter_term_urls`.
+        May be a plain iterable or an async iterable (so a still-paging
+        `iter_term_urls` generator can be passed straight through).
+    :param topic: Passed through to `iter_results_from_url` for each URL.
+    :param concurrency: Number of term detail pages to fetch in parallel.
+        `1` (the default) fetches sequentially on `session.page`, with
+        identical behavior to calling `iter_results_from_url` in a loop.
+    :param first_only: If `True`, yield only the first definition found on
+        each page rather than every definition on it (used by
+        `get_terms_on`, which wants one result per term).
+    :yield: `SearchResult`s as they're fetched.
+    :raises ValueError: If `concurrency` is less than 1.
+    """
+    if concurrency < 1:
+        raise ValueError("concurrency must be at least 1")
+
+    url_iter = _as_async_iter(urls)
+
+    if concurrency == 1:
+        async for url in url_iter:
+            async for result in iter_results_from_url(session, url, topic=topic):
+                yield result
+                if first_only:
+                    break
+        return
+
+    # One worker reuses `session.page`; the rest get their own page on the
+    # same browser context, so every worker can navigate independently
+    # without racing over a single shared page.
+    extra_pages = [await session.context.new_page() for _ in range(concurrency - 1)]
+    worker_sessions: list[SearchSession] = [session]
+    worker_sessions.extend(dataclasses.replace(session, page=page) for page in extra_pages)
+
+    url_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=concurrency * 2)
+    result_queue: asyncio.Queue[SearchResult | None] = asyncio.Queue()
+
+    async def _produce() -> None:
+        async for url in url_iter:
+            await url_queue.put(url)
+        for _ in worker_sessions:
+            await url_queue.put(None)  # one stop signal per worker
+
+    async def _consume(worker_session: SearchSession) -> None:
+        while True:
+            url = await url_queue.get()
+            if url is None:
+                break
+            try:
+                async for result in iter_results_from_url(worker_session, url, topic=topic):
+                    await result_queue.put(result)
+                    if first_only:
+                        break
+            except Exception:
+                logger.warning("Failed to fetch %s", url, exc_info=True)
+        await result_queue.put(None)  # this worker is done
+
+    producer_task = asyncio.create_task(_produce())
+    worker_tasks = [asyncio.create_task(_consume(worker)) for worker in worker_sessions]
+
+    try:
+        finished_workers = 0
+        while finished_workers < len(worker_tasks):
+            item = await result_queue.get()
+            if item is None:
+                finished_workers += 1
+                continue
+            yield item
+    finally:
+        producer_task.cancel()
+        for task in worker_tasks:
+            task.cancel()
+        await asyncio.gather(producer_task, *worker_tasks, return_exceptions=True)
+        for page in extra_pages:
+            await page.close()
+
+
 async def search(
     session: SearchSession,
     query: str,
@@ -279,6 +401,7 @@ async def search(
     topic: str | None = None,
     start_letter: str | None = None,
     limit: int | None = 3,
+    concurrency: int = 1,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Search the glossary for `query` and yield matching definitions.
@@ -294,20 +417,22 @@ async def search(
     :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of terms to look up. Looks up every
         matching term if `None`. Defaults to `3`.
-    :yield: `SearchResult`s for the matched terms, most relevant first.
+    :param concurrency: Number of term detail pages to fetch in parallel.
+        See `iter_results_from_urls`. Defaults to `1` (sequential).
+    :yield: `SearchResult`s for the matched terms. In sequential order
+        (`concurrency=1`) these are most-relevant-first; with higher
+        concurrency, results may arrive out of relevance order.
     """
-    logger.info("Searching glossary for %r (limit=%r)", query, limit)
+    logger.info("Searching glossary for %r (limit=%r, concurrency=%r)", query, limit, concurrency)
+    urls = iter_term_urls(
+        session, query=query, topic=topic, start_letter=start_letter, limit=limit
+    )
     count = 0
-    async for url in iter_term_urls(
-        session,
-        query=query,
-        topic=topic,
-        start_letter=start_letter,
-        limit=limit,
+    async for result in iter_results_from_urls(
+        session, urls, topic=topic, concurrency=concurrency
     ):
-        async for result in iter_results_from_url(session, url, topic=topic):
-            count += 1
-            yield result
+        count += 1
+        yield result
     logger.info("Search for %r yielded %d result(s)", query, count)
 
 
@@ -316,6 +441,7 @@ async def get_terms_on(
     topic: str,
     *,
     limit: int | None = None,
+    concurrency: int = 1,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield the definition of every term filed under `topic`.
@@ -329,13 +455,18 @@ async def get_terms_on(
         match; see `iter_term_urls` for matching rules.
     :param limit: Maximum number of terms to yield. Yields every term filed
         under `topic` if `None`.
+    :param concurrency: Number of term detail pages to fetch in parallel.
+        See `iter_results_from_urls`. Defaults to `1` (sequential).
     :yield: One `SearchResult` per term filed under `topic`.
     """
-    logger.info("Fetching terms under topic %r (limit=%r)", topic, limit)
+    logger.info(
+        "Fetching terms under topic %r (limit=%r, concurrency=%r)", topic, limit, concurrency
+    )
+    urls = iter_term_urls(session, topic=topic, limit=limit)
     count = 0
-    async for url in iter_term_urls(session, topic=topic, limit=limit):
-        async for result in iter_results_from_url(session, url, topic=topic):
-            count += 1
-            yield result
-            break
+    async for result in iter_results_from_urls(
+        session, urls, topic=topic, concurrency=concurrency, first_only=True
+    ):
+        count += 1
+        yield result
     logger.info("Fetched %d term(s) under topic %r", count, topic)

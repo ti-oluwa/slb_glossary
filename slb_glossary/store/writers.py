@@ -1,17 +1,4 @@
-"""
-Built-in writers for `slb_glossary.store.save`.
-
-A writer is just an async callable: `(records, destination) -> None`. This
-module ships four (`csv`, `json`, `txt`, `xlsx`), all built from the same
-small set of helpers below, so a custom writer - registered with
-`slb_glossary.store.register_writer`, can reuse them too:
-
-* `field_names` / `humanize_field` - consistent, human-readable headers.
-* `records_to_dicts` - records as plain, JSON-safe `dict`s (also what
-  powers the CLI's `--json` output and `write_json`'s per-record shape).
-* `_display_text` - a flat, single-line rendering of a field for
-  cell-oriented formats (CSV/TXT/XLSX).
-"""
+"""Built-in writers for `slb_glossary.store.save`."""
 
 import asyncio
 import csv
@@ -77,7 +64,7 @@ def humanize_field(field: str) -> str:
     return " ".join(word.upper() if word in ACRONYMS else word.title() for word in words)
 
 
-def _json_safe(value: typing.Any) -> typing.Any:
+def make_json_safe(value: typing.Any) -> typing.Any:
     """
     Recursively convert `value` into something `json.dump` can serialize.
 
@@ -89,15 +76,15 @@ def _json_safe(value: typing.Any) -> typing.Any:
     :return: A JSON-serializable equivalent of `value`.
     """
     if hasattr(value, "_asdict"):
-        return {key: _json_safe(item) for key, item in value._asdict().items()}
+        return {key: make_json_safe(item) for key, item in value._asdict().items()}
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        return [make_json_safe(item) for item in value]
     if isinstance(value, dict):
-        return {key: _json_safe(item) for key, item in value.items()}
+        return {key: make_json_safe(item) for key, item in value.items()}
     return value
 
 
-def _display_text(value: typing.Any) -> str:
+def render_display_text(value: typing.Any) -> str:
     """
     Render a field value as flat, human-readable text for a CSV/TXT/XLSX cell.
 
@@ -111,12 +98,12 @@ def _display_text(value: typing.Any) -> str:
     """
     if value is None:
         return ""
-    if hasattr(value, "_asdict"):
-        record_dict = value._asdict()
+    if hasattr(value, "asdict"):
+        record_dict = value.asdict()
         fallback = next(iter(record_dict.values()), "")
         return str(record_dict.get("term") or record_dict.get("name") or fallback)
     if isinstance(value, (list, tuple)):
-        return "; ".join(_display_text(item) for item in value)
+        return "; ".join(render_display_text(item) for item in value)
     return str(value)
 
 
@@ -136,7 +123,8 @@ def records_to_dicts(records: Sequence[RecordLike]) -> list[dict[str, typing.Any
     :return: One JSON-safe `dict` per record, in the same order as `records`.
     """
     return [
-        {key: _json_safe(value) for key, value in record.asdict().items()} for record in records
+        {key: make_json_safe(value) for key, value in record.asdict().items()}
+        for record in records
     ]
 
 
@@ -149,7 +137,7 @@ async def write_csv(records: Sequence[RecordLike], destination: pathlib.Path) ->
             writer = csv.writer(file)
             writer.writerow([humanize_field(field) for field in fields])
             for record in records:
-                writer.writerow([_display_text(value) for value in record.asdict().values()])
+                writer.writerow([render_display_text(value) for value in record.asdict().values()])
 
     await asyncio.to_thread(_write)
 
@@ -206,7 +194,9 @@ async def write_txt(records: Sequence[RecordLike], destination: pathlib.Path) ->
             title_field, *restfields = fields
             lines.append(f"({index}) {record_dict[title_field]}")
             for field in restfields:
-                lines.append(f"    {humanize_field(field)}: {_display_text(record_dict[field])}")
+                lines.append(
+                    f"    {humanize_field(field)}: {render_display_text(record_dict[field])}"
+                )
             lines.append("")
         with open(destination, "w", encoding="utf-8") as file:
             file.write("\n".join(lines))
@@ -238,7 +228,7 @@ async def write_xlsx(records: Sequence[RecordLike], destination: pathlib.Path) -
 
         sheet.append([humanize_field(field) for field in fields])
         for record in records:
-            sheet.append([_display_text(value) for value in record.asdict().values()])
+            sheet.append([render_display_text(value) for value in record.asdict().values()])
         workbook.save(destination)
 
     await asyncio.to_thread(_write)
