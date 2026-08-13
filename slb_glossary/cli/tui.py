@@ -1,9 +1,4 @@
-"""Launch trogon's auto-generated TUI for the CLI, on demand.
-
-Kept isolated from `slb_glossary.cli.main` so importing the CLI never
-requires `trogon`/`textual` unless `--tui` is actually used - both are
-optional extras (`pip install slb-glossary[tui]`).
-"""
+"""Launch trogon's auto-generated TUI for the CLI, on demand."""
 
 import inspect
 import logging

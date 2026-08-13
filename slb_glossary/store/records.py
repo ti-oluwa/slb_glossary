@@ -1,6 +1,7 @@
 """The record shape `slb_glossary.store` saves, and how to collect it."""
 
 import typing
+from collections.abc import Sequence
 
 __all__ = ["RecordLike", "materialize_records"]
 
@@ -9,15 +10,16 @@ __all__ = ["RecordLike", "materialize_records"]
 class RecordLike(typing.Protocol):
     """
     Structural type for anything `slb_glossary.store` can save.
-
-    Any `typing.NamedTuple` instance satisfies this, including
-    `slb_glossary.models.SearchResult`. `store` depends only on this
-    protocol, never on `SearchResult` itself.
     """
 
-    fields: tuple[str, ...]
+    @property
+    def fields(self) -> Sequence[str]:
+        """Return a list of the field names in this record."""
+        ...
 
-    def asdict(self) -> dict[str, typing.Any]: ...
+    def asdict(self) -> dict[str, typing.Any]: 
+        """Return a dict mapping each field name to its value in this record."""
+        ...
 
 
 async def materialize_records(

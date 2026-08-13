@@ -11,7 +11,7 @@ __all__ = ["run_async"]
 T = typing.TypeVar("T")
 
 
-def run_async(coro: typing.Coroutine[typing.Any, typing.Any, T]) -> T:
+def run_async(coro: typing.Coroutine[typing.Any, typing.Any, T], /) -> T:
     """
     Run `coro` to completion, turning Ctrl-C into a clean CLI abort.
 

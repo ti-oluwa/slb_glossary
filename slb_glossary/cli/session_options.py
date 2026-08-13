@@ -8,7 +8,7 @@ from slb_glossary.browser import BrowserType, ResourceType
 from slb_glossary.models import Language
 from slb_glossary.retries import BackoffType, RetryPolicy
 
-__all__ = ["session_options", "build_retry_policy", "session_kwargs_from_params"]
+__all__ = ["session_options", "build_retry_policy", "get_session_kwargs"]
 
 
 F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
@@ -53,12 +53,12 @@ def _parse_proxy(
 
 def session_options(func: F) -> F:
     """
-    Attach every glossary-session-configuring option to a click command.
+    Attach every glossary-session configuring option to a click command.
 
     Stack this directly above a command's `def`, alongside `@click.command()`.
     The decorated callback receives each option as a keyword argument named
     after its destination (e.g. `browser_type`, `settle_timeout`); pass the
-    full `**kwargs` (or the relevant subset) to `session_kwargs_from_params`
+    full `**kwargs` (or the relevant subset) to `get_session_kwargs`
     to turn them into arguments for `slb_glossary.browser.open_session` /
     `search_session`.
 
@@ -228,7 +228,7 @@ def build_retry_policy(params: typing.Mapping[str, typing.Any]) -> RetryPolicy:
     )
 
 
-def session_kwargs_from_params(params: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
+def get_session_kwargs(params: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
     """
     Turn parsed `session_options` parameters into `open_session`/`search_session` kwargs.
 

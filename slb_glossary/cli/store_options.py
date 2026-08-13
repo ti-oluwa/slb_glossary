@@ -12,7 +12,10 @@ import typing
 
 import click
 
+from slb_glossary import store
 from slb_glossary.models import SearchResult
+from slb_glossary.store import records_to_dicts
+from slb_glossary.utils import print_results
 
 __all__ = ["store_options", "save_and_print"]
 
@@ -60,7 +63,7 @@ def store_options(func: F) -> F:
 
 
 async def save_and_print(
-    results: typing.AsyncIterable[SearchResult],
+    results: typing.AsyncIterable[SearchResult] | typing.AsyncIterator[SearchResult],
     *,
     save_paths: typing.Sequence[pathlib.Path],
     format: str | None,
@@ -112,12 +115,8 @@ async def save_and_print(
 
     if not quiet:
         if json_output:
-            from slb_glossary.store import records_to_dicts
-
             click.echo(json.dumps(records_to_dicts(collected), indent=2, ensure_ascii=False))
         else:
-            from slb_glossary.utils import print_results
-
             print_results(
                 collected,
                 limit=print_limit,
@@ -129,8 +128,6 @@ async def save_and_print(
             )
 
     if save_paths:
-        from slb_glossary import store
-
         for path in save_paths:
             await store.save(collected, path, format=format)
             click.echo(f"Saved {len(collected)} result(s) to {path}", err=True)

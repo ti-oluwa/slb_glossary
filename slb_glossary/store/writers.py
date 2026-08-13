@@ -4,18 +4,13 @@ Built-in writers for `slb_glossary.store.save`.
 A writer is just an async callable: `(records, destination) -> None`. This
 module ships four (`csv`, `json`, `txt`, `xlsx`), all built from the same
 small set of helpers below, so a custom writer - registered with
-`slb_glossary.store.register_writer` - can reuse them too:
+`slb_glossary.store.register_writer`, can reuse them too:
 
 * `field_names` / `humanize_field` - consistent, human-readable headers.
 * `records_to_dicts` - records as plain, JSON-safe `dict`s (also what
   powers the CLI's `--json` output and `write_json`'s per-record shape).
 * `_display_text` - a flat, single-line rendering of a field for
   cell-oriented formats (CSV/TXT/XLSX).
-
-None of these helpers - or the writers themselves - need to create
-`destination`'s parent directory or translate I/O errors; `slb_glossary.store.save`
-does both centrally (see that module's `WriterError`), so every writer,
-built-in or custom, gets that behavior for free.
 """
 
 import asyncio
@@ -23,6 +18,7 @@ import csv
 import json
 import pathlib
 import typing
+from collections.abc import Sequence
 
 from slb_glossary.store.records import RecordLike
 
@@ -40,7 +36,7 @@ __all__ = [
 ]
 
 
-Writer = typing.Callable[[list[RecordLike], pathlib.Path], typing.Awaitable[None]]
+Writer = typing.Callable[[Sequence[RecordLike], pathlib.Path], typing.Awaitable[None]]
 """
 An async callable that writes a list of records to a destination path.
 
@@ -49,7 +45,7 @@ the `@slb_glossary.store.writer(format)` decorator) to teach `store.save`
 a new file format:
 
 ```python
-async def write_yaml(records: list[RecordLike], destination: pathlib.Path) -> None:
+async def write_yaml(records: Sequence[RecordLike], destination: pathlib.Path) -> None:
     import yaml
 
     with open(destination, "w") as file:
@@ -66,7 +62,7 @@ context already attached).
 """
 
 
-def field_names(records: list[RecordLike]) -> list[str]:
+def field_names(records: Sequence[RecordLike]) -> list[str]:
     """Return the field names of `records`, or `[]` if `records` is empty."""
     return list(records[0].fields) if records else []
 
@@ -124,7 +120,7 @@ def _display_text(value: typing.Any) -> str:
     return str(value)
 
 
-def records_to_dicts(records: list[RecordLike]) -> list[dict[str, typing.Any]]:
+def records_to_dicts(records: Sequence[RecordLike]) -> list[dict[str, typing.Any]]:
     """
     Convert `records` into a list of plain, JSON-safe `dict`s, one per record.
 
@@ -144,7 +140,7 @@ def records_to_dicts(records: list[RecordLike]) -> list[dict[str, typing.Any]]:
     ]
 
 
-async def write_csv(records: list[RecordLike], destination: pathlib.Path) -> None:
+async def write_csv(records: Sequence[RecordLike], destination: pathlib.Path) -> None:
     """Write `records` to `destination` as CSV, with a humanized header row."""
 
     def _write() -> None:
@@ -158,7 +154,7 @@ async def write_csv(records: list[RecordLike], destination: pathlib.Path) -> Non
     await asyncio.to_thread(_write)
 
 
-async def write_json(records: list[RecordLike], destination: pathlib.Path) -> None:
+async def write_json(records: Sequence[RecordLike], destination: pathlib.Path) -> None:
     """
     Write `records` to `destination` as JSON, keyed by each record's first field.
 
@@ -181,7 +177,7 @@ async def write_json(records: list[RecordLike], destination: pathlib.Path) -> No
     await asyncio.to_thread(_write)
 
 
-async def write_jsonl(records: list[RecordLike], destination: pathlib.Path) -> None:
+async def write_jsonl(records: Sequence[RecordLike], destination: pathlib.Path) -> None:
     """
     Write `records` to `destination` as newline-delimited JSON (one object per line).
 
@@ -199,7 +195,7 @@ async def write_jsonl(records: list[RecordLike], destination: pathlib.Path) -> N
     await asyncio.to_thread(_write)
 
 
-async def write_txt(records: list[RecordLike], destination: pathlib.Path) -> None:
+async def write_txt(records: Sequence[RecordLike], destination: pathlib.Path) -> None:
     """Write `records` to `destination` as a numbered, human-readable list."""
 
     def _write() -> None:
@@ -218,7 +214,7 @@ async def write_txt(records: list[RecordLike], destination: pathlib.Path) -> Non
     await asyncio.to_thread(_write)
 
 
-async def write_xlsx(records: list[RecordLike], destination: pathlib.Path) -> None:
+async def write_xlsx(records: Sequence[RecordLike], destination: pathlib.Path) -> None:
     """
     Write `records` to `destination` as an Excel workbook.
 

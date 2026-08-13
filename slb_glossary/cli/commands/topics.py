@@ -7,7 +7,7 @@ import click
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
-from slb_glossary.cli.session_options import session_kwargs_from_params, session_options
+from slb_glossary.cli.session_options import get_session_kwargs, session_options
 from slb_glossary.cli.store_options import save_and_print, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.topics import refresh_topics
@@ -39,7 +39,7 @@ def topics() -> None:
     """List or refresh the glossary's topic (discipline) list."""
 
 
-async def _topic_records(
+async def iter_topic_records(
     topic_counts: typing.Mapping[str, int],
 ) -> typing.AsyncIterator[TopicRecord]:
     """Yield a `TopicRecord` for each entry in `topic_counts`, sorted by name."""
@@ -78,9 +78,9 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
         return
 
     async def _run() -> int:
-        async with search_session(**session_kwargs_from_params(params)) as session:
+        async with search_session(**get_session_kwargs(params)) as session:
             return await save_and_print(
-                _topic_records(session.topics),
+                iter_topic_records(session.topics),
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
@@ -129,10 +129,10 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
         return
 
     async def _run() -> int:
-        async with search_session(**session_kwargs_from_params(params)) as session:
+        async with search_session(**get_session_kwargs(params)) as session:
             session = await refresh_topics(session)
             return await save_and_print(
-                _topic_records(session.topics),
+                iter_topic_records(session.topics),
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],

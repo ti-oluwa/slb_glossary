@@ -7,7 +7,7 @@ import click
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
-from slb_glossary.cli.session_options import session_kwargs_from_params, session_options
+from slb_glossary.cli.session_options import get_session_kwargs, session_options
 from slb_glossary.cli.store_options import save_and_print, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.engine import get_terms_on
@@ -97,7 +97,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
     limit = params["limit"] or None
 
     async def _run() -> int:
-        async with search_session(**session_kwargs_from_params(params)) as session:
+        async with search_session(**get_session_kwargs(params)) as session:
             results = get_terms_on(session, topic, limit=limit)
             return await save_and_print(
                 results,
