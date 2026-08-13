@@ -6,7 +6,7 @@ import typing
 
 import click
 
-from slb_glossary.exceptions import BrowserError, NetworkError, ParsingError
+from slb_glossary.errors import BrowserError, NetworkError, ParsingError
 
 logger = logging.getLogger(__name__)
 

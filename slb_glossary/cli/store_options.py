@@ -15,6 +15,7 @@ import click
 from slb_glossary import store
 from slb_glossary.models import SearchResult
 from slb_glossary.store import records_to_dicts
+from slb_glossary.store.records import RecordLike
 from slb_glossary.utils import print_results
 
 __all__ = ["store_options", "save_and_print"]
@@ -63,7 +64,7 @@ def store_options(func: F) -> F:
 
 
 async def save_and_print(
-    results: typing.AsyncIterable[SearchResult] | typing.AsyncIterator[SearchResult],
+    results: typing.AsyncIterable[RecordLike] | typing.AsyncIterator[RecordLike],
     *,
     save_paths: typing.Sequence[pathlib.Path],
     format: str | None,

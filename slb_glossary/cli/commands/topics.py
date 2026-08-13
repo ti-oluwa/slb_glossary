@@ -88,6 +88,8 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
                 show_url=False,
                 show_topic=False,
                 show_grammar=False,
+                show_image=False,
+                show_related=False,
             )
 
     count = run_async(_run())
@@ -140,6 +142,8 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
                 show_url=False,
                 show_topic=False,
                 show_grammar=False,
+                show_image=False,
+                show_related=False,
             )
 
     count = run_async(_run())

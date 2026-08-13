@@ -15,8 +15,19 @@ from slb_glossary.engine import search as run_search
 __all__ = ["search"]
 
 
+def _validate_query(
+    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Validate that the user provided a non-empty search query."""
+    if not value or not any(value):
+        raise click.BadParameter(
+            "Missing search query. Provide a query string to look up in the glossary."
+        )
+    return value
+
+
 @click.command("search")
-@click.argument("query")
+@click.argument("query", default="", callback=_validate_query)
 @click.option(
     "--topic",
     "-t",
@@ -78,6 +89,14 @@ __all__ = ["search"]
     show_default=True,
     help="Show/hide the related-terms column.",
 )
+@click.option(
+    "--concurrency",
+    "concurrency",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Number of concurrent term lookups to perform. Higher values may be faster, but use with discretion as we do not want to overload the glossary server.",
+)
 @session_options
 @store_options
 @click.option(
@@ -108,6 +127,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
         return
 
     limit = params["limit"] or None
+    concurrency = params["concurrency"] or 1
 
     async def _run() -> int:
         async with search_session(**get_session_kwargs(params)) as session:
@@ -117,6 +137,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                 topic=params["topic"],
                 start_letter=params["start_letter"],
                 limit=limit,
+                concurrency=concurrency,
             )
             return await save_and_print(
                 results,

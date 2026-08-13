@@ -110,7 +110,7 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
             )
             records = (UrlRecord(url=url) async for url in url_iter)
             return await save_and_print(
-                records,  # type: ignore[arg-type]
+                records,
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
@@ -125,8 +125,17 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
         click.echo("No URLs found.", err=True)
 
 
+def _validate_url(
+    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Validate that the user provided a non-empty URL argument."""
+    if not value or not any(value):
+        raise click.BadParameter("Missing URL argument.")
+    return value
+
+
 @urls.command("fetch")
-@click.argument("url")
+@click.argument("url", default="", callback=_validate_url)
 @click.option(
     "--topic",
     "-t",

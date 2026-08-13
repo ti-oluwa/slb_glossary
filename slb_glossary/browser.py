@@ -8,7 +8,7 @@ import typing
 from patchright.async_api import Browser, Playwright, Route, async_playwright
 from playwright_stealth import Stealth
 
-from slb_glossary.exceptions import BrowserError, NetworkError
+from slb_glossary.errors import BrowserError, NetworkError
 from slb_glossary.models import Language, SearchSession
 from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
 from slb_glossary.topics import fetch_topics

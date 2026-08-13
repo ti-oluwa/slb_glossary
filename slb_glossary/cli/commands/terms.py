@@ -15,8 +15,17 @@ from slb_glossary.engine import get_terms_on
 __all__ = ["terms"]
 
 
+def _validate_topic(
+    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Validate that the user provided a non-empty search topic."""
+    if not value or not any(value):
+        raise click.BadParameter("Missing topic. Provide a topic name to look up in the glossary.")
+    return value
+
+
 @click.command("terms")
-@click.argument("topic")
+@click.argument("topic", default="", callback=_validate_topic)
 @click.option(
     "--limit",
     "-n",
@@ -66,6 +75,14 @@ __all__ = ["terms"]
     show_default=True,
     help="Show/hide the related-terms column.",
 )
+@click.option(
+    "--concurrency",
+    "concurrency",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Number of concurrent term lookups to perform. Higher values may be faster, but use with discretion as we do not want to overload the glossary server.",
+)
 @session_options
 @store_options
 @click.option(
@@ -95,10 +112,11 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
         return
 
     limit = params["limit"] or None
+    concurrency = params["concurrency"] or 1
 
     async def _run() -> int:
         async with search_session(**get_session_kwargs(params)) as session:
-            results = get_terms_on(session, topic, limit=limit)
+            results = get_terms_on(session, topic, limit=limit, concurrency=concurrency)
             return await save_and_print(
                 results,
                 save_paths=params["save_paths"],

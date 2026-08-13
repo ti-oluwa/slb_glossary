@@ -15,7 +15,7 @@ import logging
 from . import store
 from .browser import BrowserType, ResourceType, close_session, open_session, search_session
 from .engine import get_terms_on, iter_results_from_url, iter_term_urls, search
-from .exceptions import BrowserError, NetworkError, ParsingError
+from .errors import BrowserError, NetworkError, ParsingError
 from .models import Language, SearchResult, SearchSession
 from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics

@@ -27,12 +27,7 @@ class BrowserInstallError(RuntimeError):
 
 
 KNOWN_BROWSERS: tuple[str, ...] = ("chromium", "firefox", "webkit")
-"""Browser families patchright's driver knows how to install.
-
-Kept separate from `slb_glossary.browser.BrowserType` so this module has no
-import-time dependency on the rest of the package - it only needs to know
-what patchright can install, not how a search session uses it.
-"""
+"""Browser families patchright's driver knows how to install."""
 
 
 @dataclasses.dataclass(slots=True, kw_only=True, frozen=True)
@@ -52,7 +47,7 @@ class InstalledBrowser:
     """Total on-disk size of the build's directory."""
 
 
-def _browsers_path() -> pathlib.Path:
+def get_browsers_path() -> pathlib.Path:
     """
     Return the directory patchright installs (and looks up) browser builds in.
 
@@ -75,7 +70,7 @@ def _browsers_path() -> pathlib.Path:
     return pathlib.Path("~/.cache/ms-playwright").expanduser()
 
 
-def _dir_size(path: pathlib.Path) -> int:
+def get_directory_size(path: pathlib.Path) -> int:
     """Return the total size in bytes of every regular file under `path`."""
     total = 0
     for entry in path.rglob("*"):
@@ -84,7 +79,7 @@ def _dir_size(path: pathlib.Path) -> int:
     return total
 
 
-def _run_driver(args: typing.Sequence[str]) -> None:
+def run_driver(args: typing.Sequence[str]) -> None:
     """
     Run `python -m patchright <args>`, streaming its output live.
 
@@ -139,7 +134,7 @@ def install_browsers(
         args.append("--force")
     if only_shell:
         args.append("--only-shell")
-    _run_driver(args)
+    run_driver(args)
 
 
 def remove_browsers(browsers: typing.Sequence[str]) -> list[str]:
@@ -161,7 +156,7 @@ def remove_browsers(browsers: typing.Sequence[str]) -> list[str]:
     if not browsers:
         return []
 
-    base = _browsers_path()
+    base = get_browsers_path()
     if not base.is_dir():
         return []
 
@@ -197,7 +192,7 @@ def list_installed_browsers(
     :return: Installed builds, sorted by family then build name. Empty if
         the browsers cache does not exist yet (nothing has been installed).
     """
-    base = _browsers_path()
+    base = get_browsers_path()
     if not base.is_dir():
         return []
 
@@ -216,7 +211,7 @@ def list_installed_browsers(
                 name=entry.name,
                 family=family,
                 path=entry,
-                size_bytes=_dir_size(entry),
+                size_bytes=get_directory_size(entry),
             )
         )
 
