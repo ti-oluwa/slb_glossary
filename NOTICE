@@ -1,18 +1,12 @@
-Schlumberger Oilfield Glossary attribution and disclaimer
+SLB Energy Glossary Attribution and Disclaimer
 
 Source: <https://glossary.slb.com/>
 Accessed: 2026-08-12
 
-This project uses the Schlumberger Oilfield Glossary as an information source.
-The glossary content (definitions, term pages, and other textual material)
-is owned by Schlumberger and is provided here for convenience and research
-purposes only. This project does not claim ownership of that content.
+This project uses the SLB Energy Glossary as an information source.
 
-Users must consult the original source and comply with the Schlumberger
-Glossary's terms of use for any reuse, redistribution, or commercial use of
-their content. If you intend to reproduce large portions of the glossary or
-use it in a product, contact Schlumberger for permission.
+The glossary content—including definitions, term pages, and other textual material—is owned by SLB and is provided here for convenience and research purposes only. This project does not claim ownership of that content.
 
-Code in this repository is licensed under the BSD-3-Clause license (see
-LICENSE file). The NOTICE file documents third-party content and attribution
-requirements and does not alter the license of this repository's code.
+Users must consult the original source and comply with the SLB Glossary's terms of use for any reuse, redistribution, or commercial use of its content. If you intend to reproduce large portions of the glossary or use it in a product, contact SLB for permission.
+
+Code in this repository is licensed under the BSD-3-Clause License (see the LICENSE file). The NOTICE file documents third-party content and attribution requirements and does not alter the license of this repository's code.

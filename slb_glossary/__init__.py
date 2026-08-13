@@ -1,5 +1,11 @@
 """
-Search the Schlumberger Oilfield Glossary (https://glossary.slb.com/).
+Search the SLB Energy Glossary (https://glossary.slb.com/).
+
+All rights to the data and content on the SLB Energy Glossary website are owned by SLB. 
+This package is not affiliated with or endorsed by SLB.
+Visit <https://www.slb.com/en/terms-of-service> for the terms of use.
+
+**Not for commercial use. This package is intended for educational and research purposes only.**
 
 @Author: Daniel T. Afolayan (ti-oluwa)
 """

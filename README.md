@@ -1,15 +1,10 @@
-# SLB Glossary
+# SLB Energy Glossary
 
-Search the [Schlumberger Oilfield Glossary](https://glossary.slb.com/) programmatically, in English and Spanish, using an async, stealth-patched browser.
+Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in English and Spanish.
 
 > This package is intended for research or instructional use only.
 
-Attribution and disclaimer: this project uses content from the Schlumberger
-Oilfield Glossary (<https://glossary.slb.com>). That content is owned by
-Schlumberger; this project does not claim ownership of glossary entries or
-their text. Users should consult the original site and follow its terms of
-use when reusing or redistributing glossary content. See the NOTICE file for
-details and the project `LICENSE` for code licensing.
+Attribution and disclaimer: this project uses content from the SLB Energy Glossary (<https://glossary.slb.com>). That content is owned by SLB; this project does not claim ownership of glossary entries or their text. Users should consult the original site and follow its terms of use when reusing or redistributing glossary content. See the NOTICE file for details and the project `LICENSE` for code licensing.
 
 ## Highlights
 

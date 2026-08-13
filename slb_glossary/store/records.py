@@ -17,7 +17,7 @@ class RecordLike(typing.Protocol):
         """Return a list of the field names in this record."""
         ...
 
-    def asdict(self) -> dict[str, typing.Any]: 
+    def asdict(self) -> dict[str, typing.Any]:
         """Return a dict mapping each field name to its value in this record."""
         ...
 

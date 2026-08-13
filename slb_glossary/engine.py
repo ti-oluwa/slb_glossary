@@ -378,8 +378,9 @@ async def iter_results_from_urls(
     worker_tasks = [asyncio.create_task(_consume(worker)) for worker in worker_sessions]
 
     try:
+        total_worker_tasks = len(worker_tasks)
         finished_workers = 0
-        while finished_workers < len(worker_tasks):
+        while finished_workers < total_worker_tasks:
             item = await result_queue.get()
             if item is None:
                 finished_workers += 1

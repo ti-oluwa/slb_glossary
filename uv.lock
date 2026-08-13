@@ -333,7 +333,7 @@ requires-dist = [
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.58" },
     { name = "trogon", marker = "extra == 'tui'", specifier = ">=0.6.0" },
 ]
-provides-extras = ["xlsx", "cli", "tui"]
+provides-extras = ["xlsx", "tui"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ruff", specifier = ">=0.13" }]

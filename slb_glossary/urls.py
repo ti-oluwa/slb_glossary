@@ -10,6 +10,8 @@ __all__ = [
     "get_glossary_base_url",
 ]
 
+BASE_URL = "https://glossary.slb.com"
+
 
 def get_glossary_base_url(language: Language = Language.ENGLISH) -> str:
     """
@@ -18,7 +20,7 @@ def get_glossary_base_url(language: Language = Language.ENGLISH) -> str:
     :param language: The glossary language to build the URL for.
     :return: The base search URL, e.g. `"https://glossary.slb.com/en/search"`.
     """
-    return f"https://glossary.slb.com/{language.value}/search"
+    return f"{BASE_URL}/{language.value}/search"
 
 
 def build_pager_query(*, tab_number: int = 1, terms_per_tab: int = 12) -> str:

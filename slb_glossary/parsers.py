@@ -7,10 +7,12 @@ to the glossary site's markup only ever needs to be fixed here.
 
 import logging
 import typing
+from urllib.parse import urljoin
 
 from patchright.async_api import Page
 
 from slb_glossary.models import RelatedTerm
+from slb_glossary.urls import BASE_URL
 from slb_glossary.utils import parse_int
 
 logger = logging.getLogger(__name__)
@@ -275,5 +277,6 @@ async def get_term_image(page: Page) -> TermImage | None:
     if not src:
         return None
 
+    url = urljoin(BASE_URL, src)
     caption = await get_element_text(page, TERM_IMAGE_CAPTION_SELECTOR, timeout=2_000)
-    return TermImage(url=src, caption=caption)
+    return TermImage(url=url, caption=caption)
