@@ -7,7 +7,7 @@ import click
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
-from slb_glossary.cli.session_options import get_session_kwargs, session_options
+from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.store_options import save_and_print, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.engine import search as run_search
@@ -97,6 +97,7 @@ def _validate_query(
     show_default=True,
     help="Number of concurrent term lookups to perform. Higher values may be faster, but use with discretion as we do not want to overload the glossary server.",
 )
+@config_option
 @session_options
 @store_options
 @click.option(
@@ -121,6 +122,8 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
       slb-glossary search "drilling fluid" --topic Drilling --limit 10
       slb-glossary search viscosity --save results.csv --quiet
       slb-glossary search viscosity --related-column --image-column
+      slb-glossary search porosity --config ~/my-config.toml
+      slb-glossary search porosity --config none --headed
     """
     if use_tui:
         launch_tui(ctx, command_path=("search",))
@@ -130,7 +133,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     concurrency = params["concurrency"] or 1
 
     async def _run() -> int:
-        async with search_session(**get_session_kwargs(params)) as session:
+        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
             results = run_search(
                 session,
                 query,

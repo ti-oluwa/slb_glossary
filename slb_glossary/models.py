@@ -2,6 +2,7 @@
 
 import dataclasses
 import enum
+import pathlib
 import typing
 
 from patchright.async_api import Browser, BrowserContext, Page, Playwright
@@ -9,8 +10,8 @@ from patchright.async_api import Browser, BrowserContext, Page, Playwright
 from slb_glossary.retries import RetryPolicy
 
 if typing.TYPE_CHECKING:
-    import pathlib
-
+    # Deferred: slb_glossary.config imports Language from this module at
+    # top level, so importing it back here at module load time would cycle.
     from slb_glossary.config import Config
 
 __all__ = [
@@ -156,6 +157,10 @@ class SearchSession:
             `slb_glossary.browser.search_session_from_config` for automatic
             cleanup via `async with`.
         """
+        # Both imports must stay deferred: browser imports this module at
+        # top level (models -> browser would cycle), and config imports
+        # Language from this module at top level (models -> config would
+        # cycle too). Only this rarely-called classmethod pays the cost.
         from slb_glossary.browser import open_session
         from slb_glossary.config import Config
 

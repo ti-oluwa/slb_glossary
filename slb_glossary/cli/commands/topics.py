@@ -7,7 +7,7 @@ import click
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
-from slb_glossary.cli.session_options import get_session_kwargs, session_options
+from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.store_options import save_and_print, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.topics import refresh_topics
@@ -54,6 +54,7 @@ async def iter_topic_records(
     is_flag=True,
     help="Don't print topics to the console (useful with --save).",
 )
+@config_option
 @session_options
 @store_options
 @click.option(
@@ -78,7 +79,7 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
         return
 
     async def _run() -> int:
-        async with search_session(**get_session_kwargs(params)) as session:
+        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
             return await save_and_print(
                 iter_topic_records(session.topics),
                 save_paths=params["save_paths"],
@@ -104,6 +105,7 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
     is_flag=True,
     help="Don't print topics to the console (useful with --save).",
 )
+@config_option
 @session_options
 @store_options
 @click.option(
@@ -131,7 +133,7 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
         return
 
     async def _run() -> int:
-        async with search_session(**get_session_kwargs(params)) as session:
+        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
             session = await refresh_topics(session)
             return await save_and_print(
                 iter_topic_records(session.topics),

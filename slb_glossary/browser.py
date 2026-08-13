@@ -9,14 +9,12 @@ import typing
 from patchright.async_api import Browser, Playwright, Route, async_playwright
 from playwright_stealth import Stealth
 
+from slb_glossary.config import Config
 from slb_glossary.errors import BrowserError, NetworkError
 from slb_glossary.models import Language, SearchSession
 from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
 from slb_glossary.topics import fetch_topics
 from slb_glossary.urls import get_glossary_base_url
-
-if typing.TYPE_CHECKING:
-    from slb_glossary.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -330,7 +328,7 @@ async def open_session(
 
 
 async def open_session_from_config(
-    config: "Config | str | pathlib.Path", **overrides: typing.Any
+    config: Config | str | pathlib.Path, **overrides: typing.Any
 ) -> SearchSession:
     """
     Open a `SearchSession` using a `Config`, or a path to a config file.
@@ -346,8 +344,6 @@ async def open_session_from_config(
     :return: An open `SearchSession`. Close it with `close_session`, or
         prefer `search_session_from_config` for automatic cleanup.
     """
-    from slb_glossary.config import Config
-
     resolved_config = config if isinstance(config, Config) else Config.from_file(config)
     kwargs = resolved_config.to_session_kwargs()
     kwargs.update(overrides)
@@ -455,7 +451,7 @@ async def search_session(
 
 @contextlib.asynccontextmanager
 async def search_session_from_config(
-    config: "Config | str | pathlib.Path", **overrides: typing.Any
+    config: Config | str | pathlib.Path, **overrides: typing.Any
 ) -> typing.AsyncIterator[SearchSession]:
     """
     Open a `SearchSession` from a `Config` (or config file path) for an `async with` block.

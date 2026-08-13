@@ -7,7 +7,7 @@ import click
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
-from slb_glossary.cli.session_options import get_session_kwargs, session_options
+from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.store_options import save_and_print, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.engine import get_terms_on
@@ -83,6 +83,7 @@ def _validate_topic(
     show_default=True,
     help="Number of concurrent term lookups to perform. Higher values may be faster, but use with discretion as we do not want to overload the glossary server.",
 )
+@config_option
 @session_options
 @store_options
 @click.option(
@@ -106,6 +107,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
       slb-glossary terms Geophysics
       slb-glossary terms "Well completions,Perforating" --limit 20
       slb-glossary terms Drilling --save drilling_terms.json
+      slb-glossary terms Drilling --config ~/my-config.toml
     """
     if use_tui:
         launch_tui(ctx, command_path=("terms",))
@@ -115,7 +117,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
     concurrency = params["concurrency"] or 1
 
     async def _run() -> int:
-        async with search_session(**get_session_kwargs(params)) as session:
+        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
             results = get_terms_on(session, topic, limit=limit, concurrency=concurrency)
             return await save_and_print(
                 results,

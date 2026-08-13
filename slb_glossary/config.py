@@ -25,10 +25,9 @@ import typing
 from collections.abc import Mapping
 
 from slb_glossary.errors import ConfigError
+from slb_glossary.models import Language
 from slb_glossary.paths import default_config_path
-
-if typing.TYPE_CHECKING:
-    from slb_glossary.retries import RetryPolicy
+from slb_glossary.retries import BackoffType, RetryPolicy
 
 __all__ = [
     "Config",
@@ -64,10 +63,8 @@ class RetryConfig:
     jitter: bool = True
     """Whether to randomize each retry delay by up to +/-50%% to avoid retry storms."""
 
-    def to_retry_policy(self) -> "RetryPolicy":
+    def to_retry_policy(self) -> RetryPolicy:
         """Build the `RetryPolicy` this config describes."""
-        from slb_glossary.retries import BackoffType, RetryPolicy
-
         try:
             backoff_type = BackoffType(self.backoff)
         except ValueError as exc:
@@ -85,7 +82,7 @@ class RetryConfig:
         )
 
     @classmethod
-    def from_retry_policy(cls, policy: "RetryPolicy") -> "RetryConfig":
+    def from_retry_policy(cls, policy: RetryPolicy) -> "RetryConfig":
         """Build a `RetryConfig` from an existing `RetryPolicy`."""
         return cls(
             attempts=policy.attempts,
@@ -151,8 +148,6 @@ class SessionConfig:
         :return: A kwargs dict ready to splat into `open_session` or
             `search_session`.
         """
-        from slb_glossary.models import Language
-
         block: bool | frozenset[str]
         if self.block_resources:
             block = frozenset(name.lower() for name in self.block_resources)
