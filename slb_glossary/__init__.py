@@ -18,7 +18,7 @@ above. See `slb_glossary.paths` and `slb_glossary.local` for details.
 
 import logging
 
-from . import local, query, store
+from . import live, local, query, store
 from .browser import (
     BrowserType,
     ResourceType,
@@ -38,7 +38,6 @@ from .errors import (
     ParsingError,
     QueryError,
 )
-from .live import get_terms_on, iter_results_from_url, iter_term_urls, search
 from .models import Language, SearchResult, SearchSession
 from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics
@@ -50,9 +49,10 @@ logging.basicConfig(
 
 __version__ = "0.1.0"
 __all__ = [
-    "store",
+    "live",
     "local",
     "query",
+    "store",
     "open_session",
     "open_session_from_config",
     "close_session",
@@ -62,10 +62,6 @@ __all__ = [
     "Config",
     "Language",
     "SearchResult",
-    "search",
-    "get_terms_on",
-    "iter_term_urls",
-    "iter_results_from_url",
     "print_results",
     "async_print_results",
     "get_topic_match",
