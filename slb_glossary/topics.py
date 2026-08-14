@@ -80,7 +80,12 @@ async def refresh_topics(session: SearchSession) -> SearchSession:
     :param session: The session to refresh.
     :return: `session`, with `topics` and `size` updated in place.
     """
-    topics, size = await fetch_topics(session.page, base_url=session.base_url, retry=session.retry)
+    topics, size = await fetch_topics(
+        session.page,
+        base_url=session.base_url,
+        retry=session.retry,
+        settle_delay=session.settle_timeout,
+    )
     session.topics = topics
     session.size = size
     return session

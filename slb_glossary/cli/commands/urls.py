@@ -6,11 +6,11 @@ import click
 
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
+from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
-from slb_glossary.cli.session_options import get_session_kwargs, session_options
-from slb_glossary.cli.store_options import save_and_print, store_options
+from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.engine import iter_results_from_url, iter_term_urls
+from slb_glossary.live import get_results_from_url, get_terms_urls
 
 __all__ = ["urls"]
 
@@ -68,8 +68,9 @@ def urls() -> None:
     is_flag=True,
     help="Don't print URLs to the console (useful with --save).",
 )
+@config_option
 @session_options
-@store_options
+@output_options
 @click.option(
     "--tui",
     "use_tui",
@@ -100,8 +101,8 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
     limit = params["limit"] or None
 
     async def _run() -> int:
-        async with search_session(**get_session_kwargs(params)) as session:
-            url_iter = iter_term_urls(
+        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
+            url_iter = get_terms_urls(
                 session,
                 query=params["query"],
                 topic=params["topic"],
@@ -109,7 +110,7 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
                 limit=limit,
             )
             records = (UrlRecord(url=url) async for url in url_iter)
-            return await save_and_print(
+            return await output_results(
                 records,
                 save_paths=params["save_paths"],
                 format=params["format"],
@@ -143,12 +144,6 @@ def _validate_url(
     help="Resolve this topic (or comma-separated topics) against the page's definitions.",
 )
 @click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Don't print results to the console (useful with --save).",
-)
-@click.option(
     "--url-column/--no-url-column",
     "show_url",
     default=True,
@@ -156,35 +151,36 @@ def _validate_url(
     help="Show/hide the source URL column.",
 )
 @click.option(
-    "--topic-column/--no-topic-column",
+    "--show-topic/--hide-topic",
     "show_topic",
     default=True,
     show_default=True,
     help="Show/hide the topic column.",
 )
 @click.option(
-    "--grammar-column/--no-grammar-column",
+    "--show-grammar/--hide-grammar",
     "show_grammar",
     default=True,
     show_default=True,
     help="Show/hide the grammatical label column.",
 )
 @click.option(
-    "--image-column/--no-image-column",
+    "--show-image/--hide-image",
     "show_image",
     default=False,
     show_default=True,
     help="Show/hide the illustrative image URL column.",
 )
 @click.option(
-    "--related-column/--no-related-column",
+    "--show-related/--hide-related",
     "show_related",
     default=False,
     show_default=True,
     help="Show/hide the related-terms column.",
 )
+@config_option
 @session_options
-@store_options
+@output_options
 @click.option(
     "--tui",
     "use_tui",
@@ -207,9 +203,9 @@ def fetch_url(ctx: click.Context, url: str, use_tui: bool, **params: typing.Any)
         return
 
     async def _run() -> int:
-        async with search_session(**get_session_kwargs(params)) as session:
-            results = iter_results_from_url(session, url, topic=params["topic"])
-            return await save_and_print(
+        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
+            results = get_results_from_url(session, url, topic=params["topic"])
+            return await output_results(
                 results,
                 save_paths=params["save_paths"],
                 format=params["format"],

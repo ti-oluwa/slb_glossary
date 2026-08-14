@@ -10,7 +10,7 @@ from rich.table import Table
 
 from slb_glossary.models import SearchResult
 
-__all__ = ["parse_int", "print_results", "print_results_async"]
+__all__ = ["parse_int", "print_results", "async_print_results"]
 
 
 def parse_int(text: str) -> int:
@@ -26,10 +26,10 @@ def parse_int(text: str) -> int:
 
 
 _ACRONYMS = frozenset({"url", "id"})
-"""Field-name words rendered upper-case rather than title-cased by `_humanize_field`."""
+"""Field-name words rendered upper-case rather than title-cased by `humanize_field`."""
 
 
-def _humanize_field(field: str) -> str:
+def humanize_field(field: str) -> str:
     """Turn a `snake_case` field name into a `Title Case` column header."""
     words = field.split("_")
     return " ".join(word.upper() if word in _ACRONYMS else word.title() for word in words)
@@ -59,15 +59,15 @@ def _format_cell(value: typing.Any, *, max_related_shown: int = 6) -> str:
             shown = ", ".join(names[:max_related_shown])
             return f"{shown}, +{len(names) - max_related_shown} more"
         return ", ".join(names)
-    if hasattr(value, "_asdict"):
-        record_dict = value._asdict()
+    if hasattr(value, "asdict"):
+        record_dict = value.asdict()
         fallback = next(iter(record_dict.values()), "-")
         return str(record_dict.get("term") or record_dict.get("name") or fallback)
     text = str(value).strip()
     return text or "-"
 
 
-def _make_search_result_table(
+def _make_result_table(
     *,
     show_url: bool = True,
     show_topic: bool = True,
@@ -79,7 +79,7 @@ def _make_search_result_table(
     table = Table(
         title="Search Results",
         title_style="bold bright_blue",
-        box=box.ROUNDED,
+        box=box.HEAVY,
         expand=True,
         show_lines=True,
     )
@@ -98,7 +98,7 @@ def _make_search_result_table(
     return table
 
 
-def _format_search_result_row(
+def _format_result_row(
     result: SearchResult,
     *,
     show_url: bool = True,
@@ -107,7 +107,7 @@ def _format_search_result_row(
     show_image: bool = False,
     show_related: bool = False,
 ) -> list[str]:
-    """Build one table row for a `SearchResult`, matching `_make_search_result_table`'s columns."""
+    """Build one table row for a `SearchResult`, matching `_make_result_table`'s columns."""
     definition = result.definition.strip() if result.definition else "(no definition parsed)"
     row: list[str] = [result.term]
     if show_grammar:
@@ -118,7 +118,10 @@ def _format_search_result_row(
     if show_related:
         row.append(_format_cell(result.related))
     if show_image:
-        row.append(result.image or "-")
+        if not result.image_caption:
+            row.append(result.image or "-")
+        else:
+            row.append(f"{result.image_caption} - {result.image}")
     if show_url:
         row.append(result.url or "-")
     return row
@@ -129,12 +132,12 @@ def _make_generic_table(fields: typing.Sequence[str]) -> Table:
     table = Table(
         title="Results",
         title_style="bold bright_blue",
-        box=box.ROUNDED,
+        box=box.HEAVY,
         expand=True,
         show_lines=True,
     )
     for field in fields:
-        table.add_column(_humanize_field(field), style="white", overflow="fold")
+        table.add_column(humanize_field(field), style="white", overflow="fold")
     return table
 
 
@@ -144,7 +147,7 @@ def _format_generic_row(record: typing.Any, fields: typing.Sequence[str]) -> lis
     return [_format_cell(record_dict.get(field)) for field in fields]
 
 
-def _table_and_formatter(
+def _make_table_and_formatter(
     sample: typing.Any,
     *,
     show_url: bool,
@@ -168,7 +171,7 @@ def _table_and_formatter(
         every record (including `sample`) to get its row cells.
     """
     if isinstance(sample, SearchResult):
-        table = _make_search_result_table(
+        table = _make_result_table(
             show_url=show_url,
             show_topic=show_topic,
             show_grammar=show_grammar,
@@ -176,8 +179,8 @@ def _table_and_formatter(
             show_related=show_related,
         )
 
-        def _search_result_formatter(record: typing.Any) -> list[str]:
-            return _format_search_result_row(
+        def _result_formatter(record: SearchResult) -> list[str]:
+            return _format_result_row(
                 record,
                 show_url=show_url,
                 show_topic=show_topic,
@@ -186,7 +189,7 @@ def _table_and_formatter(
                 show_related=show_related,
             )
 
-        return table, _search_result_formatter
+        return table, _result_formatter
 
     fields = list(getattr(sample, "fields", None) or sample.asdict().keys())
     table = _make_generic_table(fields)
@@ -238,7 +241,7 @@ def print_results(
         console.print(_make_generic_table([]))
         return 0
 
-    table, format_row = _table_and_formatter(
+    table, format_row = _make_table_and_formatter(
         first,
         show_url=show_url,
         show_topic=show_topic,
@@ -272,7 +275,7 @@ def print_results(
     return count
 
 
-async def print_results_async(
+async def async_print_results(
     results: typing.AsyncIterable[typing.Any],
     *,
     out: typing.TextIO | None = None,
@@ -295,7 +298,7 @@ async def print_results_async(
         console.print(_make_generic_table([]))
         return 0
 
-    table, format_row = _table_and_formatter(
+    table, format_row = _make_table_and_formatter(
         first,
         show_url=show_url,
         show_topic=show_topic,
@@ -304,7 +307,7 @@ async def print_results_async(
         show_related=show_related,
     )
 
-    async def _remaining() -> typing.AsyncIterator[typing.Any]:
+    async def _records() -> typing.AsyncIterator[typing.Any]:
         yield first
         async for record in iterator:
             yield record
@@ -312,7 +315,7 @@ async def print_results_async(
     count = 0
     if console.is_terminal:
         with Live(table, console=console, refresh_per_second=8, transient=False) as live:
-            async for record in _remaining():
+            async for record in _records():
                 if limit is not None and count >= limit:
                     break
                 table.add_row(*format_row(record))
@@ -320,7 +323,7 @@ async def print_results_async(
                 count += 1
         return count
 
-    async for record in _remaining():
+    async for record in _records():
         if limit is not None and count >= limit:
             break
         table.add_row(*format_row(record))

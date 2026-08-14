@@ -5,7 +5,21 @@ import typing
 
 import click
 
-from slb_glossary.cli.commands import install, search, terms, topics, urls
+from slb_glossary.cli.commands import (
+    compare,
+    config,
+    define,
+    install,
+    local,
+    random_term,
+    related,
+    search,
+    sync,
+    terms,
+    topics,
+    update,
+    urls,
+)
 from slb_glossary.cli.tui import TuiUnavailableError, launch_tui
 
 __all__ = ["cli", "main"]
@@ -34,7 +48,7 @@ def _configure_logging(level_name: str) -> None:
 @click.pass_context
 def cli(ctx: click.Context, log_level: str, use_tui: bool) -> None:
     """
-    Search the Schlumberger Oilfield Glossary from the command line.
+    Search the SLB Energy Glossary from the command line.
 
     Run any subcommand with --help for its full set of options, or pass
     --tui (here, or after a subcommand) to fill them in interactively
@@ -49,8 +63,24 @@ def cli(ctx: click.Context, log_level: str, use_tui: bool) -> None:
         ctx.exit(0)
 
 
-for command in (install, search, terms, topics, urls):
-    cli.add_command(typing.cast(click.Command, command))  # type: ignore[attr-defined]
+COMMANDS = {
+    "install": install,
+    "search": search,
+    "terms": terms,
+    "topics": topics,
+    "urls": urls,
+    "define": define,
+    "related": related,
+    "compare": compare,
+    "random": random_term,
+    "sync": sync,
+    "update": update,
+    "local": local,
+    "config": config,
+}
+
+for name, command in COMMANDS.items():
+    cli.add_command(typing.cast(click.Command, command), name=name)  # type: ignore[attr-defined]
 
 
 def main() -> None:

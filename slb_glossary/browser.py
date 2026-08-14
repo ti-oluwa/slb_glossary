@@ -3,11 +3,14 @@
 import contextlib
 import enum
 import logging
+import pathlib
 import typing
+from urllib.parse import urlparse
 
 from patchright.async_api import Browser, Playwright, Route, async_playwright
 from playwright_stealth import Stealth
 
+from slb_glossary.config import Config
 from slb_glossary.errors import BrowserError, NetworkError
 from slb_glossary.models import Language, SearchSession
 from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
@@ -17,7 +20,15 @@ from slb_glossary.urls import get_glossary_base_url
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["close_session", "search_session", "open_session", "ResourceType", "BrowserType"]
+__all__ = [
+    "close_session",
+    "search_session",
+    "search_session_from_config",
+    "open_session",
+    "open_session_from_config",
+    "ResourceType",
+    "BrowserType",
+]
 
 
 class BrowserType(enum.StrEnum):
@@ -89,8 +100,43 @@ CHROMIUM_LAUNCH_ARGS = [
     "--disable-sync",
     "--disable-translate",
     "--no-first-run",
+    # Avoid unnecessary UI/background work
+    "--disable-default-apps",
+    "--disable-component-update",
+    "--disable-features=MediaRouter",
+    # Reduce disk/cache overhead for ephemeral browser sessions
+    "--disable-backgrounding-occluded-windows",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    # Prevent Chromium from deprioritizing background tabs.
+    # Especially for concurency > 1 which spins up multiple
+    # tabs/pages in one session.
+    "--disable-renderer-backgrounding",
 ]
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
+
+
+TRACKING_HOSTS = (
+    "google-analytics.com",
+    "www.google-analytics.com",
+    "googletagmanager.com",
+    "www.googletagmanager.com",
+    "doubleclick.net",
+    "connect.facebook.net",
+    "facebook.com",
+    "hotjar.com",
+    "segment.io",
+    "segment.com",
+)
+
+
+def should_block_url(url: str) -> bool:
+    hostname = urlparse(url).hostname
+    if hostname is None:
+        return False
+
+    hostname = hostname.lower()
+    return any(hostname == host or hostname.endswith("." + host) for host in TRACKING_HOSTS)
 
 
 def get_resource_type_names(resource_types: ResourceType) -> list[str]:
@@ -125,7 +171,8 @@ def _build_resource_blocker(
     """Build a Playwright route handler that aborts blocked resource types."""
 
     async def _handle_route(route: Route) -> None:
-        if route.request.resource_type in blocked_resource_types:
+        request = route.request
+        if request.resource_type in blocked_resource_types or should_block_url(request.url):
             await route.abort()
         else:
             await route.continue_()
@@ -171,7 +218,11 @@ async def _launch_browser(
     if executable_path is not None:
         launch_kwargs["executable_path"] = executable_path
     if browser_type == BrowserType.CHROMIUM:
-        launch_kwargs.setdefault("args", CHROMIUM_LAUNCH_ARGS)
+        launch_kwargs.setdefault(
+            "args",
+            # Disable GPU if we are running headless
+            CHROMIUM_LAUNCH_ARGS if not headless else [*CHROMIUM_LAUNCH_ARGS, "--disable-gpu"],
+        )
 
     logger.debug("Launching %s (headless=%s) %s", browser_type, headless, launch_kwargs)
     return await launcher.launch(**launch_kwargs)
@@ -182,8 +233,8 @@ async def open_session(
     language: Language = Language.ENGLISH,
     browser_type: BrowserType | str = BrowserType.CHROMIUM,
     headless: bool = True,
-    block: bool | ResourceType = True,
-    timeout: float = 30_000,
+    block: bool | typing.Iterable[str] | ResourceType = True,
+    timeout: float = 60_000,
     terms_per_tab: int = 12,
     retry: RetryPolicy = DEFAULT_RETRY_POLICY,
     settle_timeout: float = 8.0,
@@ -317,6 +368,29 @@ async def open_session(
         raise BrowserError("Failed to launch the glossary browser session") from exc
 
 
+async def open_session_from_config(
+    config: Config | str | pathlib.Path, **overrides: typing.Any
+) -> SearchSession:
+    """
+    Open a `SearchSession` using a `Config`, or a path to a config file.
+
+    Equivalent to `SearchSession.from_config`; provided here as well so
+    `slb_glossary.browser` stays a complete, self-contained entry point for
+    opening sessions without needing an import from `slb_glossary.models`.
+
+    :param config: A `slb_glossary.config.Config`, or a path to a JSON/
+        TOML/YAML file `Config.from_file` can load.
+    :param overrides: Keyword arguments forwarded to `open_session`,
+        overriding whatever `config` specifies.
+    :return: An open `SearchSession`. Close it with `close_session`, or
+        prefer `search_session_from_config` for automatic cleanup.
+    """
+    resolved_config = config if isinstance(config, Config) else Config.from_file(config)
+    kwargs = resolved_config.to_session_kwargs()
+    kwargs.update(overrides)
+    return await open_session(**kwargs)
+
+
 async def close_session(session: SearchSession) -> None:
     """
     Close every resource opened for `session`.
@@ -340,8 +414,8 @@ async def search_session(
     language: Language = Language.ENGLISH,
     browser_type: BrowserType | str = BrowserType.CHROMIUM,
     headless: bool = True,
-    block: bool | ResourceType = True,
-    timeout: float = 30_000,
+    block: bool | typing.Iterable[str] | ResourceType = True,
+    timeout: float = 60_000,
     terms_per_tab: int = 12,
     retry: RetryPolicy = DEFAULT_RETRY_POLICY,
     settle_timeout: float = 8.0,
@@ -410,6 +484,33 @@ async def search_session(
         context_kwargs=context_kwargs,
         use_stealth=use_stealth,
     )
+    try:
+        yield session
+    finally:
+        await close_session(session)
+
+
+@contextlib.asynccontextmanager
+async def search_session_from_config(
+    config: Config | str | pathlib.Path, **overrides: typing.Any
+) -> typing.AsyncIterator[SearchSession]:
+    """
+    Open a `SearchSession` from a `Config` (or config file path) for an `async with` block.
+
+    ```python
+    async with search_session_from_config("config.toml") as session:
+        async for result in search(session, "porosity"):
+            print(result)
+    ```
+
+    :param config: A `slb_glossary.config.Config`, or a path to a JSON/
+        TOML/YAML file `Config.from_file` can load.
+    :param overrides: Keyword arguments forwarded to `open_session`,
+        overriding whatever `config` specifies.
+
+    The session is always closed on exit, including when the block raises.
+    """
+    session = await open_session_from_config(config, **overrides)
     try:
         yield session
     finally:

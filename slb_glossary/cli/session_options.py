@@ -5,10 +5,46 @@ import typing
 import click
 
 from slb_glossary.browser import BrowserType, ResourceType
+from slb_glossary.config import Config
 from slb_glossary.models import Language
-from slb_glossary.retries import BackoffType, RetryPolicy
+from slb_glossary.retries import BackoffType
 
-__all__ = ["session_options", "build_retry_policy", "get_session_kwargs"]
+__all__ = [
+    "session_options",
+    "config_option",
+    "load_named_config",
+    "resolve_session_kwargs",
+]
+
+CONFIG_SENTINEL_DEFAULT = "default"
+"""`--config` value meaning "load the global config" (see `Config.load`)."""
+
+CONFIG_SENTINEL_NONE = "none"
+"""`--config` value meaning "skip config entirely, use built-in defaults"."""
+
+SESSION_PARAM_TO_CONFIG_KEY: dict[str, str] = {
+    "language": "session.language",
+    "browser_type": "session.browser_type",
+    "headless": "session.headless",
+    "block": "session.block",
+    "block_resources": "session.block_resources",
+    "timeout": "session.timeout",
+    "terms_per_tab": "session.terms_per_tab",
+    "settle_timeout": "session.settle_timeout",
+    "poll_interval": "session.poll_interval",
+    "executable_path": "session.executable_path",
+    "proxy": "session.proxy",
+    "viewport": "session.viewport",
+    "use_stealth": "session.use_stealth",
+    "retry_attempts": "session.retry.attempts",
+    "retry_base_delay": "session.retry.base_delay",
+    "retry_backoff": "session.retry.backoff",
+    "retry_factor": "session.retry.factor",
+    "retry_max_delay": "session.retry.max_delay",
+    "retry_jitter": "session.retry.jitter",
+}
+"""Maps each `session_options` destination to the dotted `Config` key
+(see `Config.get`/`Config.set`) it overrides in `resolve_session_kwargs`."""
 
 
 F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
@@ -21,8 +57,8 @@ def _parse_viewport(
     if value is None:
         return None
     try:
-        width_text, height_text = value.lower().split("x", 1)
-        return {"width": int(width_text), "height": int(height_text)}
+        width, height = value.lower().split("x", 1)
+        return {"width": int(width), "height": int(height)}
     except ValueError as exc:
         raise click.BadParameter(
             f"{value!r} is not a valid WIDTHxHEIGHT viewport, e.g. '1920x1080'."
@@ -55,12 +91,12 @@ def session_options(func: F) -> F:
     """
     Attach every glossary-session configuring option to a click command.
 
-    Stack this directly above a command's `def`, alongside `@click.command()`.
-    The decorated callback receives each option as a keyword argument named
-    after its destination (e.g. `browser_type`, `settle_timeout`); pass the
-    full `**kwargs` (or the relevant subset) to `get_session_kwargs`
-    to turn them into arguments for `slb_glossary.browser.open_session` /
-    `search_session`.
+    Stack this directly above a command's `def`, alongside `@click.command()`
+    and `config_option`. The decorated callback receives each option as a
+    keyword argument named after its destination (e.g. `browser_type`,
+    `settle_timeout`); pass the command's `**kwargs` to
+    `resolve_session_kwargs` to turn them into arguments for
+    `slb_glossary.browser.open_session`/`search_session`.
 
     :param func: The click command callback to attach options to.
     :return: `func`, with session-configuration options attached.
@@ -111,7 +147,7 @@ def session_options(func: F) -> F:
         click.option(
             "--timeout",
             type=float,
-            default=30_000.0,
+            default=60_000.0,
             show_default=True,
             help="Milliseconds to wait for page loads and element lookups.",
         ),
@@ -210,51 +246,82 @@ def session_options(func: F) -> F:
     return func
 
 
-def build_retry_policy(params: typing.Mapping[str, typing.Any]) -> RetryPolicy:
+def config_option(func: F) -> F:
     """
-    Build a `RetryPolicy` from the `retry_*` options `session_options` attaches.
+    Attach `--config` to a click command, selecting the base `Config` for the run.
 
-    :param params: The click command's parsed parameters (e.g. `ctx.params`
-        or a command callback's `**kwargs`). Only the `retry_*` keys are read.
-    :return: A `RetryPolicy` matching the parsed `--retry-*` options.
+    Stack this alongside `session_options`; pair the parsed parameters with
+    `resolve_session_kwargs` to layer any `session_options` flag the user
+    actually typed on top of the loaded config.
+
+    :param func: The click command callback to attach the option to.
+    :return: `func`, with `--config` attached.
     """
-    return RetryPolicy(
-        attempts=params["retry_attempts"],
-        base_delay=params["retry_base_delay"],
-        backoff_type=BackoffType(params["retry_backoff"]),
-        factor=params["retry_factor"],
-        max_delay=params["retry_max_delay"],
-        jitter=params["retry_jitter"],
-    )
+    return click.option(
+        "--config",
+        "config_path",
+        default=CONFIG_SENTINEL_DEFAULT,
+        show_default=True,
+        metavar="default|none|PATH",
+        help=(
+            "Config file to load session defaults from: 'default' for the "
+            "global config (see `slb-glossary config path`), 'none' to use "
+            "built-in defaults only, or a path to a specific JSON/TOML/YAML "
+            "file. Any other option given on this command overrides the "
+            "config's value, for this run only."
+        ),
+    )(func)
 
 
-def get_session_kwargs(params: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
+def load_named_config(config_path: str) -> Config:
     """
-    Turn parsed `session_options` parameters into `open_session`/`search_session` kwargs.
+    Resolve a `--config` option value (see `config_option`) to a `Config`.
 
-    :param params: The click command's parsed parameters (e.g. `ctx.params`
-        or a command callback's `**kwargs`). Extra keys (e.g. a command's
-        own `query` or `--save` options) are ignored.
+    :param config_path: `"default"` to load the global config (see
+        `Config.load`), `"none"` for built-in defaults only, or a path to a
+        specific JSON/TOML/YAML config file.
+    :return: The resolved `Config`.
+    """
+    if config_path == CONFIG_SENTINEL_NONE:
+        return Config()
+    if config_path == CONFIG_SENTINEL_DEFAULT:
+        return Config.load()
+    return Config.from_file(config_path)
+
+
+def resolve_session_kwargs(
+    ctx: click.Context, params: typing.Mapping[str, typing.Any]
+) -> dict[str, typing.Any]:
+    """
+    Build `open_session`/`search_session` kwargs from `--config`, overridden by explicit flags.
+
+    Loads the `Config` named by `params["config_path"]` (see
+    `config_option`) as the baseline, then applies every `session_options`
+    value the user actually typed on the command line on top of it - typed,
+    not merely "differs from its default", per `ctx.get_parameter_source`.
+    Anything the user didn't pass keeps the loaded config's value, so a
+    config file sets the defaults for every run and CLI flags are one-off
+    overrides for this run only; nothing is written back to the file.
+
+    :param ctx: The current click context, used to tell an explicitly
+        passed flag from click's own default via `ctx.get_parameter_source`.
+    :param params: The command's parsed parameters, including `config_path`
+        (from `config_option`) and everything `session_options` attaches.
     :return: A keyword-argument dict ready to splat into
         `slb_glossary.browser.open_session` or `search_session`.
     """
-    block: bool | frozenset[str] = params["block"]
-    block_resources = params.get("block_resources") or ()
-    if block_resources:
-        block = frozenset(name.lower() for name in block_resources)
+    resolved = load_named_config(params.get("config_path", CONFIG_SENTINEL_DEFAULT))
 
-    return {
-        "language": Language(params["language"]),
-        "browser_type": BrowserType(params["browser_type"]),
-        "headless": params["headless"],
-        "block": block,
-        "timeout": params["timeout"],
-        "terms_per_tab": params["terms_per_tab"],
-        "retry": build_retry_policy(params),
-        "settle_timeout": params["settle_timeout"],
-        "poll_interval": params["poll_interval"],
-        "executable_path": params["executable_path"],
-        "proxy": params["proxy"],
-        "viewport": params["viewport"],
-        "use_stealth": params["use_stealth"],
-    }
+    for param_name, config_key in SESSION_PARAM_TO_CONFIG_KEY.items():
+        if param_name not in params:
+            continue
+        if ctx.get_parameter_source(param_name) != click.core.ParameterSource.COMMANDLINE:
+            continue
+        value = params[param_name]
+        if param_name == "block_resources":
+            value = list(value)
+            if not value:
+                continue
+        resolved.set(config_key, value)
+
+    return resolved.to_session_kwargs()
