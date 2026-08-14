@@ -8,7 +8,7 @@ from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
-from slb_glossary.cli.store_options import save_and_print, store_options
+from slb_glossary.cli.store_options import output_results, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.topics import refresh_topics
 
@@ -80,7 +80,7 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
 
     async def _run() -> int:
         async with search_session(**resolve_session_kwargs(ctx, params)) as session:
-            return await save_and_print(
+            return await output_results(
                 iter_topic_records(session.topics),
                 save_paths=params["save_paths"],
                 format=params["format"],
@@ -135,7 +135,7 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
     async def _run() -> int:
         async with search_session(**resolve_session_kwargs(ctx, params)) as session:
             session = await refresh_topics(session)
-            return await save_and_print(
+            return await output_results(
                 iter_topic_records(session.topics),
                 save_paths=params["save_paths"],
                 format=params["format"],

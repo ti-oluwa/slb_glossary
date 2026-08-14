@@ -1,7 +1,7 @@
 """
 Local vector store: bring-your-own-embedding similarity search over stored terms.
 
-`slb_glossary.Database` deliberately doesn't bundle an embedding model as
+`slb_glossary.local` deliberately doesn't bundle an embedding model as
 that would drag in a heavy ML dependency for something most callers won't
 use. Instead, this module just stores whatever embedding vector the
 caller already computed for a term (with any model they like) and ranks
@@ -98,10 +98,12 @@ async def vector_search(
     Rank locally stored terms by cosine similarity to `query_embedding`.
 
     This is a brute-force scan over every vector stored under `model` which is
-    fine for a glossary-sized dataset (thousands of terms), not built for
-    million-row corpora. Compute `query_embedding` with whatever model
-    produced the stored vectors (see `upsert_vector`); mismatched
-    dimensions raise, since cosine similarity is undefined between them.
+    fine for a glossary-sized dataset (thousands of terms), but is not good for
+    million-row corpora.
+
+    Compute `query_embedding` with whatever model produced the stored vectors
+    (see `upsert_vector`); mismatched dimensions raise, since cosine similarity
+    is undefined between them.
 
     :param db: The local database to search.
     :param query_embedding: The query's embedding vector.

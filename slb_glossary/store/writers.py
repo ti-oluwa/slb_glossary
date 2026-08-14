@@ -107,7 +107,9 @@ def render_display_text(value: typing.Any) -> str:
     return str(value)
 
 
-def records_to_dicts(records: Sequence[RecordLike]) -> list[dict[str, typing.Any]]:
+def records_to_dicts(
+    records: Sequence[RecordLike], exclude: Sequence[str] = ()
+) -> list[dict[str, typing.Any]]:
     """
     Convert `records` into a list of plain, JSON-safe `dict`s, one per record.
 
@@ -120,10 +122,16 @@ def records_to_dicts(records: Sequence[RecordLike]) -> list[dict[str, typing.Any
     in a larger JSON payload. It's what powers the CLI's `--json` output.
 
     :param records: The records to convert.
+    :param exclude: Field names to omit from each record's dict.
     :return: One JSON-safe `dict` per record, in the same order as `records`.
     """
+    excluded = frozenset(exclude)
     return [
-        {key: make_json_safe(value) for key, value in record.asdict().items()}
+        {
+            key: make_json_safe(value)
+            for key, value in record.asdict().items()
+            if key not in excluded
+        }
         for record in records
     ]
 

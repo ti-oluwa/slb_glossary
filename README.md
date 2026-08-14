@@ -162,7 +162,7 @@ async with slb.search_session(headless=True) as session:
 | `browser_type`       | `"chromium"`           | Playwright browser family to launch: `"chromium"`, `"firefox"` or `"webkit"`.                       |
 | `headless`           | `True`                 | Run without a visible browser window.                                                               |
 | `block`              | `True`                 | Resource types to drop for speed. `True` blocks images/media/fonts, `False` blocks nothing, or pass your own iterable, e.g. `{"image", "stylesheet"}`. |
-| `timeout`            | `30_000`               | Milliseconds to wait for page loads and element lookups.                                            |
+| `timeout`            | `60_000`               | Milliseconds to wait for page loads and element lookups.                                            |
 | `terms_per_tab`      | `12`                   | Results per page, as returned by the glossary site. Rarely needs changing.                          |
 | `backoff`            | `RetryPolicy()`      | Retry policy for the initial topic load, reused by search functions. See [Retries and backoff](#retries-and-backoff). |
 | `settle_timeout`     | `8.0`                  | Seconds to wait for results to update after a search filter changes (the site updates via JS, not a full page load). |

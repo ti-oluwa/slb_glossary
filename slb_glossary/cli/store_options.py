@@ -9,9 +9,9 @@ import click
 from slb_glossary import store
 from slb_glossary.store import records_to_dicts
 from slb_glossary.store.records import RecordLike
-from slb_glossary.utils import print_results
+from slb_glossary.utils import async_print_results
 
-__all__ = ["store_options", "save_and_print"]
+__all__ = ["store_options", "output_results"]
 
 
 F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
@@ -24,7 +24,7 @@ def store_options(func: F) -> F:
     Stack this directly above a command's `def`, alongside `@click.command()`.
     The decorated callback receives `save_paths: tuple[pathlib.Path, ...]`,
     `format: str | None` and `json_output: bool`; pass all three through to
-    `save_and_print`.
+    `output_results`.
 
     :param func: The click command callback to attach options to.
     :return: `func`, with the save options attached.
@@ -56,7 +56,7 @@ def store_options(func: F) -> F:
     return func
 
 
-async def save_and_print(
+async def output_results(
     results: typing.AsyncIterable[RecordLike] | typing.AsyncIterator[RecordLike],
     *,
     save_paths: typing.Sequence[pathlib.Path],
@@ -88,7 +88,7 @@ async def save_and_print(
     :param quiet: If `True`, skip printing results to the console entirely
         (neither a table nor JSON); only `save_paths` are written.
     :param json_output: If `True` (and not `quiet`), print `collected` as a
-        JSON array to stdout instead of a Rich table - suited to piping
+        JSON array to stdout instead of a Rich table. Suited to piping
         into `jq` or another program. `print_limit`/`show_*` are ignored
         in this mode, since JSON output is meant to be complete and
         machine-readable rather than trimmed for terminal display.
@@ -105,13 +105,53 @@ async def save_and_print(
         `format`) resolves to a file format with no registered writer.
     :raises slb_glossary.store.WriterError: If writing to a save path fails.
     """
-    collected = [result async for result in results]
+    collected: list[RecordLike] = []
+    count = 0
+    was_collected = False
+
     if not quiet:
+
+        async def async_gen() -> typing.AsyncIterator[RecordLike]:
+            nonlocal collected, count, was_collected
+            was_collected = True
+            async for record in results:
+                collected.append(record)
+                count += 1
+                yield record
+
+        records = async_gen()
         if json_output:
-            click.echo(json.dumps(records_to_dicts(collected), indent=2, ensure_ascii=False))
+            output = []
+            output_count = 0
+            async for record in records:
+                output.append(record)
+                output_count += 1
+                if print_limit and output_count >= print_limit:
+                    break
+
+            exclude = []
+            if not show_url:
+                exclude.append("url")
+            if not show_topic:
+                exclude.append("topic")
+            if not show_grammar:
+                exclude.append("grammatical_label")
+            if not show_image:
+                exclude.append("image")
+                exclude.append("image_caption")
+            if not show_related:
+                exclude.append("related")
+
+            click.echo(
+                json.dumps(
+                    records_to_dicts(output, exclude=exclude),
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
         else:
-            print_results(
-                collected,
+            printed_count = await async_print_results(
+                records,
                 limit=print_limit,
                 show_url=show_url,
                 show_topic=show_topic,
@@ -119,10 +159,20 @@ async def save_and_print(
                 show_image=show_image,
                 show_related=show_related,
             )
+            assert printed_count == count
 
     if save_paths:
-        for path in save_paths:
-            await store.save(collected, path, format=format)
-            click.echo(f"Saved {len(collected)} result(s) to {path}", err=True)
+        # If we printed an output then `collected` and `count` must have been updated.
+        # But if `print_limit` was defined then there a high likelihood that that not all results
+        # were collected and `count == print_limit` not `len(results)`. In that case,
+        # we must collect the targets again fully.
+        if was_collected and not print_limit:
+            targets = collected
+        else:
+            targets = [record async for record in results]
+            count = len(targets)  # Make to update count
 
-    return len(collected)
+        for path in save_paths:
+            await store.save(targets, path, format=format)
+            click.echo(f"Saved {count} result(s) to {path}", err=True)
+    return count

@@ -4,7 +4,7 @@ Platform-appropriate filesystem locations for slb_glossary's local data.
 **Disclaimer**: the SLB Energy Glossary's content and data are
 owned by SLB (see the `slb_glossary` package docstring for the full
 notice). Anything cached locally via the paths in this module; the local
-search database (`slb_glossary.Database`), its metadata, and the default
+search database (`slb_glossary.local`), its metadata, and the default
 config file (`slb_glossary.config`), is a local copy the user has chosen
 to keep on their own machine. The user is solely responsible for managing
 that data's lifecycle (retention, refreshing, and deletion) in compliance
@@ -45,7 +45,7 @@ def get_data_dir(override: str | pathlib.Path | None = None) -> pathlib.Path:
     """
     Resolve the directory slb_glossary stores local data in, creating it if needed.
 
-    This is where `slb_glossary.Database` keeps its SQLite database and
+    This is where `slb_glossary.local` keeps its SQLite database and
     `metadata.json`. Resolution order: `override` if given, then the
     `SLB_GLOSSARY_DATA_DIR` environment variable, then the OS-appropriate
     user data directory (e.g. `~/.local/share/slb-glossary` on Linux,

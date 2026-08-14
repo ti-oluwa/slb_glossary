@@ -57,8 +57,8 @@ def _parse_viewport(
     if value is None:
         return None
     try:
-        width_text, height_text = value.lower().split("x", 1)
-        return {"width": int(width_text), "height": int(height_text)}
+        width, height = value.lower().split("x", 1)
+        return {"width": int(width), "height": int(height)}
     except ValueError as exc:
         raise click.BadParameter(
             f"{value!r} is not a valid WIDTHxHEIGHT viewport, e.g. '1920x1080'."
@@ -147,7 +147,7 @@ def session_options(func: F) -> F:
         click.option(
             "--timeout",
             type=float,
-            default=30_000.0,
+            default=60_000.0,
             show_default=True,
             help="Milliseconds to wait for page loads and element lookups.",
         ),

@@ -7,9 +7,11 @@ from slb_glossary.errors import DatabaseError
 __all__ = ["SCHEMA_VERSION", "initialize"]
 
 SCHEMA_VERSION = 1
-"""Local database schema version. Bump this alongside any DDL change below
-that isn't purely additive, so `slb_glossary.local.metadata.Metadata`
-can eventually gate migrations on it."""
+"""
+Local database schema version. Bump this alongside any DDL change below
+that isn't purely additive, so `slb_glossary.local.models.Metadata`
+can eventually gate migrations on it.
+"""
 
 CREATE_TERMS_TABLE = """
 CREATE TABLE IF NOT EXISTS terms (
@@ -102,7 +104,7 @@ async def initialize(connection: aiosqlite.Connection) -> None:
     except aiosqlite.OperationalError as exc:
         raise DatabaseError(
             "The installed SQLite build has no FTS5 extension, which "
-            "`slb_glossary.Database` requires for full-text search. Rebuild "
+            "`slb_glossary.local` requires for full-text search. Rebuild "
             "Python's sqlite3 module against a SQLite build with FTS5 enabled."
         ) from exc
 

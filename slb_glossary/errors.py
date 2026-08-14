@@ -22,4 +22,4 @@ class ConfigError(GlossaryError):
 
 
 class DatabaseError(GlossaryError):
-    """Raised when `slb_glossary.Database` fails to open, query, or write the local database."""
+    """Raised when `slb_glossary.local` fails to open, query, or write the local database."""

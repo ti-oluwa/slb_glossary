@@ -10,7 +10,7 @@ import datetime
 import logging
 
 from slb_glossary.engine import get_terms_on as fetch_terms_on
-from slb_glossary.engine import search as fetch_search
+from slb_glossary.engine import search as live_search
 from slb_glossary.local.api import count as count_terms
 from slb_glossary.local.api import iter_topics, upsert_results
 from slb_glossary.local.models import Database, Metadata
@@ -86,8 +86,7 @@ async def sync_query(
     Fetch `query`'s results from the live glossary and store them locally.
 
     A lightweight way to keep the local database warm for terms you
-    actually look up, without pulling the whole glossary - see `sync_all`
-    for that, and its note on using it sparingly.
+    actually look up, without pulling the whole glossary.
 
     :param db: The local database to write to.
     :param session: An open `SearchSession` to fetch from.
@@ -100,7 +99,7 @@ async def sync_query(
         `slb_glossary.engine.iter_results_from_urls`'s own note on server load.
     :return: A summary of the sync.
     """
-    results = fetch_search(
+    results = live_search(
         session,
         query,
         topic=topic,
@@ -145,7 +144,7 @@ async def sync_all(db: Database, session: SearchSession, *, concurrency: int = 1
     limiting.
 
     Use it sparingly, and mind the local-data disclaimer in
-    `slb_glossary.Database`'s package docstring; `sync_query`/`sync_topic`
+    `slb_glossary.local`'s package docstring; `sync_query`/`sync_topic`
     are lighter alternatives for keeping specific terms fresh instead of
     mirroring the whole site.
 

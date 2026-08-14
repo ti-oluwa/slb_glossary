@@ -49,8 +49,16 @@ def cli(ctx: click.Context, log_level: str, use_tui: bool) -> None:
         ctx.exit(0)
 
 
-for command in (install, search, terms, topics, urls):
-    cli.add_command(typing.cast(click.Command, command))  # type: ignore[attr-defined]
+COMMANDS = {
+    "install": install,
+    "search": search,
+    "terms": terms,
+    "topics": topics,
+    "urls": urls,
+}
+
+for name, command in COMMANDS.items():
+    cli.add_command(typing.cast(click.Command, command), name=name)  # type: ignore[attr-defined]
 
 
 def main() -> None:

@@ -15,6 +15,7 @@ async def main():
         slb.local.local_db() as db,
     ):
         await slb.local.sync_all(db, session, concurrency=3)
+        await slb.local.count(db)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import enum
 import logging
 import pathlib
 import typing
+from urllib.parse import urlparse
 
 from patchright.async_api import Browser, Playwright, Route, async_playwright
 from playwright_stealth import Stealth
@@ -99,8 +100,43 @@ CHROMIUM_LAUNCH_ARGS = [
     "--disable-sync",
     "--disable-translate",
     "--no-first-run",
+    # Avoid unnecessary UI/background work
+    "--disable-default-apps",
+    "--disable-component-update",
+    "--disable-features=MediaRouter",
+    # Reduce disk/cache overhead for ephemeral browser sessions
+    "--disable-backgrounding-occluded-windows",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    # Prevent Chromium from deprioritizing background tabs.
+    # Especially for concurency > 1 which spins up multiple
+    # tabs/pages in one session.
+    "--disable-renderer-backgrounding",
 ]
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
+
+
+TRACKING_HOSTS = (
+    "google-analytics.com",
+    "www.google-analytics.com",
+    "googletagmanager.com",
+    "www.googletagmanager.com",
+    "doubleclick.net",
+    "connect.facebook.net",
+    "facebook.com",
+    "hotjar.com",
+    "segment.io",
+    "segment.com",
+)
+
+
+def should_block_url(url: str) -> bool:
+    hostname = urlparse(url).hostname
+    if hostname is None:
+        return False
+
+    hostname = hostname.lower()
+    return any(hostname == host or hostname.endswith("." + host) for host in TRACKING_HOSTS)
 
 
 def get_resource_type_names(resource_types: ResourceType) -> list[str]:
@@ -135,7 +171,8 @@ def _build_resource_blocker(
     """Build a Playwright route handler that aborts blocked resource types."""
 
     async def _handle_route(route: Route) -> None:
-        if route.request.resource_type in blocked_resource_types:
+        request = route.request
+        if request.resource_type in blocked_resource_types or should_block_url(request.url):
             await route.abort()
         else:
             await route.continue_()
@@ -181,7 +218,11 @@ async def _launch_browser(
     if executable_path is not None:
         launch_kwargs["executable_path"] = executable_path
     if browser_type == BrowserType.CHROMIUM:
-        launch_kwargs.setdefault("args", CHROMIUM_LAUNCH_ARGS)
+        launch_kwargs.setdefault(
+            "args",
+            # Disable GPU if we are running headless
+            CHROMIUM_LAUNCH_ARGS if not headless else [*CHROMIUM_LAUNCH_ARGS, "--disable-gpu"],
+        )
 
     logger.debug("Launching %s (headless=%s) %s", browser_type, headless, launch_kwargs)
     return await launcher.launch(**launch_kwargs)
@@ -193,7 +234,7 @@ async def open_session(
     browser_type: BrowserType | str = BrowserType.CHROMIUM,
     headless: bool = True,
     block: bool | typing.Iterable[str] | ResourceType = True,
-    timeout: float = 30_000,
+    timeout: float = 60_000,
     terms_per_tab: int = 12,
     retry: RetryPolicy = DEFAULT_RETRY_POLICY,
     settle_timeout: float = 8.0,
@@ -374,7 +415,7 @@ async def search_session(
     browser_type: BrowserType | str = BrowserType.CHROMIUM,
     headless: bool = True,
     block: bool | typing.Iterable[str] | ResourceType = True,
-    timeout: float = 30_000,
+    timeout: float = 60_000,
     terms_per_tab: int = 12,
     retry: RetryPolicy = DEFAULT_RETRY_POLICY,
     settle_timeout: float = 8.0,

@@ -2,7 +2,7 @@
 User-configurable settings, loadable from JSON/TOML/YAML.
 
 **Disclaimer**: this module only manages configuration; any local data it
-points `slb_glossary.Database` at is still subject to the data-lifecycle
+points `slb_glossary.local` at is still subject to the data-lifecycle
 notice in `slb_glossary.paths` and the package docstring.
 """
 
@@ -102,7 +102,7 @@ class SessionConfig:
     """Specific request resource types to block, e.g. `["image", "font"]`.
     Overrides `block` when non-empty."""
 
-    timeout: float = 30_000.0
+    timeout: float = 60_000.0
     """Milliseconds to wait for page loads and element lookups."""
 
     terms_per_tab: int = 12
@@ -169,7 +169,7 @@ class SessionConfig:
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class DatabaseConfig:
-    """Configuration for `slb_glossary.Database`'s local search database."""
+    """Configuration for `slb_glossary.local`'s local search database."""
 
     enabled: bool = True
     """Whether commands/functions that offer local-database fallback should use it."""

@@ -30,7 +30,7 @@ class Database:
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class Metadata:
-    """Sync/provenance bookkeeping for a `slb_glossary.Database` database."""
+    """Sync/provenance bookkeeping for a `slb_glossary.local` database."""
 
     schema_version: int = 1
     """Local database schema version. See `slb_glossary.local.schema.SCHEMA_VERSION`."""

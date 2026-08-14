@@ -160,7 +160,7 @@ async def search(
 
     Uses SQLite FTS5 with bm25 ranking over each stored term's name,
     definition, and topic. Unlike `slb_glossary.engine.search`, this never
-    touches the live glossary site - results are only as fresh as the
+    touches the live glossary site. Results are only as fresh as the
     last `slb_glossary.local.sync` or import.
 
     :param db: The local database to search.

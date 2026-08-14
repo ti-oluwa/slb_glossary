@@ -8,7 +8,7 @@ from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
-from slb_glossary.cli.store_options import save_and_print, store_options
+from slb_glossary.cli.store_options import output_results, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.engine import search as run_search
 
@@ -62,28 +62,28 @@ def _validate_query(
     help="Show/hide the source URL column.",
 )
 @click.option(
-    "--topic-column/--no-topic-column",
+    "--show-topic/--hide-topic",
     "show_topic",
     default=True,
     show_default=True,
     help="Show/hide the topic column.",
 )
 @click.option(
-    "--grammar-column/--no-grammar-column",
+    "--show-grammar/--hide-grammar",
     "show_grammar",
     default=True,
     show_default=True,
     help="Show/hide the grammatical label column.",
 )
 @click.option(
-    "--image-column/--no-image-column",
+    "--show-image/--hide-image",
     "show_image",
     default=False,
     show_default=True,
     help="Show/hide the illustrative image URL column.",
 )
 @click.option(
-    "--related-column/--no-related-column",
+    "--show-related/--hide-related",
     "show_related",
     default=False,
     show_default=True,
@@ -121,7 +121,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
       slb-glossary search porosity
       slb-glossary search "drilling fluid" --topic Drilling --limit 10
       slb-glossary search viscosity --save results.csv --quiet
-      slb-glossary search viscosity --related-column --image-column
+      slb-glossary search viscosity --show-related --show-image
       slb-glossary search porosity --config ~/my-config.toml
       slb-glossary search porosity --config none --headed
     """
@@ -142,7 +142,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                 limit=limit,
                 concurrency=concurrency,
             )
-            return await save_and_print(
+            return await output_results(
                 results,
                 save_paths=params["save_paths"],
                 format=params["format"],

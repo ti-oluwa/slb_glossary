@@ -7,11 +7,11 @@ Visit <https://www.slb.com/en/terms-of-service> for the terms of use.
 
 **Not for commercial use. This package is intended for educational and research purposes only.**
 
-This package can optionally cache glossary data locally (see `slb_glossary.Database`)
+This package can optionally cache glossary data locally (see `slb_glossary.local`)
 so repeat lookups don't have to re-visit the site. That local copy is still SLB's
 data: anyone who enables local storage is solely responsible for keeping its
 retention, refresh, and deletion in compliance with SLB's terms of use linked
-above. See `slb_glossary.paths` and `slb_glossary.Database` for details.
+above. See `slb_glossary.paths` and `slb_glossary.local` for details.
 
 @Author: Daniel T. Afolayan (ti-oluwa)
 """
@@ -41,7 +41,7 @@ from .errors import (
 from .models import Language, SearchResult, SearchSession
 from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics
-from .utils import print_results, print_results_async
+from .utils import async_print_results, print_results
 
 logging.basicConfig(
     format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s", level=logging.INFO
@@ -65,7 +65,7 @@ __all__ = [
     "iter_term_urls",
     "iter_results_from_url",
     "print_results",
-    "print_results_async",
+    "async_print_results",
     "get_topic_match",
     "refresh_topics",
     "RetryPolicy",
