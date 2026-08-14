@@ -320,11 +320,11 @@ Sync functions in `slb_glossary.local.sync` pull from a live `SearchSession` int
 ```python
 from slb_glossary import local
 
-await local.sync_topics(db, session)                       # just the topic list/counts
-await local.sync_query(db, session, "porosity")             # one query's results
-await local.sync_topic(db, session, "Drilling")              # every term under a topic
-await local.sync_letter(db, session, "p")                    # every term starting with "p"
-await local.sync_all(db, session, concurrency=3)              # the entire glossary
+await local.sync_topics(db, session)  # just the topic list/counts
+await local.sync_query(db, session, "porosity")  # one query's results
+await local.sync_topic(db, session, "Drilling")  # every term under a topic
+await local.sync_letter(db, session, "p")  # every term starting with "p"
+await local.sync_all(db, session, concurrency=3)  # the entire glossary
 ```
 
 Prefer `sync_query`/`sync_topic`/`sync_letter` over `sync_all` where you can - fetching only what you actually look up keeps this package's footprint on the live site as light as possible. Each returns a `SyncSummary` (`terms_written`, `total_terms`, `topics`, `synced_at`), and updates `metadata.json` alongside the database.
@@ -340,9 +340,9 @@ async for result in local.search(db, "porosity", limit=10):
 async for result in local.get_terms_on(db, "Drilling"):
     ...
 
-result = await local.get_term(db, "porosity")     # exact name or URL
+result = await local.get_term(db, "porosity")  # exact name or URL
 pick = await local.random_term(db, topic="Drilling")
-topics = await local.iter_topics(db)               # {topic: term_count}
+topics = await local.iter_topics(db)  # {topic: term_count}
 total = await local.count(db)
 ```
 
@@ -402,9 +402,7 @@ This is a brute-force scan, fine for a glossary-sized dataset but not built for 
 from slb_glossary import query
 
 async with slb.local.local_db() as db, slb.search_session() as session:
-    async for result in query.search(
-        "water saturation", db=db, session=session, persist=True
-    ):
+    async for result in query.search("water saturation", db=db, session=session, persist=True):
         print(result.term, "-", result.definition)
 ```
 
@@ -444,7 +442,7 @@ Read or write a single dotted key without touching the rest of the file:
 
 ```python
 config.get("session.headless")
-config.set("session.headless", False)   # accepts strings too, coerced to the field's type
+config.set("session.headless", False)  # accepts strings too, coerced to the field's type
 config.to_file("~/.config/slb-glossary/config.toml")
 ```
 

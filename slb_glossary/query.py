@@ -11,12 +11,11 @@ Everything here picks between (or combines) the two based on a `Source`.
 
 ```python
 import slb_glossary as slb
-from slb_glossary import query
 
 async with slb.local_db() as db, slb.search_session() as session:
     # Local first; only opens a live page if the local DB has nothing.
     # Whatever came back live is written to `db` so the next call is local-only.
-    async for result in query.search(
+    async for result in slb.query.search(
         "water saturation", db=db, session=session, persist=True
     ):
         print(result.term, "-", result.definition)
@@ -105,9 +104,9 @@ def _require(db: Database | None, session: SearchSession | None, source: Source)
             "slb_glossary.query needs at least one of `db` or `session` to query anything."
         )
     if source is Source.LOCAL and db is None:
-        raise QueryError("source=Source.LOCAL requires `db` (a local_db()/open_db() Database).")
+        raise QueryError("`source=Source.LOCAL` requires `db` (a local_db()/open_db() Database).")
     if source is Source.LIVE and session is None:
-        raise QueryError("source=Source.LIVE requires `session` (an open SearchSession).")
+        raise QueryError("`source=Source.LIVE` requires `session` (an open SearchSession).")
 
 
 def _resolve_source(db: Database | None, session: SearchSession | None, source: Source) -> Source:
@@ -479,11 +478,14 @@ async def random_term(
     if session is None:
         return TermLookup(value=None, source=Source.LOCAL, persisted=False)
 
-    live_result = await _fetch_live_random_term(session, topic=topic)
+    live_result = await _fetch_live_random_term(session, topic=topic, sample_size=25)
     persisted = await _maybe_persist(
         db, [live_result] if live_result else [], persist=persist, language=session.language.value
     )
     return TermLookup(value=live_result, source=Source.LIVE, persisted=persisted)
+
+
+LETTERS = list(string.ascii_lowercase)
 
 
 async def _fetch_live_random_term(
@@ -498,9 +500,8 @@ async def _fetch_live_random_term(
         # No topic given: shuffle through starting letters until one yields
         # results, since a purely random letter (e.g. an uncommon one) may
         # have no terms at all.
-        letters = list(string.ascii_lowercase)
-        random.shuffle(letters)
-        for letter in letters:
+        random.shuffle(LETTERS)
+        for letter in LETTERS:
             url_iter = live.iter_term_urls(session, start_letter=letter, limit=sample_size)
             urls = [url async for url in url_iter]
             if urls:

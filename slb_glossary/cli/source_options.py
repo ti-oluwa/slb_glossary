@@ -53,7 +53,7 @@ def source_options(func: F) -> F:
     func = click.option(
         "--cache/--no-cache",
         "cache_results",
-        default=False,
+        default=True,
         show_default=True,
         help=(
             "When a live fetch happens, save its results to the local "
@@ -242,7 +242,7 @@ async def resolve_lookup(
         if db is None:
             raise click.UsageError(
                 "--local needs a local database, but local storage is disabled "
-                "for this run (see `slb-glossary config get Database.enabled`) "
+                "for this run (see `slb-glossary config get local.enabled`) "
                 "and no --db-path was given."
             )
         return await local_call(db)

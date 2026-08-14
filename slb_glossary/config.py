@@ -451,7 +451,7 @@ class Config:
 
     def get(self, key: str) -> typing.Any:
         """
-        Read a dotted config key, e.g. `"session.headless"` or `"Database.prefer_local"`.
+        Read a dotted config key, e.g. `"session.headless"` or `"local.prefer_local"`.
 
         :param key: A dot-separated path of field names, rooted at this `Config`.
         :return: The value at `key`.

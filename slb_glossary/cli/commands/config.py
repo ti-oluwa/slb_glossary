@@ -126,7 +126,7 @@ def show(ctx: click.Context, output_format: str) -> None:
         return
     if output_format == "toml":
         try:
-            import tomlkit
+            import tomlkit  # type: ignore[import]
 
             click.echo(tomlkit.dumps(data), nl=False)
             return
@@ -134,7 +134,7 @@ def show(ctx: click.Context, output_format: str) -> None:
             pass
     if output_format == "yaml":
         try:
-            import yaml
+            import yaml  # type: ignore[import]
 
             click.echo(yaml.safe_dump(data, sort_keys=False), nl=False)
             return
@@ -155,7 +155,7 @@ def get(ctx: click.Context, key: str) -> None:
     \b
     Examples:
       slb-glossary config get session.headless
-      slb-glossary config get Database.prefer_local
+      slb-glossary config get local.prefer_local
     """
     cfg, _ = _load(ctx.obj.get("config_path") if ctx.obj else None)
     try:
@@ -184,7 +184,7 @@ def set_(ctx: click.Context, key: str, value: str, output_format: str | None) ->
     Examples:
       slb-glossary config set session.headless false
       slb-glossary config set session.browser_type firefox
-      slb-glossary config set Database.sync_max_age_days 3.5
+      slb-glossary config set local.sync_max_age_days 3.5
     """
     config_path = ctx.obj.get("config_path") if ctx.obj else None
     cfg, resolved = _load(config_path)
@@ -255,7 +255,7 @@ def edit(ctx: click.Context) -> None:
         raise click.ClickException(f"{editor} exited with status {exc.returncode}.") from exc
 
 
-_SECTION_TITLES: dict[str, str] = {
+SECTION_TITLES: dict[str, str] = {
     "session": "Browser session",
     "Database": "Local search database",
     "output": "Output formatting",
@@ -300,7 +300,7 @@ def wizard(ctx: click.Context) -> None:
 
         leaves = list(_iter_leaf_fields(section_value, prefix=f"{field.name}."))
         table = Table(
-            title=_SECTION_TITLES.get(field.name, field.name),
+            title=SECTION_TITLES.get(field.name, field.name),
             box=box.SIMPLE,
             show_header=True,
             header_style="bold cyan",
@@ -311,9 +311,7 @@ def wizard(ctx: click.Context) -> None:
             table.add_row(key, str(value))
         console.print(table)
 
-        if not click.confirm(
-            f"Edit {_SECTION_TITLES.get(field.name, field.name)}?", default=False
-        ):
+        if not click.confirm(f"Edit {SECTION_TITLES.get(field.name, field.name)}?", default=False):
             continue
 
         for key, current in leaves:
