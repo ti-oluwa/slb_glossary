@@ -10,6 +10,7 @@ import datetime
 import logging
 
 from slb_glossary.engine import get_terms_on as fetch_terms_on
+from slb_glossary.engine import iter_results_from_urls, iter_term_urls
 from slb_glossary.engine import search as live_search
 from slb_glossary.local.api import count as count_terms
 from slb_glossary.local.api import iter_topics, upsert_results
@@ -18,7 +19,14 @@ from slb_glossary.models import SearchSession
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["SyncSummary", "sync_topics", "sync_query", "sync_topic", "sync_all"]
+__all__ = [
+    "SyncSummary",
+    "sync_topics",
+    "sync_query",
+    "sync_topic",
+    "sync_letter",
+    "sync_all",
+]
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
@@ -130,6 +138,39 @@ async def sync_topic(
     :return: A summary of the sync.
     """
     results = fetch_terms_on(session, topic, limit=limit, concurrency=concurrency)
+    written = await upsert_results(db, results, language=session.language.value)
+    return await _record_sync(db, terms_written=written, language=session.language.value)
+
+
+async def sync_letter(
+    db: Database,
+    session: SearchSession,
+    start_letter: str,
+    *,
+    topic: str | None = None,
+    limit: int | None = None,
+    concurrency: int = 1,
+) -> SyncSummary:
+    """
+    Fetch every term starting with `start_letter` from the live glossary and store them locally.
+
+    Useful for incremental updates keyed by the alphabet instead of by
+    topic, e.g. syncing `slb-glossary update --start-letter a` through `z`
+    over several separate, spaced-out runs.
+
+    :param db: The local database to write to.
+    :param session: An open `SearchSession` to fetch from.
+    :param start_letter: The starting letter to restrict the fetch to.
+    :param topic: Also restrict the fetch to this topic, or several
+        comma-separated topics.
+    :param limit: Maximum number of terms to fetch. `None` for unlimited.
+    :param concurrency: Concurrent term-page fetches.
+    :return: A summary of the sync.
+    """
+    urls = iter_term_urls(session, topic=topic, start_letter=start_letter, limit=limit)
+    results = iter_results_from_urls(
+        session, urls, topic=topic, concurrency=concurrency, first_only=True
+    )
     written = await upsert_results(db, results, language=session.language.value)
     return await _record_sync(db, terms_written=written, language=session.language.value)
 
