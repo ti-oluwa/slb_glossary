@@ -286,6 +286,31 @@ def _read_config_file(path: pathlib.Path) -> dict[str, typing.Any]:
     )
 
 
+def _strip_none(data: typing.Any) -> typing.Any:
+    """
+    Recursively drop `None`-valued dict entries from `data`.
+
+    TOML has no null type, so `tomlkit.dumps` raises on any `None` value
+    anywhere in the structure. `Config.to_dict()` includes several
+    `Optional` fields that default to `None` (e.g.
+    `SessionConfig.executable_path`, `DatabaseConfig.data_dir`), so those
+    need to be dropped rather than written before a TOML dump can succeed.
+
+    A dropped key round-trips safely: `_dataclass_from_mapping` falls back
+    to the field's own default for any key missing from a loaded config,
+    and every field this can drop already defaults to `None`.
+
+    :param data: A plain dict/list/scalar structure, e.g. from `Config.to_dict()`.
+    :return: `data` with `None`-valued dict entries removed, recursing into
+        nested dicts and lists. Non-dict/list values are returned unchanged.
+    """
+    if isinstance(data, dict):
+        return {key: _strip_none(value) for key, value in data.items() if value is not None}
+    if isinstance(data, list):
+        return [_strip_none(item) for item in data]
+    return data
+
+
 def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format: str) -> None:
     """
     Serialize `data` to `path` using the parser for `format`.
@@ -308,7 +333,8 @@ def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format: 
                 "Writing a .toml config requires the 'tomlkit' package. "
                 "Install it with `pip install slb-glossary[config]`."
             ) from exc
-        path.write_text(tomlkit.dumps(data), encoding="utf-8")
+        # tomlkit has no null type and can't serialize None - see _strip_none.
+        path.write_text(tomlkit.dumps(_strip_none(data)), encoding="utf-8")
         return
 
     if format in ("yaml", "yml"):
