@@ -11,6 +11,11 @@ which all have the same shapes `slb_glossary.engine`'s live functions return, so
 written against one works against the other. `flush`/`reset` clear it out
 again when you're done with it.
 
+Topic filters on `search`/`get_terms_on`/`random_term`/`iter_term_urls`
+match locally stored topic names exactly (case-insensitively) by default;
+pass `fuzzy=True` to tolerate minor misspellings/partial names instead -
+see `fuzzy_match_topics`.
+
 **Disclaimer**: the data stored here is still SLB's - see the
 `slb_glossary` package docstring for the full notice. Enabling this
 module means keeping a local copy of glossary content on your own
@@ -27,6 +32,7 @@ footprint on the live site as light as possible.
 from slb_glossary.errors import DatabaseError
 from slb_glossary.local.api import (
     count,
+    fuzzy_match_topics,
     get_term,
     get_terms_on,
     iter_term_urls,
@@ -63,6 +69,7 @@ __all__ = [
     "random_term",
     "iter_term_urls",
     "iter_topics",
+    "fuzzy_match_topics",
     "count",
     "load_file",
     "flush",
