@@ -1,21 +1,9 @@
 """
-User-configurable settings for `slb_glossary`, loadable from JSON/TOML/YAML.
-
-`Config` is a plain, nested dataclass covering everything a `SearchSession`
-and `slb_glossary.localdb` database need: browser/session options, retry
-policy, local-database behavior, and default CLI output formatting. Build
-one directly, load one with `Config.load`/`Config.from_file`, and hand it
-to `slb_glossary.models.SearchSession.from_config` or
-`slb_glossary.localdb.open_db` to configure either from a single source.
-
-The same schema is shared across all three supported file formats (JSON,
-TOML, YAML) - only the on-disk syntax differs, so a config file can be
-converted between formats by loading it and calling `to_file` with a
-different extension.
+User-configurable settings, loadable from JSON/TOML/YAML.
 
 **Disclaimer**: this module only manages configuration; any local data it
 points `slb_glossary.localdb` at is still subject to the data-lifecycle
-notice in `slb_glossary.paths` and the `slb_glossary` package docstring.
+notice in `slb_glossary.paths` and the package docstring.
 """
 
 import dataclasses
@@ -68,7 +56,7 @@ class RetryConfig:
         try:
             backoff_type = BackoffType(self.backoff)
         except ValueError as exc:
-            choices = ", ".join(bt.value for bt in BackoffType)
+            choices = ", ".join(backoff_type.value for backoff_type in BackoffType)
             raise ConfigError(
                 f"Unknown retry backoff {self.backoff!r}. Expected one of: {choices}."
             ) from exc
@@ -82,7 +70,7 @@ class RetryConfig:
         )
 
     @classmethod
-    def from_retry_policy(cls, policy: RetryPolicy) -> "RetryConfig":
+    def from_retry_policy(cls, policy: RetryPolicy) -> typing.Self:
         """Build a `RetryConfig` from an existing `RetryPolicy`."""
         return cls(
             attempts=policy.attempts,
@@ -158,7 +146,9 @@ class SessionConfig:
             language = Language(self.language)
         except ValueError as exc:
             choices = ", ".join(lang.value for lang in Language)
-            raise ConfigError(f"Unknown language {self.language!r}. Expected one of: {choices}.") from exc
+            raise ConfigError(
+                f"Unknown language {self.language!r}. Expected one of: {choices}."
+            ) from exc
 
         return {
             "language": language,
@@ -198,7 +188,7 @@ class LocalDBConfig:
     sync_max_age_days: float | None = 7.0
     """Age, in days, after which `slb_glossary.localdb.sync` should be told
     the local database is stale. `None` means it is never considered stale
-    by age alone. Purely advisory - nothing here syncs automatically,
+    by age alone. This is purely advisory and nothing here syncs automatically,
     keeping this package's traffic to the live glossary opt-in only."""
 
 
@@ -236,8 +226,8 @@ def _dataclass_from_mapping(cls: type[T], data: Mapping[str, typing.Any]) -> T:
     Build a `cls` instance from `data`, recursing into nested dataclass fields.
 
     Keys in `data` with no matching field are ignored (forward-compatible
-    with newer config files read by an older `slb_glossary`); fields absent
-    from `data` fall back to the dataclass's own defaults.
+    with newer config files which may have been acceptable by an older
+    `slb_glossary`); fields absent from `data` fall back to the dataclass's own defaults.
 
     :param cls: The dataclass type to build.
     :param data: A mapping of field name to value, as parsed from a config file.
@@ -249,7 +239,7 @@ def _dataclass_from_mapping(cls: type[T], data: Mapping[str, typing.Any]) -> T:
             continue
         value = data[field.name]
         if _is_dataclass_type(field.type) and isinstance(value, Mapping):
-            kwargs[field.name] = _dataclass_from_mapping(field.type, value)
+            kwargs[field.name] = _dataclass_from_mapping(typing.cast(type, field.type), value)
         else:
             kwargs[field.name] = value
     return cls(**kwargs)
@@ -272,7 +262,7 @@ def _read_config_file(path: pathlib.Path) -> dict[str, typing.Any]:
 
     if suffix == "toml":
         try:
-            import tomlkit
+            import tomlkit  # type: ignore[import]
         except ImportError as exc:
             raise ConfigError(
                 "Reading a .toml config requires the 'tomlkit' package. "
@@ -282,7 +272,7 @@ def _read_config_file(path: pathlib.Path) -> dict[str, typing.Any]:
 
     if suffix in ("yaml", "yml"):
         try:
-            import yaml
+            import yaml  # type: ignore[import]
         except ImportError as exc:
             raise ConfigError(
                 "Reading a .yaml config requires the 'pyyaml' package. "
@@ -312,7 +302,7 @@ def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format: 
 
     if format == "toml":
         try:
-            import tomlkit
+            import tomlkit  # type: ignore[import]
         except ImportError as exc:
             raise ConfigError(
                 "Writing a .toml config requires the 'tomlkit' package. "
@@ -323,7 +313,7 @@ def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format: 
 
     if format in ("yaml", "yml"):
         try:
-            import yaml
+            import yaml  # type: ignore[import]
         except ImportError as exc:
             raise ConfigError(
                 "Writing a .yaml config requires the 'pyyaml' package. "
@@ -360,7 +350,7 @@ class Config:
     """Default output formatting options."""
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, typing.Any]) -> "Config":
+    def from_dict(cls, data: Mapping[str, typing.Any]) -> typing.Self:
         """
         Build a `Config` from a plain nested dict, e.g. one already parsed from JSON.
 
@@ -375,7 +365,7 @@ class Config:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_file(cls, path: str | pathlib.Path) -> "Config":
+    def from_file(cls, path: str | pathlib.Path) -> typing.Self:
         """
         Load a `Config` from a JSON, TOML or YAML file.
 
@@ -395,7 +385,7 @@ class Config:
         return cls.from_dict(data)
 
     @classmethod
-    def load(cls, path: str | pathlib.Path | None = None) -> "Config":
+    def load(cls, path: str | pathlib.Path | None = None) -> typing.Self:
         """
         Load a `Config` from `path`, or the default config path if it exists.
 

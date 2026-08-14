@@ -1,11 +1,11 @@
 """
 Platform-appropriate filesystem locations for slb_glossary's local data.
 
-**Disclaimer**: the Schlumberger Oilfield Glossary's content and data are
+**Disclaimer**: the SLB Energy Glossary's content and data are
 owned by SLB (see the `slb_glossary` package docstring for the full
-notice). Anything cached locally via the paths in this module - the local
+notice). Anything cached locally via the paths in this module; the local
 search database (`slb_glossary.localdb`), its metadata, and the default
-config file (`slb_glossary.config`) - is a local copy the user has chosen
+config file (`slb_glossary.config`), is a local copy the user has chosen
 to keep on their own machine. The user is solely responsible for managing
 that data's lifecycle (retention, refreshing, and deletion) in compliance
 with SLB's terms of use <https://www.slb.com/en/terms-of-service>.

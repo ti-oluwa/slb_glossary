@@ -74,19 +74,19 @@ async def _wait_for_settle(
     resolve before the site's JavaScript has actually re-rendered the
     results panel. This polls the rendered result links and results header
     until at least one of them differs from the caller's baseline, or
-    until `session.settle_timeout` elapses - whichever comes first.
+    until `session.settle_timeout` elapses. Whichever comes first.
 
     :param session: The session to load `url` on.
     :param url: The search URL to load.
     :param previous_links: Result links rendered on the page *before* this
         navigation. Always pass the page's actual current state here, even
-        for the first search of a session - the glossary auto-runs an
+        for the first search of a session. The glossary auto-runs an
         unfiltered query as soon as the search screen loads, so there is
         always something real to diff against. An empty sequence here
         means "nothing rendered yet", which skips the wait entirely and
         risks reading a stale, pre-filter panel.
     :param previous_header: Results header text rendered before this
-        navigation - a second, independent signal that the panel actually
+        navigation. This is a second, independent signal that the panel actually
         updated, so a coincidental match on `previous_links` alone (e.g.
         the same top result happens to rank first for two different
         queries) doesn't return before the panel has really changed.
@@ -134,10 +134,8 @@ async def iter_term_urls(
         not be an exact match; the closest topic(s) in `session.topics` are
         used. See `slb_glossary.topics.get_topic_match`.
     :param start_letter: Restrict results to terms starting with this letter.
-    :param limit: Maximum number of URLs to yield. Yields every matching URL
-        if `None`.
-    :yield: Term detail page URLs, in the order the glossary site returns
-        them.
+    :param limit: Maximum number of URLs to yield. Yields every matching URL if `None`.
+    :yield: Term detail page URLs, in the order the glossary site returns them.
     :raises ValueError: If `limit` is given and is less than 1.
     """
     if limit is not None and limit < 1:
@@ -310,8 +308,8 @@ async def iter_results_from_urls(
 
     With `concurrency` > 1, extra browser pages are opened on `session`'s
     existing browser context (child pages of the same session, not new
-    sessions - they share cookies/auth/stealth patches) so several term
-    pages can be fetched in parallel. Results are still yielded one at a
+    sessions so they share cookies/auth/stealth patches) so several term
+    pages can be fetched concurrently. Results are still yielded one at a
     time as they become available, not collected into batches, though not
     necessarily in the same order as `urls` when running concurrently.
 

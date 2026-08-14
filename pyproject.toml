@@ -1,7 +1,7 @@
 [project]
 name = "slb-glossary"
 version = "0.1.0"
-description = "Search the Schlumberger Oilfield Glossary in Python."
+description = "Search the SLB Energy Glossary in Python."
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Daniel T. Afolayan", email = "tioluwa.dev@gmail.com" }]

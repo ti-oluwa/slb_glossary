@@ -79,7 +79,7 @@ def _make_search_result_table(
     table = Table(
         title="Search Results",
         title_style="bold bright_blue",
-        box=box.ROUNDED,
+        box=box.HEAVY,
         expand=True,
         show_lines=True,
     )
@@ -129,7 +129,7 @@ def _make_generic_table(fields: typing.Sequence[str]) -> Table:
     table = Table(
         title="Results",
         title_style="bold bright_blue",
-        box=box.ROUNDED,
+        box=box.HEAVY,
         expand=True,
         show_lines=True,
     )

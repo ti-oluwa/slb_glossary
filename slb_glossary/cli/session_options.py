@@ -22,7 +22,7 @@ CONFIG_SENTINEL_DEFAULT = "default"
 CONFIG_SENTINEL_NONE = "none"
 """`--config` value meaning "skip config entirely, use built-in defaults"."""
 
-_SESSION_PARAM_TO_CONFIG_KEY: dict[str, str] = {
+SESSION_PARAM_TO_CONFIG_KEY: dict[str, str] = {
     "language": "session.language",
     "browser_type": "session.browser_type",
     "headless": "session.headless",
@@ -312,7 +312,7 @@ def resolve_session_kwargs(
     """
     resolved = load_named_config(params.get("config_path", CONFIG_SENTINEL_DEFAULT))
 
-    for param_name, config_key in _SESSION_PARAM_TO_CONFIG_KEY.items():
+    for param_name, config_key in SESSION_PARAM_TO_CONFIG_KEY.items():
         if param_name not in params:
             continue
         if ctx.get_parameter_source(param_name) != click.core.ParameterSource.COMMANDLINE:

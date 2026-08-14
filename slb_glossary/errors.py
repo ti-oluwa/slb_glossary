@@ -1,4 +1,4 @@
-"""Exceptions raised by the `slb_glossary` package."""
+"""Exceptions raised by the package."""
 
 
 class NetworkError(ConnectionError):

@@ -34,7 +34,7 @@ def _configure_logging(level_name: str) -> None:
 @click.pass_context
 def cli(ctx: click.Context, log_level: str, use_tui: bool) -> None:
     """
-    Search the Schlumberger Oilfield Glossary from the command line.
+    Search the SLB Energy Glossary from the command line.
 
     Run any subcommand with --help for its full set of options, or pass
     --tui (here, or after a subcommand) to fill them in interactively
