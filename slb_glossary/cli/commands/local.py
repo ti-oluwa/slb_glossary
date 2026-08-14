@@ -123,6 +123,13 @@ def stats(**params: typing.Any) -> None:
     help="Restrict results to this topic, or several comma-separated topics.",
 )
 @click.option(
+    "--fuzzy",
+    is_flag=True,
+    help="Tolerate minor misspellings/partial names in --topic, matched "
+    "against topics actually stored locally, instead of requiring an exact "
+    "(case-insensitive) match.",
+)
+@click.option(
     "--limit",
     "-n",
     type=int,
@@ -148,6 +155,7 @@ def local_search(query: str, **params: typing.Any) -> None:
     Examples:
       slb-glossary local search porosity
       slb-glossary local search "drilling fluid" --topic Drilling
+      slb-glossary local search viscosity --topic Petrophysic --fuzzy
     """
     if not query.strip():
         raise click.BadParameter("Missing search query.")
@@ -158,7 +166,9 @@ def local_search(query: str, **params: typing.Any) -> None:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
         async with local_pkg.local_db(db_path) as db:
-            results = local_pkg.search(db, query, topic=params["topic"], limit=limit)
+            results = local_pkg.search(
+                db, query, topic=params["topic"], limit=limit, fuzzy=params["fuzzy"]
+            )
             return await output_results(
                 results,
                 save_paths=params["save_paths"],
