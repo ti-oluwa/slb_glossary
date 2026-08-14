@@ -5,7 +5,21 @@ import typing
 
 import click
 
-from slb_glossary.cli.commands import install, search, terms, topics, urls
+from slb_glossary.cli.commands import (
+    compare,
+    config,
+    define,
+    install,
+    local,
+    random_term,
+    related,
+    search,
+    sync,
+    terms,
+    topics,
+    update,
+    urls,
+)
 from slb_glossary.cli.tui import TuiUnavailableError, launch_tui
 
 __all__ = ["cli", "main"]
@@ -55,6 +69,14 @@ COMMANDS = {
     "terms": terms,
     "topics": topics,
     "urls": urls,
+    "define": define,
+    "related": related,
+    "compare": compare,
+    "random": random_term,
+    "sync": sync,
+    "update": update,
+    "local": local,
+    "config": config,
 }
 
 for name, command in COMMANDS.items():

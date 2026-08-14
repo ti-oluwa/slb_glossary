@@ -31,6 +31,7 @@ from slb_glossary.local.api import (
     get_terms_on,
     iter_term_urls,
     iter_topics,
+    random_term,
     search,
     upsert_results,
 )
@@ -38,7 +39,14 @@ from slb_glossary.local.connection import close_db, local_db, open_db
 from slb_glossary.local.loaders import load_file
 from slb_glossary.local.maintenance import flush, reset
 from slb_glossary.local.models import Database, Metadata
-from slb_glossary.local.sync import SyncSummary, sync_all, sync_query, sync_topic, sync_topics
+from slb_glossary.local.sync import (
+    SyncSummary,
+    sync_all,
+    sync_letter,
+    sync_query,
+    sync_topic,
+    sync_topics,
+)
 from slb_glossary.local.vectors import delete_vectors, upsert_vector, vector_search
 
 __all__ = [
@@ -52,6 +60,7 @@ __all__ = [
     "search",
     "get_terms_on",
     "get_term",
+    "random_term",
     "iter_term_urls",
     "iter_topics",
     "count",
@@ -65,5 +74,6 @@ __all__ = [
     "sync_topics",
     "sync_query",
     "sync_topic",
+    "sync_letter",
     "sync_all",
 ]

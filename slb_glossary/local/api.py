@@ -14,6 +14,7 @@ __all__ = [
     "search",
     "get_terms_on",
     "get_term",
+    "random_term",
     "iter_term_urls",
     "iter_topics",
     "count",
@@ -233,6 +234,31 @@ async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
         "SELECT * FROM terms WHERE url = ? OR term = ? COLLATE NOCASE LIMIT 1",
         (term_or_url, term_or_url),
     ) as cursor:
+        row = await cursor.fetchone()
+    return _row_to_result(row) if row is not None else None
+
+
+async def random_term(db: Database, *, topic: str | None = None) -> SearchResult | None:
+    """
+    Return one randomly chosen locally stored term, optionally restricted to a topic.
+
+    :param db: The local database to read from.
+    :param topic: Restrict the pick to this topic, or several
+        comma-separated topics. `None` picks from every locally stored term.
+    :return: A random `SearchResult`, or `None` if the local database (or
+        the given topic within it) has no terms stored yet.
+    """
+    sql = "SELECT * FROM terms"
+    params: list[typing.Any] = []
+    if topic:
+        topics = [name.strip() for name in topic.split(",") if name.strip()]
+        if topics:
+            placeholders = ", ".join("?" for _ in topics)
+            sql += f" WHERE topic COLLATE NOCASE IN ({placeholders})"
+            params.extend(topics)
+    sql += " ORDER BY RANDOM() LIMIT 1"
+
+    async with db.connection.execute(sql, params) as cursor:
         row = await cursor.fetchone()
     return _row_to_result(row) if row is not None else None
 
