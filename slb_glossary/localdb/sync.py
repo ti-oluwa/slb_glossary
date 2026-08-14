@@ -1,0 +1,156 @@
+"""
+Sync the local database from a live `SearchSession`.
+
+Everything here is opt-in and one-shot - nothing in `slb_glossary`
+schedules or repeats a sync on its own. Call one of these functions as
+often (or as rarely) as fits your own use of the glossary; see the
+responsible-use note on `sync_all` in particular.
+"""
+
+import dataclasses
+import datetime
+import logging
+
+from slb_glossary.engine import get_terms_on as fetch_terms_on
+from slb_glossary.engine import search as fetch_search
+from slb_glossary.localdb.api import count as count_terms
+from slb_glossary.localdb.api import iter_topics, upsert_results
+from slb_glossary.localdb.metadata import Metadata
+from slb_glossary.localdb.models import LocalDB
+from slb_glossary.models import SearchSession
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["SyncSummary", "sync_topics", "sync_query", "sync_topic", "sync_all"]
+
+
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
+class SyncSummary:
+    """Outcome of a `slb_glossary.localdb.sync` call."""
+
+    terms_written: int
+    """Number of term rows inserted or updated by this sync."""
+
+    total_terms: int
+    """Total number of terms stored locally after this sync."""
+
+    topics: dict[str, int]
+    """`{topic: term_count}` across every term stored locally after this sync."""
+
+    synced_at: str
+    """ISO-8601 UTC timestamp this sync completed at."""
+
+
+async def _record_sync(db: LocalDB, *, terms_written: int, language: str) -> SyncSummary:
+    """Recompute the local database's totals and persist them to `metadata.json`."""
+    total = await count_terms(db)
+    topics = await iter_topics(db)
+
+    metadata = Metadata.load(db.metadata_path)
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    metadata.last_synced_at = now
+    metadata.last_sync_language = language
+    metadata.term_count = total
+    metadata.topics = topics
+    metadata.save(db.metadata_path)
+
+    return SyncSummary(terms_written=terms_written, total_terms=total, topics=topics, synced_at=now)
+
+
+async def sync_topics(db: LocalDB, session: SearchSession) -> SyncSummary:
+    """
+    Refresh the local database's recorded topic list from `session`, without fetching terms.
+
+    Cheap relative to the other sync functions: it only records
+    `session.topics`, the counts already captured when the session opened
+    (or last refreshed via `slb_glossary.topics.refresh_topics`) - no
+    additional requests to the glossary site.
+
+    :param db: The local database to update.
+    :param session: An open `SearchSession` to read topic counts from.
+    :return: A summary of the sync (`terms_written` is always `0`).
+    """
+    return await _record_sync(db, terms_written=0, language=session.language.value)
+
+
+async def sync_query(
+    db: LocalDB,
+    session: SearchSession,
+    query: str,
+    *,
+    topic: str | None = None,
+    start_letter: str | None = None,
+    limit: int | None = None,
+    concurrency: int = 1,
+) -> SyncSummary:
+    """
+    Fetch `query`'s results from the live glossary and store them locally.
+
+    A lightweight way to keep the local database warm for terms you
+    actually look up, without pulling the whole glossary - see `sync_all`
+    for that, and its note on using it sparingly.
+
+    :param db: The local database to write to.
+    :param session: An open `SearchSession` to fetch from.
+    :param query: Free-text query, as for `slb_glossary.engine.search`.
+    :param topic: Restrict the fetch to this topic, or several
+        comma-separated topics.
+    :param start_letter: Restrict the fetch to terms starting with this letter.
+    :param limit: Maximum number of terms to fetch. `None` for unlimited.
+    :param concurrency: Concurrent term-page fetches. Keep this low; see
+        `slb_glossary.engine.iter_results_from_urls`'s own note on server load.
+    :return: A summary of the sync.
+    """
+    results = fetch_search(
+        session, query, topic=topic, start_letter=start_letter, limit=limit, concurrency=concurrency
+    )
+    written = await upsert_results(db, results, language=session.language.value)
+    return await _record_sync(db, terms_written=written, language=session.language.value)
+
+
+async def sync_topic(
+    db: LocalDB,
+    session: SearchSession,
+    topic: str,
+    *,
+    limit: int | None = None,
+    concurrency: int = 1,
+) -> SyncSummary:
+    """
+    Fetch every term filed under `topic` from the live glossary and store them locally.
+
+    :param db: The local database to write to.
+    :param session: An open `SearchSession` to fetch from.
+    :param topic: Topic name, or several comma-separated topic names.
+    :param limit: Maximum number of terms to fetch. `None` for unlimited.
+    :param concurrency: Concurrent term-page fetches.
+    :return: A summary of the sync.
+    """
+    results = fetch_terms_on(session, topic, limit=limit, concurrency=concurrency)
+    written = await upsert_results(db, results, language=session.language.value)
+    return await _record_sync(db, terms_written=written, language=session.language.value)
+
+
+async def sync_all(db: LocalDB, session: SearchSession, *, concurrency: int = 1) -> SyncSummary:
+    """
+    Fetch the entire glossary from the live site and store it locally.
+
+    This walks every topic `session` knows about and fetches every term
+    filed under it - the heaviest sync this module offers, and the one
+    most likely to draw attention from the glossary site's own rate
+    limiting. Use it sparingly, and mind the local-data disclaimer in
+    `slb_glossary.localdb`'s package docstring; `sync_query`/`sync_topic`
+    are lighter alternatives for keeping specific terms fresh instead of
+    mirroring the whole site.
+
+    :param db: The local database to write to.
+    :param session: An open `SearchSession` to fetch from.
+    :param concurrency: Concurrent term-page fetches, per topic.
+    :return: A summary of the sync.
+    """
+    logger.info("Syncing entire glossary (%d topics) to local database", len(session.topics))
+    total_written = 0
+    for topic_name in sorted(session.topics):
+        results = fetch_terms_on(session, topic_name, concurrency=concurrency)
+        total_written += await upsert_results(db, results, language=session.language.value)
+    return await _record_sync(db, terms_written=total_written, language=session.language.value)
