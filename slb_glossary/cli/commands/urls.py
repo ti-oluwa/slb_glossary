@@ -10,7 +10,7 @@ from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.store_options import output_results, store_options
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.engine import iter_results_from_url, iter_term_urls
+from slb_glossary.live import iter_results_from_url, iter_term_urls
 
 __all__ = ["urls"]
 

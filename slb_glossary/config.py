@@ -343,7 +343,7 @@ class Config:
     session: SessionConfig = dataclasses.field(default_factory=SessionConfig)
     """Browser/session options."""
 
-    Database: DatabaseConfig = dataclasses.field(default_factory=DatabaseConfig)
+    local: DatabaseConfig = dataclasses.field(default_factory=DatabaseConfig)
     """Local search database options."""
 
     output: OutputConfig = dataclasses.field(default_factory=OutputConfig)

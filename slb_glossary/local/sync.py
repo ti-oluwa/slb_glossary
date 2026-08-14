@@ -9,9 +9,9 @@ import dataclasses
 import datetime
 import logging
 
-from slb_glossary.engine import get_terms_on as fetch_terms_on
-from slb_glossary.engine import iter_results_from_urls, iter_term_urls
-from slb_glossary.engine import search as live_search
+from slb_glossary.live import get_terms_on as fetch_terms_on
+from slb_glossary.live import iter_results_from_urls, iter_term_urls
+from slb_glossary.live import search as live_search
 from slb_glossary.local.api import count as count_terms
 from slb_glossary.local.api import iter_topics, upsert_results
 from slb_glossary.local.models import Database, Metadata

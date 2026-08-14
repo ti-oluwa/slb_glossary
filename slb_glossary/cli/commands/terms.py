@@ -10,7 +10,7 @@ from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.store_options import output_results, store_options
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.engine import get_terms_on
+from slb_glossary.live import get_terms_on
 
 __all__ = ["terms"]
 

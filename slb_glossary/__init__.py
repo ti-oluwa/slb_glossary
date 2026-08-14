@@ -29,7 +29,6 @@ from .browser import (
     search_session_from_config,
 )
 from .config import Config
-from .engine import get_terms_on, iter_results_from_url, iter_term_urls, search
 from .errors import (
     BrowserError,
     ConfigError,
@@ -39,6 +38,7 @@ from .errors import (
     ParsingError,
     QueryError,
 )
+from .live import get_terms_on, iter_results_from_url, iter_term_urls, search
 from .models import Language, SearchResult, SearchSession
 from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics

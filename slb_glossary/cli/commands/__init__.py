@@ -25,6 +25,7 @@ __all__ = [
     "search",
     "sync",
     "terms",
+    "topics",
     "update",
     "urls",
 ]
