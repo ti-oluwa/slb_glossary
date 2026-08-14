@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "get_terms_on",
-    "iter_results_from_url",
-    "iter_results_from_urls",
-    "iter_term_urls",
+    "get_results_from_url",
+    "get_results_from_urls",
+    "get_terms_urls",
     "search",
 ]
 
@@ -113,7 +113,7 @@ async def _wait_for_settle(
         await asyncio.sleep(session.poll_interval)
 
 
-async def iter_term_urls(
+async def get_terms_urls(
     session: SearchSession,
     *,
     query: str | None = None,
@@ -210,7 +210,7 @@ async def iter_term_urls(
         tab += 1
 
 
-async def iter_results_from_url(
+async def get_results_from_url(
     session: SearchSession,
     url: str,
     *,
@@ -224,9 +224,9 @@ async def iter_results_from_url(
 
     :param session: An open glossary session. Its `session.page` is
         navigated directly - use a session with a dedicated page (e.g. one
-        of the child sessions `iter_results_from_urls` opens) if you're
+        of the child sessions `get_results_from_urls` opens) if you're
         fetching several URLs concurrently.
-    :param url: A term detail page URL, as yielded by `iter_term_urls`.
+    :param url: A term detail page URL, as yielded by `get_terms_urls`.
     :param topic: If a definition's source topic matches this topic
         (or one of several comma-separated topics), that resolved topic
         name is used for its `SearchResult.topic` instead of the topic
@@ -295,7 +295,7 @@ def _as_async_iter(
     return _wrap_sync(typing.cast(typing.Iterable[str], urls))
 
 
-async def iter_results_from_urls(
+async def get_results_from_urls(
     session: SearchSession,
     urls: typing.Iterable[str] | typing.AsyncIterable[str],
     *,
@@ -316,13 +316,13 @@ async def iter_results_from_urls(
     :param session: An open glossary session. With `concurrency` > 1, its
         `session.page` becomes one of several worker pages; the others are
         opened and closed by this function.
-    :param urls: Term detail page URLs to fetch, e.g. from `iter_term_urls`.
+    :param urls: Term detail page URLs to fetch, e.g. from `get_terms_urls`.
         May be a plain iterable or an async iterable (so a still-paging
-        `iter_term_urls` generator can be passed straight through).
-    :param topic: Passed through to `iter_results_from_url` for each URL.
+        `get_terms_urls` generator can be passed straight through).
+    :param topic: Passed through to `get_results_from_url` for each URL.
     :param concurrency: Number of term detail pages to fetch in parallel.
         `1` (the default) fetches sequentially on `session.page`, with
-        identical behavior to calling `iter_results_from_url` in a loop.
+        identical behavior to calling `get_results_from_url` in a loop.
     :param first_only: If `True`, yield only the first definition found on
         each page rather than every definition on it (used by
         `get_terms_on`, which wants one result per term).
@@ -336,7 +336,7 @@ async def iter_results_from_urls(
 
     if concurrency == 1:
         async for url in url_iter:
-            async for result in iter_results_from_url(session, url, topic=topic):
+            async for result in get_results_from_url(session, url, topic=topic):
                 yield result
                 if first_only:
                     break
@@ -364,7 +364,7 @@ async def iter_results_from_urls(
             if url is None:
                 break
             try:
-                async for result in iter_results_from_url(worker_session, url, topic=topic):
+                async for result in get_results_from_url(worker_session, url, topic=topic):
                     await result_queue.put(result)
                     if first_only:
                         break
@@ -412,24 +412,22 @@ async def search(
     :param session: An open glossary session.
     :param query: The search query.
     :param topic: Restrict results to this topic, or several
-        comma-separated topics. See `iter_term_urls` for matching rules.
+        comma-separated topics. See `get_terms_urls` for matching rules.
     :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of terms to look up. Looks up every
         matching term if `None`. Defaults to `3`.
     :param concurrency: Number of term detail pages to fetch in parallel.
-        See `iter_results_from_urls`. Defaults to `1` (sequential).
+        See `get_results_from_urls`. Defaults to `1` (sequential).
     :yield: `SearchResult`s for the matched terms. In sequential order
         (`concurrency=1`) these are most-relevant-first; with higher
         concurrency, results may arrive out of relevance order.
     """
     logger.info("Searching glossary for %r (limit=%r, concurrency=%r)", query, limit, concurrency)
-    urls = iter_term_urls(
+    urls = get_terms_urls(
         session, query=query, topic=topic, start_letter=start_letter, limit=limit
     )
     count = 0
-    async for result in iter_results_from_urls(
-        session, urls, topic=topic, concurrency=concurrency
-    ):
+    async for result in get_results_from_urls(session, urls, topic=topic, concurrency=concurrency):
         count += 1
         yield result
     logger.info("Search for %r yielded %d result(s)", query, count)
@@ -451,19 +449,19 @@ async def get_terms_on(
 
     :param session: An open glossary session.
     :param topic: The topic to look up terms for. Need not be an exact
-        match; see `iter_term_urls` for matching rules.
+        match; see `get_terms_urls` for matching rules.
     :param limit: Maximum number of terms to yield. Yields every term filed
         under `topic` if `None`.
     :param concurrency: Number of term detail pages to fetch in parallel.
-        See `iter_results_from_urls`. Defaults to `1` (sequential).
+        See `get_results_from_urls`. Defaults to `1` (sequential).
     :yield: One `SearchResult` per term filed under `topic`.
     """
     logger.info(
         "Fetching terms under topic %r (limit=%r, concurrency=%r)", topic, limit, concurrency
     )
-    urls = iter_term_urls(session, topic=topic, limit=limit)
+    urls = get_terms_urls(session, topic=topic, limit=limit)
     count = 0
-    async for result in iter_results_from_urls(
+    async for result in get_results_from_urls(
         session, urls, topic=topic, concurrency=concurrency, first_only=True
     ):
         count += 1

@@ -6,12 +6,12 @@ have to keep re-visiting the live site.
 Open one with `open_db`/`local_db`, fill it from a live `SearchSession`
 (`sync_topics`/`sync_query`/`sync_topic`/`sync_all`) or from your own
 CSV/JSON/XLSX file (`slb_glossary.local.loaders.load_file`), then query
-it with `search`/`get_terms_on`/`get_term`/`iter_term_urls`/`iter_topics`
+it with `search`/`get_terms_on`/`get_term`/`get_terms_urls`/`iter_topics`
 which all have the same shapes `slb_glossary.engine`'s live functions return, so code
 written against one works against the other. `flush`/`reset` clear it out
 again when you're done with it.
 
-Topic filters on `search`/`get_terms_on`/`random_term`/`iter_term_urls`
+Topic filters on `search`/`get_terms_on`/`random_term`/`get_terms_urls`
 match locally stored topic names exactly (case-insensitively) by default;
 pass `fuzzy=True` to tolerate minor misspellings/partial names instead -
 see `fuzzy_match_topics`.
@@ -33,11 +33,11 @@ from slb_glossary.errors import DatabaseError
 from slb_glossary.local.api import (
     count,
     fuzzy_match_topics,
+    get_random_term,
     get_term,
     get_terms_on,
-    iter_term_urls,
-    iter_topics,
-    random_term,
+    get_terms_urls,
+    get_topics,
     search,
     upsert_results,
 )
@@ -66,9 +66,9 @@ __all__ = [
     "search",
     "get_terms_on",
     "get_term",
-    "random_term",
-    "iter_term_urls",
-    "iter_topics",
+    "get_random_term",
+    "get_terms_urls",
+    "get_topics",
     "fuzzy_match_topics",
     "count",
     "load_file",

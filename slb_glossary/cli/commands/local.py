@@ -79,7 +79,7 @@ def stats(**params: typing.Any) -> None:
         db_path = resolve_db_path(config, params["db_path"])
         async with local_pkg.local_db(db_path) as db:
             total = await local_pkg.count(db)
-            topics = await local_pkg.iter_topics(db)
+            topics = await local_pkg.get_topics(db)
             metadata = Metadata.load(db.metadata_path)
             return total, topics, metadata
 

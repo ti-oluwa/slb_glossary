@@ -94,10 +94,10 @@ def random_term(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
                     params,
                     db,
                     source=source,
-                    local_call=lambda db: query.random_term(
+                    local_call=lambda db: query.get_random_term(
                         db=db, topic=topic, source=Source.LOCAL
                     ),
-                    live_call=lambda session: query.random_term(
+                    live_call=lambda session: query.get_random_term(
                         db=db,
                         session=session,
                         topic=topic,

@@ -10,7 +10,7 @@ from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.live import iter_results_from_url, iter_term_urls
+from slb_glossary.live import get_results_from_url, get_terms_urls
 
 __all__ = ["urls"]
 
@@ -102,7 +102,7 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
 
     async def _run() -> int:
         async with search_session(**resolve_session_kwargs(ctx, params)) as session:
-            url_iter = iter_term_urls(
+            url_iter = get_terms_urls(
                 session,
                 query=params["query"],
                 topic=params["topic"],
@@ -204,7 +204,7 @@ def fetch_url(ctx: click.Context, url: str, use_tui: bool, **params: typing.Any)
 
     async def _run() -> int:
         async with search_session(**resolve_session_kwargs(ctx, params)) as session:
-            results = iter_results_from_url(session, url, topic=params["topic"])
+            results = get_results_from_url(session, url, topic=params["topic"])
             return await output_results(
                 results,
                 save_paths=params["save_paths"],

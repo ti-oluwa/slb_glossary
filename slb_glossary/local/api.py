@@ -15,9 +15,9 @@ __all__ = [
     "search",
     "get_terms_on",
     "get_term",
-    "random_term",
-    "iter_term_urls",
-    "iter_topics",
+    "get_random_term",
+    "get_terms_urls",
+    "get_topics",
     "fuzzy_match_topics",
     "count",
 ]
@@ -164,7 +164,7 @@ def fuzzy_match_topics(
     uses for the live glossary's topic list, applied to whatever's actually
     been synced/imported into the local database instead.
 
-    :param topics: Known local topic names, e.g. `iter_topics(db)`'s
+    :param topics: Known local topic names, e.g. `get_topics(db)`'s
         return value (or any iterable of topic name strings).
     :param topic: One topic name, or several comma-separated, e.g.
         `"Geophysic,Drillng"`. Matching is case-insensitive and tolerant of
@@ -209,7 +209,7 @@ async def _resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | 
         queried when `fuzzy` is `True`.
     :param topic: Raw topic filter as given by the caller (comma-separated
         for several topics), or `None`/empty for no filter.
-    :param fuzzy: If `True`, resolve `topic` against `iter_topics(db)` via
+    :param fuzzy: If `True`, resolve `topic` against `get_topics(db)` via
         `fuzzy_match_topics` instead of using it as-is.
     :return: The topic filter to apply, or `None`/`""` if there's nothing
         to filter by - including when `fuzzy` is `True` and no locally
@@ -219,7 +219,7 @@ async def _resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | 
         return None
     if not fuzzy:
         return topic
-    topic_counts = await iter_topics(db)
+    topic_counts = await get_topics(db)
     return fuzzy_match_topics(topic_counts, topic) or None
 
 
@@ -331,7 +331,7 @@ async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
     return _row_to_result(row) if row is not None else None
 
 
-async def random_term(
+async def get_random_term(
     db: Database, *, topic: str | None = None, fuzzy: bool = False
 ) -> SearchResult | None:
     """
@@ -363,7 +363,7 @@ async def random_term(
     return _row_to_result(row) if row is not None else None
 
 
-async def iter_term_urls(
+async def get_terms_urls(
     db: Database,
     *,
     query: str | None = None,
@@ -417,7 +417,7 @@ async def iter_term_urls(
                 yield url
 
 
-async def iter_topics(db: Database) -> dict[str, int]:
+async def get_topics(db: Database) -> dict[str, int]:
     """
     Return `{topic: term_count}` for every topic represented in the local database.
 

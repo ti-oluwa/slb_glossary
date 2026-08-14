@@ -60,7 +60,7 @@ __all__ = [
     "get_terms_on",
     "get_term",
     "related_terms",
-    "random_term",
+    "get_random_term",
     "compare",
 ]
 
@@ -372,7 +372,7 @@ async def get_term(
 async def _fetch_live_term(session: SearchSession, term_or_url: str) -> SearchResult | None:
     """Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched."""
     if term_or_url.startswith(("http://", "https://")):
-        async for result in live.iter_results_from_url(session, term_or_url):
+        async for result in live.get_results_from_url(session, term_or_url):
             return result
         return None
 
@@ -417,7 +417,7 @@ async def related_terms(
     return TermLookup(value=related or (), source=lookup.source, persisted=lookup.persisted)
 
 
-async def random_term(
+async def get_random_term(
     *,
     db: Database | None = None,
     session: SearchSession | None = None,
@@ -457,12 +457,12 @@ async def random_term(
 
     if resolved is Source.LOCAL:
         assert db is not None
-        result = await local_api.random_term(db, topic=topic, fuzzy=fuzzy)
+        result = await local_api.get_random_term(db, topic=topic, fuzzy=fuzzy)
         return TermLookup(value=result, source=Source.LOCAL, persisted=False)
 
     if resolved is Source.LIVE or source is not Source.INTELLIGENT:
         assert session is not None
-        result = await _fetch_live_random_term(session, topic=topic)
+        result = await _fetch_live_get_random_term(session, topic=topic)
         persisted = await _maybe_persist(
             db, [result] if result else [], persist=persist, language=session.language.value
         )
@@ -471,14 +471,14 @@ async def random_term(
     # INTELLIGENT: prefer a local pick when the local database actually has
     # something to pick from; only go live when it doesn't.
     assert db is not None
-    local_result = await local_api.random_term(db, topic=topic, fuzzy=fuzzy)
+    local_result = await local_api.get_random_term(db, topic=topic, fuzzy=fuzzy)
     if local_result is not None:
         return TermLookup(value=local_result, source=Source.LOCAL, persisted=False)
 
     if session is None:
         return TermLookup(value=None, source=Source.LOCAL, persisted=False)
 
-    live_result = await _fetch_live_random_term(session, topic=topic, sample_size=25)
+    live_result = await _fetch_live_get_random_term(session, topic=topic, sample_size=25)
     persisted = await _maybe_persist(
         db, [live_result] if live_result else [], persist=persist, language=session.language.value
     )
@@ -488,13 +488,13 @@ async def random_term(
 LETTERS = list(string.ascii_lowercase)
 
 
-async def _fetch_live_random_term(
+async def _fetch_live_get_random_term(
     session: SearchSession, *, topic: str | None, sample_size: int = 25
 ) -> SearchResult | None:
     """Sample up to `sample_size` live term URLs (by topic, or a random letter) and fetch one."""
     urls: list[str] = []
     if topic:
-        url_iter = live.iter_term_urls(session, topic=topic, limit=sample_size)
+        url_iter = live.get_terms_urls(session, topic=topic, limit=sample_size)
         urls = [url async for url in url_iter]
     else:
         # No topic given: shuffle through starting letters until one yields
@@ -502,7 +502,7 @@ async def _fetch_live_random_term(
         # have no terms at all.
         random.shuffle(LETTERS)
         for letter in LETTERS:
-            url_iter = live.iter_term_urls(session, start_letter=letter, limit=sample_size)
+            url_iter = live.get_terms_urls(session, start_letter=letter, limit=sample_size)
             urls = [url async for url in url_iter]
             if urls:
                 break
@@ -511,7 +511,7 @@ async def _fetch_live_random_term(
         return None
 
     chosen_url = random.choice(urls)
-    async for result in live.iter_results_from_url(session, chosen_url, topic=topic):
+    async for result in live.get_results_from_url(session, chosen_url, topic=topic):
         return result
     return None
 

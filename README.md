@@ -278,11 +278,11 @@ async for result in live.get_terms_on(session, topic="Directional drilling"):
     ...
 
 # Just the term detail URLs, if that's all you need
-async for url in live.iter_term_urls(session, query="porosity"):
+async for url in live.get_terms_urls(session, query="porosity"):
     ...
 
 # Fetch every definition on one term detail page directly
-async for result in live.iter_results_from_url(session, url):
+async for result in live.get_results_from_url(session, url):
     ...
 ```
 
@@ -295,7 +295,7 @@ slb.get_topic_match(session.topics, "drill")
 # "Drilling"
 ```
 
-`live.iter_results_from_url`/`live.get_terms_on`/`live.search` all support a `concurrency` argument for fetching several term detail pages in parallel, opening extra pages on the same browser context. Keep this modest - it's still one glossary site being asked for more at once.
+`live.get_results_from_url`/`live.get_terms_on`/`live.search` all support a `concurrency` argument for fetching several term detail pages in parallel, opening extra pages on the same browser context. Keep this modest - it's still one glossary site being asked for more at once.
 
 ## The local database: `slb_glossary.local`
 
@@ -341,8 +341,8 @@ async for result in local.get_terms_on(db, "Drilling"):
     ...
 
 result = await local.get_term(db, "porosity")  # exact name or URL
-pick = await local.random_term(db, topic="Drilling")
-topics = await local.iter_topics(db)  # {topic: term_count}
+pick = await local.get_random_term(db, topic="Drilling")
+topics = await local.get_topics(db)  # {topic: term_count}
 total = await local.count(db)
 ```
 
@@ -350,13 +350,13 @@ total = await local.count(db)
 
 ### Fuzzy topic matching
 
-Topic filters (`search`, `get_terms_on`, `random_term`, `iter_term_urls`) match locally stored topic names exactly, case-insensitively, by default - the local database doesn't have access to the live site's full topic list to fuzzy-match against automatically. Pass `fuzzy=True` to tolerate minor misspellings or partial names instead, resolved against whatever topics are actually present locally:
+Topic filters (`search`, `get_terms_on`, `random_term`, `get_terms_urls`) match locally stored topic names exactly, case-insensitively, by default - the local database doesn't have access to the live site's full topic list to fuzzy-match against automatically. Pass `fuzzy=True` to tolerate minor misspellings or partial names instead, resolved against whatever topics are actually present locally:
 
 ```python
 async for result in local.get_terms_on(db, "Petrophysic", fuzzy=True):
     ...  # resolves to "Petrophysics" if that's what's stored locally
 
-local.fuzzy_match_topics(await local.iter_topics(db), "Drillng,Geolog")
+local.fuzzy_match_topics(await local.get_topics(db), "Drillng,Geolog")
 # "Drilling,Geology"
 ```
 

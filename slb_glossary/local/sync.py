@@ -9,11 +9,11 @@ import dataclasses
 import datetime
 import logging
 
+from slb_glossary.live import get_results_from_urls, get_terms_urls
 from slb_glossary.live import get_terms_on as fetch_terms_on
-from slb_glossary.live import iter_results_from_urls, iter_term_urls
 from slb_glossary.live import search as live_search
 from slb_glossary.local.api import count as count_terms
-from slb_glossary.local.api import iter_topics, upsert_results
+from slb_glossary.local.api import get_topics, upsert_results
 from slb_glossary.local.models import Database, Metadata
 from slb_glossary.models import SearchSession
 
@@ -49,7 +49,7 @@ class SyncSummary:
 async def _record_sync(db: Database, *, terms_written: int, language: str) -> SyncSummary:
     """Recompute the local database's totals and persist them to `metadata.json`."""
     total = await count_terms(db)
-    topics = await iter_topics(db)
+    topics = await get_topics(db)
 
     metadata = Metadata.load(db.metadata_path)
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -104,7 +104,7 @@ async def sync_query(
     :param start_letter: Restrict the fetch to terms starting with this letter.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches. Keep this low; see
-        `slb_glossary.engine.iter_results_from_urls`'s own note on server load.
+        `slb_glossary.engine.get_results_from_urls`'s own note on server load.
     :return: A summary of the sync.
     """
     results = live_search(
@@ -167,8 +167,8 @@ async def sync_letter(
     :param concurrency: Concurrent term-page fetches.
     :return: A summary of the sync.
     """
-    urls = iter_term_urls(session, topic=topic, start_letter=start_letter, limit=limit)
-    results = iter_results_from_urls(
+    urls = get_terms_urls(session, topic=topic, start_letter=start_letter, limit=limit)
+    results = get_results_from_urls(
         session, urls, topic=topic, concurrency=concurrency, first_only=True
     )
     written = await upsert_results(db, results, language=session.language.value)
