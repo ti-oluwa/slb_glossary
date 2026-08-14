@@ -2,7 +2,7 @@
 User-configurable settings, loadable from JSON/TOML/YAML.
 
 **Disclaimer**: this module only manages configuration; any local data it
-points `slb_glossary.localdb` at is still subject to the data-lifecycle
+points `slb_glossary.Database` at is still subject to the data-lifecycle
 notice in `slb_glossary.paths` and the package docstring.
 """
 
@@ -19,7 +19,7 @@ from slb_glossary.retries import BackoffType, RetryPolicy
 
 __all__ = [
     "Config",
-    "LocalDBConfig",
+    "DatabaseConfig",
     "OutputConfig",
     "RetryConfig",
     "SessionConfig",
@@ -168,8 +168,8 @@ class SessionConfig:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class LocalDBConfig:
-    """Configuration for `slb_glossary.localdb`'s local search database."""
+class DatabaseConfig:
+    """Configuration for `slb_glossary.Database`'s local search database."""
 
     enabled: bool = True
     """Whether commands/functions that offer local-database fallback should use it."""
@@ -186,7 +186,7 @@ class LocalDBConfig:
     the CLI's `db` commands) prefer it over opening a live browser session."""
 
     sync_max_age_days: float | None = 7.0
-    """Age, in days, after which `slb_glossary.localdb.sync` should be told
+    """Age, in days, after which `slb_glossary.local.sync` should be told
     the local database is stale. `None` means it is never considered stale
     by age alone. This is purely advisory and nothing here syncs automatically,
     keeping this package's traffic to the live glossary opt-in only."""
@@ -343,7 +343,7 @@ class Config:
     session: SessionConfig = dataclasses.field(default_factory=SessionConfig)
     """Browser/session options."""
 
-    localdb: LocalDBConfig = dataclasses.field(default_factory=LocalDBConfig)
+    Database: DatabaseConfig = dataclasses.field(default_factory=DatabaseConfig)
     """Local search database options."""
 
     output: OutputConfig = dataclasses.field(default_factory=OutputConfig)
@@ -425,7 +425,7 @@ class Config:
 
     def get(self, key: str) -> typing.Any:
         """
-        Read a dotted config key, e.g. `"session.headless"` or `"localdb.prefer_local"`.
+        Read a dotted config key, e.g. `"session.headless"` or `"Database.prefer_local"`.
 
         :param key: A dot-separated path of field names, rooted at this `Config`.
         :return: The value at `key`.

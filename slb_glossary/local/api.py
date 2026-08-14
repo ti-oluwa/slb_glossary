@@ -1,12 +1,4 @@
-"""
-Functional query API for the local search database.
-
-Mirrors the shapes `slb_glossary.engine`'s live functions return
-(`SearchResult`, plain URL strings, `{topic: count}` dicts), so code
-written against one works against the other - the difference is that
-everything here reads from what was last stored locally (see
-`slb_glossary.localdb.sync`/`loaders`) instead of the live site.
-"""
+"""Functional query API for the local search database."""
 
 import datetime
 import json
@@ -14,7 +6,7 @@ import typing
 
 import aiosqlite
 
-from slb_glossary.localdb.models import LocalDB
+from slb_glossary.local.models import Database
 from slb_glossary.models import RelatedTerm, SearchResult
 
 __all__ = [
@@ -28,14 +20,14 @@ __all__ = [
 ]
 
 
-def _related_to_json(related: tuple[RelatedTerm, ...] | None) -> str | None:
+def _dump_related(related: tuple[RelatedTerm, ...] | None) -> str | None:
     """Serialize a `SearchResult.related` tuple to a compact JSON string."""
     if not related:
         return None
     return json.dumps([[link.term, link.url] for link in related])
 
 
-def _related_from_json(raw: str | None) -> tuple[RelatedTerm, ...] | None:
+def _load_related(raw: str | None) -> tuple[RelatedTerm, ...] | None:
     """Deserialize a `related_json` column back into a `SearchResult.related` tuple."""
     if not raw:
         return None
@@ -52,11 +44,11 @@ def _row_to_result(row: aiosqlite.Row) -> SearchResult:
         url=row["url"],
         image=row["image"],
         image_caption=row["image_caption"],
-        related=_related_from_json(row["related_json"]),
+        related=_load_related(row["related_json"]),
     )
 
 
-_UPSERT_STATEMENT = """
+UPSERT_STATEMENT = """
     INSERT INTO terms (
         url, term, definition, grammatical_label, topic, language,
         image, image_caption, related_json, source, fetched_at
@@ -76,7 +68,7 @@ _UPSERT_STATEMENT = """
 
 
 async def upsert_results(
-    db: LocalDB,
+    db: Database,
     results: typing.Iterable[SearchResult] | typing.AsyncIterable[SearchResult],
     *,
     language: str = "en",
@@ -91,7 +83,7 @@ async def upsert_results(
     :param db: The local database to write to.
     :param results: Results to store - a plain or async iterable of
         `SearchResult`, e.g. from `slb_glossary.engine.search`,
-        `slb_glossary.engine.get_terms_on`, or `slb_glossary.localdb.loaders`.
+        `slb_glossary.engine.get_terms_on`, or `slb_glossary.local.loaders`.
     :param language: Glossary language edition these results were fetched
         in, stored alongside each row.
     :param source: Provenance tag stored alongside each row: `"glossary"`
@@ -102,7 +94,7 @@ async def upsert_results(
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     rows: list[tuple[typing.Any, ...]] = []
 
-    def _row_for(result: SearchResult) -> tuple[typing.Any, ...] | None:
+    def get_row(result: SearchResult) -> tuple[typing.Any, ...] | None:
         if not result.url:
             return None
         return (
@@ -114,26 +106,26 @@ async def upsert_results(
             language,
             result.image,
             result.image_caption,
-            _related_to_json(result.related),
+            _dump_related(result.related),
             source,
             now,
         )
 
     if isinstance(results, typing.AsyncIterable):
         async for result in results:
-            row = _row_for(result)
+            row = get_row(result)
             if row is not None:
                 rows.append(row)
     else:
         for result in results:
-            row = _row_for(result)
+            row = get_row(result)
             if row is not None:
                 rows.append(row)
 
     if not rows:
         return 0
 
-    await db.connection.executemany(_UPSERT_STATEMENT, rows)
+    await db.connection.executemany(UPSERT_STATEMENT, rows)
     await db.connection.commit()
     return len(rows)
 
@@ -157,7 +149,7 @@ def _to_fts_query(query: str) -> str:
 
 
 async def search(
-    db: LocalDB,
+    db: Database,
     query: str,
     *,
     topic: str | None = None,
@@ -169,7 +161,7 @@ async def search(
     Uses SQLite FTS5 with bm25 ranking over each stored term's name,
     definition, and topic. Unlike `slb_glossary.engine.search`, this never
     touches the live glossary site - results are only as fresh as the
-    last `slb_glossary.localdb.sync` or import.
+    last `slb_glossary.local.sync` or import.
 
     :param db: The local database to search.
     :param query: Free-text query, matched against term, definition, and topic.
@@ -197,7 +189,7 @@ async def search(
 
 
 async def get_terms_on(
-    db: LocalDB, topic: str, *, limit: int | None = None
+    db: Database, topic: str, *, limit: int | None = None
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield every locally stored term filed under `topic`.
@@ -228,7 +220,7 @@ async def get_terms_on(
             yield _row_to_result(row)
 
 
-async def get_term(db: LocalDB, term_or_url: str) -> SearchResult | None:
+async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
     """
     Look up a single locally stored term by exact URL or exact term name.
 
@@ -246,7 +238,7 @@ async def get_term(db: LocalDB, term_or_url: str) -> SearchResult | None:
 
 
 async def iter_term_urls(
-    db: LocalDB,
+    db: Database,
     *,
     query: str | None = None,
     topic: str | None = None,
@@ -268,8 +260,8 @@ async def iter_term_urls(
         async for result in search(db, query, topic=topic, limit=limit):
             if start_letter and not (result.term or "").lower().startswith(start_letter.lower()):
                 continue
-            if result.url:
-                yield result.url
+            if url := result.url:
+                yield url
         return
 
     sql = "SELECT url FROM terms WHERE 1=1"
@@ -290,11 +282,11 @@ async def iter_term_urls(
 
     async with db.connection.execute(sql, params) as cursor:
         async for row in cursor:
-            if row["url"]:
-                yield row["url"]
+            if url := row["url"]:
+                yield url
 
 
-async def iter_topics(db: LocalDB) -> dict[str, int]:
+async def iter_topics(db: Database) -> dict[str, int]:
     """
     Return `{topic: term_count}` for every topic represented in the local database.
 
@@ -315,7 +307,7 @@ async def iter_topics(db: LocalDB) -> dict[str, int]:
     return counts
 
 
-async def count(db: LocalDB) -> int:
+async def count(db: Database) -> int:
     """
     Return the total number of terms stored locally.
 

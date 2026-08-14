@@ -2,20 +2,19 @@
 
 import logging
 
-from slb_glossary.localdb.metadata import Metadata
-from slb_glossary.localdb.models import LocalDB
+from slb_glossary.local.models import Database, Metadata
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["flush", "reset"]
 
 
-async def flush(db: LocalDB) -> None:
+async def flush(db: Database) -> None:
     """
     Delete every stored term and vector, keeping the schema and sync history.
 
     Use this to clear stale data while keeping `metadata.json`'s sync
-    timestamps intact - e.g. right before a fresh `slb_glossary.localdb.sync_all`.
+    timestamps intact e.g. right before a fresh `slb_glossary.local.sync_all`.
     Use `reset` instead to also forget the local database's sync history.
 
     :param db: The local database to clear.
@@ -27,7 +26,7 @@ async def flush(db: LocalDB) -> None:
     logger.info("Flushed local glossary database at %s", db.db_path)
 
 
-async def reset(db: LocalDB) -> None:
+async def reset(db: Database) -> None:
     """
     Flush the local database and reset its `metadata.json` (sync history) to defaults.
 

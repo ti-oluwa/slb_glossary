@@ -5,22 +5,22 @@ import json
 import pathlib
 import typing
 
-from slb_glossary.errors import LocalDBError
-from slb_glossary.localdb.api import upsert_results
-from slb_glossary.localdb.models import LocalDB
-from slb_glossary.localdb.vectors import upsert_vector
+from slb_glossary.errors import DatabaseError
+from slb_glossary.local.api import upsert_results
+from slb_glossary.local.models import Database
+from slb_glossary.local.vectors import upsert_vector
 from slb_glossary.models import SearchResult
 
 __all__ = ["load_file"]
 
 
-def _read_csv_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
+def read_csv_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
     """Read `path` as CSV into a list of `{column: value}` rows."""
     with path.open("r", encoding="utf-8-sig", newline="") as fh:
         return list(csv.DictReader(fh))
 
 
-def _read_json_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
+def read_json_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
     """Read `path` as a JSON array of records (or an object containing one)."""
     data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, dict):
@@ -29,18 +29,18 @@ def _read_json_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
                 data = value
                 break
     if not isinstance(data, list):
-        raise LocalDBError(
+        raise DatabaseError(
             f"{path}: expected a JSON array of records (or an object containing one)."
         )
     return data
 
 
-def _read_xlsx_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
+def read_xlsx_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
     """Read `path`'s first worksheet into a list of `{header: value}` rows."""
     try:
         import openpyxl
     except ImportError as exc:
-        raise LocalDBError(
+        raise DatabaseError(
             "Reading a .xlsx file requires the 'openpyxl' package. "
             "Install it with `pip install slb-glossary[xlsx]`."
         ) from exc
@@ -48,7 +48,7 @@ def _read_xlsx_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
     workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
     try:
         sheet = workbook.active
-        rows_iter = sheet.iter_rows(values_only=True)
+        rows_iter = sheet.iter_rows(values_only=True)  # type: ignore[union-attr]
         try:
             header = [str(cell) if cell is not None else "" for cell in next(rows_iter)]
         except StopIteration:
@@ -61,15 +61,15 @@ def _read_xlsx_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
         workbook.close()
 
 
-_READERS: dict[str, typing.Callable[[pathlib.Path], list[dict[str, typing.Any]]]] = {
-    "csv": _read_csv_rows,
-    "json": _read_json_rows,
-    "xlsx": _read_xlsx_rows,
-    "xlsm": _read_xlsx_rows,
+READERS: dict[str, typing.Callable[[pathlib.Path], list[dict[str, typing.Any]]]] = {
+    "csv": read_csv_rows,
+    "json": read_json_rows,
+    "xlsx": read_xlsx_rows,
+    "xlsm": read_xlsx_rows,
 }
 
 
-def _get(row: typing.Mapping[str, typing.Any], name: str | None) -> typing.Any:
+def _get_field(row: typing.Mapping[str, typing.Any], name: str | None) -> typing.Any:
     """Return `row[name]` matched case-insensitively, or `None` if absent/empty/unset."""
     if not name:
         return None
@@ -89,11 +89,11 @@ def _record_to_result(
     grammatical_label_field: str | None,
 ) -> SearchResult | None:
     """Build a `SearchResult` from one imported row, or `None` if it has no term."""
-    term = _get(row, term_field)
+    term = _get_field(row, term_field)
     if not term:
         return None
 
-    url = _get(row, url_field)
+    url = _get_field(row, url_field)
     if not url:
         # url is the local database's primary key; synthesize a stable one
         # from the term itself so rows without a URL column still
@@ -102,9 +102,9 @@ def _record_to_result(
         slug = "-".join(str(term).strip().lower().split())
         url = f"local://imported/{slug}"
 
-    definition = _get(row, definition_field)
-    grammatical_label = _get(row, grammatical_label_field)
-    topic = _get(row, topic_field)
+    definition = _get_field(row, definition_field)
+    grammatical_label = _get_field(row, grammatical_label_field)
+    topic = _get_field(row, topic_field)
 
     return SearchResult(
         term=str(term),
@@ -147,7 +147,7 @@ def _parse_embedding(raw: typing.Any) -> list[float] | None:
 
 
 async def load_file(
-    db: LocalDB,
+    db: Database,
     path: str | pathlib.Path,
     *,
     format: str | None = None,
@@ -184,32 +184,32 @@ async def load_file(
         vector for each row - either a JSON array, or a delimiter-separated
         (comma, semicolon, or whitespace) string of numbers. If given, a
         vector is stored for every row that has one (see
-        `slb_glossary.localdb.vectors.upsert_vector`).
+        `slb_glossary.local.vectors.upsert_vector`).
     :param embedding_model: Model label to store `embedding_field` vectors
         under. Only meaningful when `embedding_field` is given.
     :param source: Provenance tag stored on every imported row (see
-        `slb_glossary.localdb.api.upsert_results`). Defaults to `"user"`
+        `slb_glossary.local.api.upsert_results`). Defaults to `"user"`
         so imported data can be told apart from live `"glossary"` rows.
     :return: Number of rows imported.
-    :raises LocalDBError: If `format` (or `path`'s extension) is
+    :raises DatabaseError: If `format` (or `path`'s extension) is
         unsupported, `path` isn't a well-formed file of that format, or
         `.xlsx` support isn't installed.
     """
     resolved_path = pathlib.Path(path)
     resolved_format = (format or resolved_path.suffix.lstrip(".")).lower()
-    reader = _READERS.get(resolved_format)
+    reader = READERS.get(resolved_format)
     if reader is None:
-        raise LocalDBError(
+        raise DatabaseError(
             f"Unsupported import format {resolved_format!r} for {resolved_path!s}. "
-            f"Supported formats: {', '.join(sorted(set(_READERS)))}."
+            f"Supported formats: {', '.join(sorted(set(READERS)))}."
         )
 
     try:
         rows = reader(resolved_path)
-    except LocalDBError:
+    except DatabaseError:
         raise
     except Exception as exc:
-        raise LocalDBError(
+        raise DatabaseError(
             f"Could not read {resolved_path!s} as {resolved_format}: {exc}"
         ) from exc
 
@@ -229,12 +229,11 @@ async def load_file(
         results.append(result)
 
         if embedding_field:
-            parsed_embedding = _parse_embedding(_get(row, embedding_field))
+            parsed_embedding = _parse_embedding(_get_field(row, embedding_field))
             if parsed_embedding:
                 embeddings[result.url] = parsed_embedding
 
     written = await upsert_results(db, results, source=source)
     for url, embedding in embeddings.items():
         await upsert_vector(db, url, embedding, model=embedding_model)
-
     return written

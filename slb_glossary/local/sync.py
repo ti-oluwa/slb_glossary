@@ -1,9 +1,7 @@
 """
 Sync the local database from a live `SearchSession`.
 
-Everything here is opt-in and one-shot - nothing in `slb_glossary`
-schedules or repeats a sync on its own. Call one of these functions as
-often (or as rarely) as fits your own use of the glossary; see the
+Call one of these functions as often (or as rarely) as fits your own use of the glossary; see the
 responsible-use note on `sync_all` in particular.
 """
 
@@ -13,10 +11,9 @@ import logging
 
 from slb_glossary.engine import get_terms_on as fetch_terms_on
 from slb_glossary.engine import search as fetch_search
-from slb_glossary.localdb.api import count as count_terms
-from slb_glossary.localdb.api import iter_topics, upsert_results
-from slb_glossary.localdb.metadata import Metadata
-from slb_glossary.localdb.models import LocalDB
+from slb_glossary.local.api import count as count_terms
+from slb_glossary.local.api import iter_topics, upsert_results
+from slb_glossary.local.models import Database, Metadata
 from slb_glossary.models import SearchSession
 
 logger = logging.getLogger(__name__)
@@ -26,7 +23,7 @@ __all__ = ["SyncSummary", "sync_topics", "sync_query", "sync_topic", "sync_all"]
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class SyncSummary:
-    """Outcome of a `slb_glossary.localdb.sync` call."""
+    """Outcome of a `slb_glossary.local.sync` call."""
 
     terms_written: int
     """Number of term rows inserted or updated by this sync."""
@@ -41,7 +38,7 @@ class SyncSummary:
     """ISO-8601 UTC timestamp this sync completed at."""
 
 
-async def _record_sync(db: LocalDB, *, terms_written: int, language: str) -> SyncSummary:
+async def _record_sync(db: Database, *, terms_written: int, language: str) -> SyncSummary:
     """Recompute the local database's totals and persist them to `metadata.json`."""
     total = await count_terms(db)
     topics = await iter_topics(db)
@@ -54,16 +51,18 @@ async def _record_sync(db: LocalDB, *, terms_written: int, language: str) -> Syn
     metadata.topics = topics
     metadata.save(db.metadata_path)
 
-    return SyncSummary(terms_written=terms_written, total_terms=total, topics=topics, synced_at=now)
+    return SyncSummary(
+        terms_written=terms_written, total_terms=total, topics=topics, synced_at=now
+    )
 
 
-async def sync_topics(db: LocalDB, session: SearchSession) -> SyncSummary:
+async def sync_topics(db: Database, session: SearchSession) -> SyncSummary:
     """
     Refresh the local database's recorded topic list from `session`, without fetching terms.
 
     Cheap relative to the other sync functions: it only records
     `session.topics`, the counts already captured when the session opened
-    (or last refreshed via `slb_glossary.topics.refresh_topics`) - no
+    (or last refreshed via `slb_glossary.topics.refresh_topics`) and does no
     additional requests to the glossary site.
 
     :param db: The local database to update.
@@ -74,7 +73,7 @@ async def sync_topics(db: LocalDB, session: SearchSession) -> SyncSummary:
 
 
 async def sync_query(
-    db: LocalDB,
+    db: Database,
     session: SearchSession,
     query: str,
     *,
@@ -102,14 +101,19 @@ async def sync_query(
     :return: A summary of the sync.
     """
     results = fetch_search(
-        session, query, topic=topic, start_letter=start_letter, limit=limit, concurrency=concurrency
+        session,
+        query,
+        topic=topic,
+        start_letter=start_letter,
+        limit=limit,
+        concurrency=concurrency,
     )
     written = await upsert_results(db, results, language=session.language.value)
     return await _record_sync(db, terms_written=written, language=session.language.value)
 
 
 async def sync_topic(
-    db: LocalDB,
+    db: Database,
     session: SearchSession,
     topic: str,
     *,
@@ -131,15 +135,17 @@ async def sync_topic(
     return await _record_sync(db, terms_written=written, language=session.language.value)
 
 
-async def sync_all(db: LocalDB, session: SearchSession, *, concurrency: int = 1) -> SyncSummary:
+async def sync_all(db: Database, session: SearchSession, *, concurrency: int = 1) -> SyncSummary:
     """
     Fetch the entire glossary from the live site and store it locally.
 
     This walks every topic `session` knows about and fetches every term
-    filed under it - the heaviest sync this module offers, and the one
+    filed under it. This is the heaviest sync this module offers, and the one
     most likely to draw attention from the glossary site's own rate
-    limiting. Use it sparingly, and mind the local-data disclaimer in
-    `slb_glossary.localdb`'s package docstring; `sync_query`/`sync_topic`
+    limiting.
+
+    Use it sparingly, and mind the local-data disclaimer in
+    `slb_glossary.Database`'s package docstring; `sync_query`/`sync_topic`
     are lighter alternatives for keeping specific terms fresh instead of
     mirroring the whole site.
 

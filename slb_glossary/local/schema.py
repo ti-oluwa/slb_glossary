@@ -2,16 +2,16 @@
 
 import aiosqlite
 
-from slb_glossary.errors import LocalDBError
+from slb_glossary.errors import DatabaseError
 
 __all__ = ["SCHEMA_VERSION", "initialize"]
 
 SCHEMA_VERSION = 1
 """Local database schema version. Bump this alongside any DDL change below
-that isn't purely additive, so `slb_glossary.localdb.metadata.Metadata`
+that isn't purely additive, so `slb_glossary.local.metadata.Metadata`
 can eventually gate migrations on it."""
 
-_CREATE_TERMS_TABLE = """
+CREATE_TERMS_TABLE = """
 CREATE TABLE IF NOT EXISTS terms (
     url TEXT PRIMARY KEY,
     term TEXT NOT NULL,
@@ -27,13 +27,13 @@ CREATE TABLE IF NOT EXISTS terms (
 )
 """
 
-_CREATE_TERMS_INDEXES = [
+CREATE_TERMS_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_terms_term ON terms(term)",
     "CREATE INDEX IF NOT EXISTS idx_terms_topic ON terms(topic)",
     "CREATE INDEX IF NOT EXISTS idx_terms_language ON terms(language)",
 ]
 
-_CREATE_FTS_TABLE = """
+CREATE_FTS_TABLE = """
 CREATE VIRTUAL TABLE IF NOT EXISTS terms_fts USING fts5(
     term,
     definition,
@@ -47,7 +47,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS terms_fts USING fts5(
 # of its own, so every write to `terms` is mirrored into it by rowid. The
 # 'delete' sentinel row on UPDATE/DELETE is FTS5's own convention for
 # removing an indexed row from an external-content table.
-_CREATE_FTS_TRIGGERS = [
+CREATE_FTS_TRIGGERS = [
     """
     CREATE TRIGGER IF NOT EXISTS terms_ai AFTER INSERT ON terms BEGIN
         INSERT INTO terms_fts(rowid, term, definition, topic)
@@ -70,7 +70,7 @@ _CREATE_FTS_TRIGGERS = [
     """,
 ]
 
-_CREATE_VECTORS_TABLE = """
+CREATE_VECTORS_TABLE = """
 CREATE TABLE IF NOT EXISTS vectors (
     url TEXT NOT NULL REFERENCES terms(url) ON DELETE CASCADE,
     model TEXT NOT NULL,
@@ -89,25 +89,25 @@ async def initialize(connection: aiosqlite.Connection) -> None:
     `IF NOT EXISTS`, so this is a no-op on an already-initialized database.
 
     :param connection: An open `aiosqlite` connection.
-    :raises LocalDBError: If the installed SQLite build lacks the FTS5
-        extension, which `slb_glossary.localdb.api.search` requires.
+    :raises DatabaseError: If the installed SQLite build lacks the FTS5
+        extension, which `slb_glossary.local.api.search` requires.
     """
     await connection.execute("PRAGMA foreign_keys = ON")
-    await connection.execute(_CREATE_TERMS_TABLE)
-    for statement in _CREATE_TERMS_INDEXES:
+    await connection.execute(CREATE_TERMS_TABLE)
+    for statement in CREATE_TERMS_INDEXES:
         await connection.execute(statement)
 
     try:
-        await connection.execute(_CREATE_FTS_TABLE)
+        await connection.execute(CREATE_FTS_TABLE)
     except aiosqlite.OperationalError as exc:
-        raise LocalDBError(
+        raise DatabaseError(
             "The installed SQLite build has no FTS5 extension, which "
-            "slb_glossary.localdb requires for full-text search. Rebuild "
+            "`slb_glossary.Database` requires for full-text search. Rebuild "
             "Python's sqlite3 module against a SQLite build with FTS5 enabled."
         ) from exc
 
-    for statement in _CREATE_FTS_TRIGGERS:
+    for statement in CREATE_FTS_TRIGGERS:
         await connection.execute(statement)
 
-    await connection.execute(_CREATE_VECTORS_TABLE)
+    await connection.execute(CREATE_VECTORS_TABLE)
     await connection.commit()

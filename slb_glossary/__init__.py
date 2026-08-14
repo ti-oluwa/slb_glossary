@@ -1,24 +1,24 @@
 """
 Search the SLB Energy Glossary (https://glossary.slb.com/).
 
-All rights to the data and content on the SLB Energy Glossary website are owned by SLB. 
+All rights to the data and content on the SLB Energy Glossary website are owned by SLB.
 This package is not affiliated with or endorsed by SLB.
 Visit <https://www.slb.com/en/terms-of-service> for the terms of use.
 
 **Not for commercial use. This package is intended for educational and research purposes only.**
 
-This package can optionally cache glossary data locally (see `slb_glossary.localdb`)
+This package can optionally cache glossary data locally (see `slb_glossary.Database`)
 so repeat lookups don't have to re-visit the site. That local copy is still SLB's
 data: anyone who enables local storage is solely responsible for keeping its
 retention, refresh, and deletion in compliance with SLB's terms of use linked
-above. See `slb_glossary.paths` and `slb_glossary.localdb` for details.
+above. See `slb_glossary.paths` and `slb_glossary.Database` for details.
 
 @Author: Daniel T. Afolayan (ti-oluwa)
 """
 
 import logging
 
-from . import localdb, store
+from . import local, store
 from .browser import (
     BrowserType,
     ResourceType,
@@ -30,7 +30,14 @@ from .browser import (
 )
 from .config import Config
 from .engine import get_terms_on, iter_results_from_url, iter_term_urls, search
-from .errors import BrowserError, ConfigError, LocalDBError, NetworkError, ParsingError
+from .errors import (
+    BrowserError,
+    ConfigError,
+    DatabaseError,
+    GlossaryError,
+    NetworkError,
+    ParsingError,
+)
 from .models import Language, SearchResult, SearchSession
 from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics
@@ -43,7 +50,7 @@ logging.basicConfig(
 __version__ = "0.1.0"
 __all__ = [
     "store",
-    "localdb",
+    "local",
     "open_session",
     "open_session_from_config",
     "close_session",
@@ -65,9 +72,10 @@ __all__ = [
     "BackoffType",
     "NetworkError",
     "BrowserError",
+    "GlossaryError",
     "ParsingError",
     "ConfigError",
-    "LocalDBError",
+    "DatabaseError",
     "BrowserType",
     "ResourceType",
 ]

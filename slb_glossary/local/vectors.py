@@ -1,7 +1,7 @@
 """
 Local vector store: bring-your-own-embedding similarity search over stored terms.
 
-`slb_glossary.localdb` deliberately doesn't bundle an embedding model -
+`slb_glossary.Database` deliberately doesn't bundle an embedding model as
 that would drag in a heavy ML dependency for something most callers won't
 use. Instead, this module just stores whatever embedding vector the
 caller already computed for a term (with any model they like) and ranks
@@ -13,8 +13,8 @@ import array
 import math
 import typing
 
-from slb_glossary.localdb.api import _row_to_result
-from slb_glossary.localdb.models import LocalDB
+from slb_glossary.local.api import _row_to_result
+from slb_glossary.local.models import Database
 from slb_glossary.models import SearchResult
 
 __all__ = ["upsert_vector", "delete_vectors", "vector_search"]
@@ -43,14 +43,14 @@ def _cosine_similarity(a: typing.Sequence[float], b: typing.Sequence[float]) -> 
 
 
 async def upsert_vector(
-    db: LocalDB, url: str, embedding: typing.Sequence[float], *, model: str = "custom"
+    db: Database, url: str, embedding: typing.Sequence[float], *, model: str = "custom"
 ) -> None:
     """
     Store (or replace) the embedding vector for a locally stored term.
 
     :param db: The local database to write to.
     :param url: URL of a term already stored in `db` (see
-        `slb_glossary.localdb.api.upsert_results`). Its vectors are
+        `slb_glossary.local.api.upsert_results`). Its vectors are
         removed automatically if that term is later deleted.
     :param embedding: The embedding vector, as computed by whatever model
         the caller chooses.
@@ -71,7 +71,7 @@ async def upsert_vector(
     await db.connection.commit()
 
 
-async def delete_vectors(db: LocalDB, *, model: str | None = None) -> None:
+async def delete_vectors(db: Database, *, model: str | None = None) -> None:
     """
     Delete stored vectors, optionally scoped to one `model`.
 
@@ -87,7 +87,7 @@ async def delete_vectors(db: LocalDB, *, model: str | None = None) -> None:
 
 
 async def vector_search(
-    db: LocalDB,
+    db: Database,
     query_embedding: typing.Sequence[float],
     *,
     model: str = "custom",
@@ -97,7 +97,7 @@ async def vector_search(
     """
     Rank locally stored terms by cosine similarity to `query_embedding`.
 
-    This is a brute-force scan over every vector stored under `model` -
+    This is a brute-force scan over every vector stored under `model` which is
     fine for a glossary-sized dataset (thousands of terms), not built for
     million-row corpora. Compute `query_embedding` with whatever model
     produced the stored vectors (see `upsert_vector`); mismatched

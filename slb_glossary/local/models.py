@@ -1,19 +1,39 @@
-"""Sync/provenance bookkeeping for the local database, stored as `metadata.json`."""
+"""Data structures for the local search database."""
 
 import dataclasses
 import json
 import pathlib
 import typing
 
-__all__ = ["Metadata"]
+import aiosqlite
+
+__all__ = ["Database", "Metadata"]
+
+
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Database:
+    """
+    An open connection to the local search database.
+
+    Obtain one with `slb_glossary.local.open_db`/`local_db`.
+    """
+
+    connection: aiosqlite.Connection
+    """The open `aiosqlite` connection to the SQLite database file."""
+
+    db_path: pathlib.Path
+    """Path to the SQLite database file on disk."""
+
+    metadata_path: pathlib.Path
+    """Path to this database's `metadata.json` sync/provenance file."""
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class Metadata:
-    """Sync/provenance bookkeeping for a `slb_glossary.localdb` database."""
+    """Sync/provenance bookkeeping for a `slb_glossary.Database` database."""
 
     schema_version: int = 1
-    """Local database schema version. See `slb_glossary.localdb.schema.SCHEMA_VERSION`."""
+    """Local database schema version. See `slb_glossary.local.schema.SCHEMA_VERSION`."""
 
     last_synced_at: str | None = None
     """ISO-8601 UTC timestamp of the last successful sync, or `None` if never synced."""

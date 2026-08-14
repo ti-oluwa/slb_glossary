@@ -7,9 +7,8 @@ import typing
 
 import aiosqlite
 
-from slb_glossary.localdb.metadata import Metadata
-from slb_glossary.localdb.models import LocalDB
-from slb_glossary.localdb.schema import initialize
+from slb_glossary.local.models import Database, Metadata
+from slb_glossary.local.schema import initialize
 from slb_glossary.paths import default_db_path, default_metadata_path
 
 logger = logging.getLogger(__name__)
@@ -32,7 +31,7 @@ async def open_db(
     path: str | pathlib.Path | None = None,
     *,
     metadata_path: str | pathlib.Path | None = None,
-) -> LocalDB:
+) -> Database:
     """
     Open (creating if needed) the local search database at `path`.
 
@@ -43,14 +42,16 @@ async def open_db(
         `slb_glossary.paths.default_metadata_path()` when `path` is also
         left at its default, or `<path stem>.metadata.json` next to a
         custom `path`.
-    :return: An open `LocalDB`. Close it with `close_db`, or use
+    :return: An open `Database`. Close it with `close_db`, or use
         `local_db` instead of calling this function directly.
-    :raises LocalDBError: If the installed SQLite build lacks FTS5.
+    :raises DatabaseError: If the installed SQLite build lacks FTS5.
     """
     resolved_db_path = pathlib.Path(path) if path is not None else default_db_path()
     resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_metadata_path = _resolve_metadata_path(
-        resolved_db_path, metadata_path, db_path_was_given=path is not None
+        db_path=resolved_db_path,
+        metadata_path=metadata_path,
+        db_path_was_given=path is not None,
     )
 
     connection = await aiosqlite.connect(resolved_db_path)
@@ -61,12 +62,14 @@ async def open_db(
         Metadata().save(resolved_metadata_path)
 
     logger.info("Opened local glossary database at %s", resolved_db_path)
-    return LocalDB(
-        connection=connection, db_path=resolved_db_path, metadata_path=resolved_metadata_path
+    return Database(
+        connection=connection,
+        db_path=resolved_db_path,
+        metadata_path=resolved_metadata_path,
     )
 
 
-async def close_db(db: LocalDB) -> None:
+async def close_db(db: Database) -> None:
     """
     Close `db`'s connection.
 
@@ -84,12 +87,12 @@ async def local_db(
     path: str | pathlib.Path | None = None,
     *,
     metadata_path: str | pathlib.Path | None = None,
-) -> typing.AsyncIterator[LocalDB]:
+) -> typing.AsyncIterator[Database]:
     """
-    Open a `LocalDB` for the duration of an `async with` block.
+    Open a `Database` for the duration of an `async with` block.
 
     ```python
-    async with local_db() as db:
+    async with local_db(...) as db:
         async for result in search(db, "porosity"):
             print(result)
     ```

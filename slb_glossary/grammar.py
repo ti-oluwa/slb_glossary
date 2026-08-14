@@ -5,7 +5,7 @@ from slb_glossary.models import Language
 __all__ = ["resolve_grammatical_label"]
 
 
-_GRAMMATICAL_LABELS: dict[Language, dict[str, str]] = {
+GRAMMATICAL_LABELS: dict[Language, dict[str, str]] = {
     Language.ENGLISH: {
         "n.": "Noun",
         "pron.": "Pronoun",
@@ -54,4 +54,4 @@ def resolve_grammatical_label(language: Language, abbreviation: str) -> str:
     :return: The full label, e.g. `"Noun"`. Returns `abbreviation` unchanged
         if there is no known mapping for it.
     """
-    return _GRAMMATICAL_LABELS[language].get(abbreviation.lower(), abbreviation)
+    return GRAMMATICAL_LABELS[language].get(abbreviation.lower(), abbreviation)

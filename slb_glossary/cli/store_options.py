@@ -1,10 +1,4 @@
-"""Shared `--save`/`--format` options for commands that can persist their results.
-
-This module only knows the shape of `slb_glossary.store` (a `save(records,
-destination, format=...)` coroutine); it imports `slb_glossary.store` lazily,
-inside `save_and_print`, so the CLI stays loosely coupled to that module and
-keeps working even while the store API is still being revamped.
-"""
+"""Shared `--save`/`--format` options for commands that can persist their results."""
 
 import json
 import pathlib
@@ -13,7 +7,6 @@ import typing
 import click
 
 from slb_glossary import store
-from slb_glossary.models import SearchResult
 from slb_glossary.store import records_to_dicts
 from slb_glossary.store.records import RecordLike
 from slb_glossary.utils import print_results
@@ -113,7 +106,6 @@ async def save_and_print(
     :raises slb_glossary.store.WriterError: If writing to a save path fails.
     """
     collected = [result async for result in results]
-
     if not quiet:
         if json_output:
             click.echo(json.dumps(records_to_dicts(collected), indent=2, ensure_ascii=False))
