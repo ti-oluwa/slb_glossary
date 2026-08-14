@@ -141,6 +141,7 @@ async def search(
     limit: int | None = 3,
     concurrency: int = 1,
     persist: bool = False,
+    fuzzy: bool = False,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Search for `query`, reading from `db`/`session` according to `source`.
@@ -165,6 +166,11 @@ async def search(
         live fetch happens. See `slb_glossary.engine.search`.
     :param persist: If `True`, and a live fetch happens, write its results
         into `db` (if given) so the next matching call can be served locally.
+    :param fuzzy: If `True`, any local-database read (a `Source.LOCAL` read,
+        or `Source.INTELLIGENT`'s local-first attempt) tolerates minor
+        misspellings/partial names in `topic` - see
+        `slb_glossary.local.fuzzy_match_topics`. Live reads already
+        fuzzy-match topics unconditionally, so this has no effect on them.
     :yield: Matching `SearchResult`s.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
@@ -173,7 +179,7 @@ async def search(
 
     if resolved is Source.LOCAL:
         assert db is not None
-        async for result in local_api.search(db, query, topic=topic, limit=limit):
+        async for result in local_api.search(db, query, topic=topic, limit=limit, fuzzy=fuzzy):
             yield result
         return
 
@@ -196,7 +202,8 @@ async def search(
     # source is Source.INTELLIGENT, resolved started as LOCAL: try it, then fall back.
     assert db is not None
     local_results = [
-        result async for result in local_api.search(db, query, topic=topic, limit=limit)
+        result
+        async for result in local_api.search(db, query, topic=topic, limit=limit, fuzzy=fuzzy)
     ]
     if start_letter:
         local_results = [
@@ -242,6 +249,7 @@ async def get_terms_on(
     limit: int | None = None,
     concurrency: int = 1,
     persist: bool = False,
+    fuzzy: bool = False,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield every term filed under `topic`, reading from `db`/`session` according to `source`.
@@ -256,6 +264,10 @@ async def get_terms_on(
     :param concurrency: Concurrent term-page fetches, only relevant when a
         live fetch happens.
     :param persist: If `True`, and a live fetch happens, cache its results into `db`.
+    :param fuzzy: If `True`, any local-database read tolerates minor
+        misspellings/partial names in `topic` - see
+        `slb_glossary.local.fuzzy_match_topics`. Live reads already
+        fuzzy-match topics unconditionally, so this has no effect on them.
     :yield: `SearchResult`s filed under `topic`.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
@@ -264,7 +276,7 @@ async def get_terms_on(
 
     if resolved is Source.LOCAL:
         assert db is not None
-        async for result in local_api.get_terms_on(db, topic, limit=limit):
+        async for result in local_api.get_terms_on(db, topic, limit=limit, fuzzy=fuzzy):
             yield result
         return
 
@@ -280,7 +292,9 @@ async def get_terms_on(
         return
 
     assert db is not None
-    local_results = [result async for result in local_api.get_terms_on(db, topic, limit=limit)]
+    local_results = [
+        result async for result in local_api.get_terms_on(db, topic, limit=limit, fuzzy=fuzzy)
+    ]
     if local_results:
         logger.debug("Serving get_terms_on(%r) from the local database", topic)
         for result in local_results:
@@ -411,6 +425,7 @@ async def random_term(
     source: Source = Source.INTELLIGENT,
     topic: str | None = None,
     persist: bool = False,
+    fuzzy: bool = False,
 ) -> TermLookup[SearchResult | None]:
     """
     Return one randomly chosen term, optionally restricted to a topic.
@@ -430,6 +445,10 @@ async def random_term(
         the local database is empty.
     :param topic: Restrict the pick to this topic, or several comma-separated topics.
     :param persist: If `True`, and a live pick happens, cache it into `db`.
+    :param fuzzy: If `True`, a local pick tolerates minor misspellings/
+        partial names in `topic` - see `slb_glossary.local.fuzzy_match_topics`.
+        Live picks already fuzzy-match topics unconditionally, so this has
+        no effect on them.
     :return: A `TermLookup` wrapping the picked `SearchResult`, or `None` if
         nothing matched (empty local database/topic, or no live match found).
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
@@ -439,7 +458,7 @@ async def random_term(
 
     if resolved is Source.LOCAL:
         assert db is not None
-        result = await local_api.random_term(db, topic=topic)
+        result = await local_api.random_term(db, topic=topic, fuzzy=fuzzy)
         return TermLookup(value=result, source=Source.LOCAL, persisted=False)
 
     if resolved is Source.LIVE or source is not Source.INTELLIGENT:
@@ -453,7 +472,7 @@ async def random_term(
     # INTELLIGENT: prefer a local pick when the local database actually has
     # something to pick from; only go live when it doesn't.
     assert db is not None
-    local_result = await local_api.random_term(db, topic=topic)
+    local_result = await local_api.random_term(db, topic=topic, fuzzy=fuzzy)
     if local_result is not None:
         return TermLookup(value=local_result, source=Source.LOCAL, persisted=False)
 
