@@ -6,9 +6,9 @@ import click
 
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
+from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
-from slb_glossary.cli.store_options import output_results, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.topics import refresh_topics
 
@@ -48,15 +48,9 @@ async def iter_topic_records(
 
 
 @topics.command("list")
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Don't print topics to the console (useful with --save).",
-)
 @config_option
 @session_options
-@store_options
+@output_options
 @click.option(
     "--tui",
     "use_tui",
@@ -107,7 +101,7 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
 )
 @config_option
 @session_options
-@store_options
+@output_options
 @click.option(
     "--tui",
     "use_tui",

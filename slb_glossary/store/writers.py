@@ -115,7 +115,7 @@ def records_to_dicts(
 
     Field order is preserved from each record's `asdict()`, and nested
     values (e.g. a `SearchResult.related` list of `RelatedTerm`) are
-    recursively converted rather than flattened to text - unlike
+    recursively converted rather than flattened to text, unlike
     `write_json`, which additionally re-keys the list by each record's
     first field for on-disk storage, this stays a flat list, which is
     usually what you want for `json.dumps`, piping to `jq`, or embedding

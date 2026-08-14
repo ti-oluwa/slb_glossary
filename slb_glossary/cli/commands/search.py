@@ -6,9 +6,9 @@ import click
 
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
+from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
-from slb_glossary.cli.store_options import output_results, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.live import search as run_search
 
@@ -47,12 +47,6 @@ def _validate_query(
     default=3,
     show_default=True,
     help="Maximum number of terms to look up. Use 0 for unlimited.",
-)
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Don't print results to the console (useful with --save).",
 )
 @click.option(
     "--url/--no-url",
@@ -99,7 +93,7 @@ def _validate_query(
 )
 @config_option
 @session_options
-@store_options
+@output_options
 @click.option(
     "--tui",
     "use_tui",

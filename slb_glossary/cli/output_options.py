@@ -1,4 +1,4 @@
-"""Shared `--save`/`--format` options for commands that can persist their results."""
+"""Shared output options for CLI commands that display or persist results."""
 
 import json
 import pathlib
@@ -11,24 +11,33 @@ from slb_glossary.store import records_to_dicts
 from slb_glossary.store.records import RecordLike
 from slb_glossary.utils import async_print_results
 
-__all__ = ["store_options", "output_results"]
+__all__ = ["output_options", "output_results"]
 
 
 F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
 
 
-def store_options(func: F) -> F:
+def output_options(func: F) -> F:
     """
-    Attach `--save`/`-o` and `--format` options to a click command.
+    Attach shared output options to a Click command.
 
-    Stack this directly above a command's `def`, alongside `@click.command()`.
-    The decorated callback receives `save_paths: tuple[pathlib.Path, ...]`,
-    `format: str | None` and `json_output: bool`; pass all three through to
+    Adds options for controlling console output and optionally persisting
+    command results, including `--quiet`, `--json`, `--save`, and `--format`.
+
+    Stack this directly above a command's `def`, alongside
+    `@click.command()`. The decorated callback receives `quiet`,
+    `json_output`, `save_paths`, and `format`; pass these values through to
     `output_results`.
 
-    :param func: The click command callback to attach options to.
-    :return: `func`, with the save options attached.
+    :param func: The Click command callback to attach the output options to.
+    :return: `func`, with the output options attached.
     """
+    func = click.option(
+        "--quiet",
+        "-q",
+        is_flag=True,
+        help="Don't print results to the console (useful with --save).",
+    )(func)
     func = click.option(
         "--json",
         "json_output",
@@ -71,27 +80,21 @@ async def output_results(
     show_related: bool = False,
 ) -> int:
     """
-    Collect an async stream of results, then print and/or save it.
+    Collect, display, and optionally persist an async stream of results.
 
-    Collects `results` into a list once so the same results can both be
-    printed to the console and saved to one or more files without
-    re-running the (network-bound) search that produced them.
+    Results are collected once so the same records can be displayed on the
+    console and written to one or more files without re-running the
+    network-bound operation that produced them.
 
-    :param results: The async stream of records to consume, e.g. from
-        `slb_glossary.search`, `slb_glossary.get_terms_on`, or any other
-        `slb_glossary.store.RecordLike`-yielding source.
+    :param results: The async stream of records to consume.
     :param save_paths: File paths to save the collected results to. Each
-        path's format is inferred from its extension unless `format` is
-        given. May be empty to skip saving.
-    :param format: File format to force for every path in `save_paths`,
-        overriding each path's extension. Ignored if `save_paths` is empty.
-    :param quiet: If `True`, skip printing results to the console entirely
-        (neither a table nor JSON); only `save_paths` are written.
-    :param json_output: If `True` (and not `quiet`), print `collected` as a
-        JSON array to stdout instead of a Rich table. Suited to piping
-        into `jq` or another program. `print_limit`/`show_*` are ignored
-        in this mode, since JSON output is meant to be complete and
-        machine-readable rather than trimmed for terminal display.
+        path's format is inferred from its extension unless `format` is given.
+    :param format: File format to use for every path in `save_paths`,
+        overriding each path's extension.
+    :param quiet: If `True`, don't print results to the console. Results are
+        still written to `save_paths`.
+    :param json_output: If `True` and `quiet` is `False`, print results as
+        JSON instead of a table.
     :param print_limit: Maximum number of results to print as a table.
         Ignored when `json_output` is `True`. Every collected result is
         still saved regardless of this limit.
@@ -111,7 +114,7 @@ async def output_results(
 
     if not quiet:
 
-        async def async_gen() -> typing.AsyncIterator[RecordLike]:
+        async def _async_gen() -> typing.AsyncIterator[RecordLike]:
             nonlocal collected, count, was_collected
             was_collected = True
             async for record in results:
@@ -119,7 +122,7 @@ async def output_results(
                 count += 1
                 yield record
 
-        records = async_gen()
+        records = _async_gen()
         if json_output:
             output = []
             output_count = 0

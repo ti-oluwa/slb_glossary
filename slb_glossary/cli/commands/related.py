@@ -6,6 +6,7 @@ import click
 
 from slb_glossary import query
 from slb_glossary.cli.errors import cli_command
+from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, session_options
 from slb_glossary.cli.source_options import (
@@ -16,7 +17,6 @@ from slb_glossary.cli.source_options import (
     resolve_source,
     source_options,
 )
-from slb_glossary.cli.store_options import output_results, store_options
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.query import Source
 
@@ -55,7 +55,7 @@ def _validate_term(ctx: click.Context, param: click.Parameter, value: str) -> st
 @local_db_option
 @config_option
 @session_options
-@store_options
+@output_options
 @click.option(
     "--tui",
     "use_tui",

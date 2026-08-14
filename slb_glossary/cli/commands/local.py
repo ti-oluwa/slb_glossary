@@ -8,10 +8,10 @@ from slb_glossary import local as local_pkg
 from slb_glossary.cli.commands.sync import sync as sync_command
 from slb_glossary.cli.commands.update import update as update_command
 from slb_glossary.cli.errors import cli_command
+from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option
 from slb_glossary.cli.source_options import get_loaded_config, local_db_option, resolve_db_path
-from slb_glossary.cli.store_options import output_results, store_options
 from slb_glossary.local.models import Metadata
 
 __all__ = ["local"]
@@ -137,15 +137,9 @@ def stats(**params: typing.Any) -> None:
     show_default=True,
     help="Maximum number of results. Use 0 for unlimited.",
 )
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Don't print results to the console (useful with --save).",
-)
 @local_db_option
 @config_option
-@store_options
+@output_options
 @cli_command
 def local_search(query: str, **params: typing.Any) -> None:
     """
@@ -186,13 +180,7 @@ def local_search(query: str, **params: typing.Any) -> None:
 @click.argument("term_or_url", default="")
 @local_db_option
 @config_option
-@store_options
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Don't print the result to the console (useful with --save).",
-)
+@output_options
 @cli_command
 def local_get(term_or_url: str, **params: typing.Any) -> None:
     """
