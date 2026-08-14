@@ -3,6 +3,7 @@
 import datetime
 import json
 import typing
+from difflib import get_close_matches
 
 import aiosqlite
 
@@ -17,6 +18,7 @@ __all__ = [
     "random_term",
     "iter_term_urls",
     "iter_topics",
+    "fuzzy_match_topics",
     "count",
 ]
 
@@ -149,12 +151,85 @@ def _to_fts_query(query: str) -> str:
     return " AND ".join(f'"{token}"*' for token in tokens)
 
 
+def fuzzy_match_topics(
+    topics: typing.Mapping[str, typing.Any] | typing.Iterable[str],
+    topic: str,
+    *,
+    cutoff: float = 0.6,
+) -> str:
+    """
+    Resolve a user-supplied topic name to its closest match(es) among locally stored topics.
+
+    Same difflib-based approach as `slb_glossary.topics.get_topic_match`
+    uses for the live glossary's topic list, applied to whatever's actually
+    been synced/imported into the local database instead.
+
+    :param topics: Known local topic names, e.g. `iter_topics(db)`'s
+        return value (or any iterable of topic name strings).
+    :param topic: One topic name, or several comma-separated, e.g.
+        `"Geophysic,Drillng"`. Matching is case-insensitive and tolerant of
+        minor misspellings.
+    :param cutoff: Minimum similarity ratio (0-1, per `difflib.get_close_matches`)
+        for a candidate to count as a match. Lower values match more loosely.
+    :return: The resolved topic name(s), comma-separated, in their
+        originally stored casing. A part of `topic` with no close match is
+        dropped silently. Returns `""` if `topic` is empty, `topics` is
+        empty, or nothing in `topic` matched.
+    """
+    if not topic:
+        return ""
+
+    lowered_to_original = {name.lower(): name for name in topics}
+    if not lowered_to_original:
+        return ""
+    available = list(lowered_to_original)
+
+    resolved: list[str] = []
+    for raw_part in topic.split(","):
+        candidate = raw_part.strip().lower()
+        if not candidate:
+            continue
+        if candidate in lowered_to_original:
+            resolved.append(lowered_to_original[candidate])
+            continue
+        matches = get_close_matches(candidate, available, n=1, cutoff=cutoff)
+        if matches:
+            resolved.append(lowered_to_original[matches[0]])
+
+    # dict.fromkeys dedupes while preserving order (e.g. two input parts
+    # both fuzzy-matching the same stored topic).
+    return ",".join(dict.fromkeys(resolved))
+
+
+async def _resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | None:
+    """
+    Resolve a caller-supplied topic filter, optionally fuzzily, against the local database.
+
+    :param db: The local database to read stored topic names from, only
+        queried when `fuzzy` is `True`.
+    :param topic: Raw topic filter as given by the caller (comma-separated
+        for several topics), or `None`/empty for no filter.
+    :param fuzzy: If `True`, resolve `topic` against `iter_topics(db)` via
+        `fuzzy_match_topics` instead of using it as-is.
+    :return: The topic filter to apply, or `None`/`""` if there's nothing
+        to filter by - including when `fuzzy` is `True` and no locally
+        stored topic matched.
+    """
+    if not topic:
+        return None
+    if not fuzzy:
+        return topic
+    topic_counts = await iter_topics(db)
+    return fuzzy_match_topics(topic_counts, topic) or None
+
+
 async def search(
     db: Database,
     query: str,
     *,
     topic: str | None = None,
     limit: int | None = 20,
+    fuzzy: bool = False,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Full-text search the local database for `query`, best match first.
@@ -166,8 +241,12 @@ async def search(
 
     :param db: The local database to search.
     :param query: Free-text query, matched against term, definition, and topic.
-    :param topic: Restrict results to this topic (case-insensitive exact match).
+    :param topic: Restrict results to this topic, or several
+        comma-separated topics (case-insensitive exact match by default).
     :param limit: Maximum number of results. `None` for unlimited.
+    :param fuzzy: If `True`, tolerate minor misspellings/partial names in
+        `topic` by resolving it against locally stored topic names first -
+        see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
     :yield: Matching `SearchResult`s, best match first.
     """
     sql = """
@@ -176,9 +255,15 @@ async def search(
         WHERE terms_fts MATCH ?
     """
     params: list[typing.Any] = [_to_fts_query(query)]
-    if topic:
-        sql += " AND terms.topic = ? COLLATE NOCASE"
-        params.append(topic)
+
+    resolved_topic = await _resolve_topic(db, topic, fuzzy)
+    if resolved_topic:
+        topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
+        if topics:
+            placeholders = ", ".join("?" for _ in topics)
+            sql += f" AND terms.topic COLLATE NOCASE IN ({placeholders})"
+            params.extend(topics)
+
     sql += " ORDER BY bm25(terms_fts)"
     if limit:
         sql += " LIMIT ?"
@@ -190,22 +275,30 @@ async def search(
 
 
 async def get_terms_on(
-    db: Database, topic: str, *, limit: int | None = None
+    db: Database, topic: str, *, limit: int | None = None, fuzzy: bool = False
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield every locally stored term filed under `topic`.
 
-    Unlike `slb_glossary.engine.get_terms_on`, `topic` must match a topic
-    name already stored in the local database exactly (case-insensitively)
-    - there's no fuzzy topic matching here, since that requires the live
-    session's full topic list.
+    By default, `topic` must match a topic name already stored in the
+    local database exactly (case-insensitively). Pass `fuzzy=True` to
+    tolerate minor misspellings/partial names instead, resolved against
+    whatever topics are actually present locally (there's no access to the
+    live site's full topic list here, unlike `slb_glossary.engine.get_terms_on`).
 
     :param db: The local database to read from.
     :param topic: Topic name, or several comma-separated topic names.
     :param limit: Maximum number of results. `None` for unlimited.
+    :param fuzzy: If `True`, resolve `topic` against locally stored topic
+        names first - see `fuzzy_match_topics` - instead of requiring an
+        exact (case-insensitive) match.
     :yield: `SearchResult`s filed under `topic`, ordered by term name.
     """
-    topics = [name.strip() for name in topic.split(",") if name.strip()]
+    resolved_topic = await _resolve_topic(db, topic, fuzzy)
+    if not resolved_topic:
+        return
+
+    topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
     if not topics:
         return
 
@@ -238,20 +331,27 @@ async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
     return _row_to_result(row) if row is not None else None
 
 
-async def random_term(db: Database, *, topic: str | None = None) -> SearchResult | None:
+async def random_term(
+    db: Database, *, topic: str | None = None, fuzzy: bool = False
+) -> SearchResult | None:
     """
     Return one randomly chosen locally stored term, optionally restricted to a topic.
 
     :param db: The local database to read from.
     :param topic: Restrict the pick to this topic, or several
         comma-separated topics. `None` picks from every locally stored term.
+    :param fuzzy: If `True`, tolerate minor misspellings/partial names in
+        `topic` by resolving it against locally stored topic names first -
+        see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
     :return: A random `SearchResult`, or `None` if the local database (or
         the given topic within it) has no terms stored yet.
     """
     sql = "SELECT * FROM terms"
     params: list[typing.Any] = []
-    if topic:
-        topics = [name.strip() for name in topic.split(",") if name.strip()]
+
+    resolved_topic = await _resolve_topic(db, topic, fuzzy)
+    if resolved_topic:
+        topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
         if topics:
             placeholders = ", ".join("?" for _ in topics)
             sql += f" WHERE topic COLLATE NOCASE IN ({placeholders})"
@@ -270,6 +370,7 @@ async def iter_term_urls(
     topic: str | None = None,
     start_letter: str | None = None,
     limit: int | None = None,
+    fuzzy: bool = False,
 ) -> typing.AsyncIterator[str]:
     """
     Yield locally stored term URLs matching the given filters.
@@ -280,20 +381,24 @@ async def iter_term_urls(
     :param topic: Restrict to this topic, or several comma-separated topics.
     :param start_letter: Restrict to terms starting with this letter.
     :param limit: Maximum number of URLs. `None` for unlimited.
+    :param fuzzy: If `True`, tolerate minor misspellings/partial names in
+        `topic` by resolving it against locally stored topic names first -
+        see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
     :yield: Matching term URLs.
     """
     if query:
-        async for result in search(db, query, topic=topic, limit=limit):
+        async for result in search(db, query, topic=topic, limit=limit, fuzzy=fuzzy):
             if start_letter and not (result.term or "").lower().startswith(start_letter.lower()):
                 continue
             if url := result.url:
                 yield url
         return
 
+    resolved_topic = await _resolve_topic(db, topic, fuzzy)
     sql = "SELECT url FROM terms WHERE 1=1"
     params: list[typing.Any] = []
-    if topic:
-        topics = [name.strip() for name in topic.split(",") if name.strip()]
+    if resolved_topic:
+        topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
         if topics:
             placeholders = ", ".join("?" for _ in topics)
             sql += f" AND topic COLLATE NOCASE IN ({placeholders})"
