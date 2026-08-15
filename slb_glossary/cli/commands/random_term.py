@@ -83,10 +83,7 @@ def random_term(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
     topic = params["topic"]
     count = max(params["count"] or 1, 1)
 
-    async def _run() -> int:
-        picks: list[SearchResult] = []
-        sources_seen: set[str] = set()
-
+    async def _stream() -> typing.AsyncIterator[SearchResult]:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             for _ in range(count):
                 lookup = await resolve_lookup(
@@ -106,20 +103,12 @@ def random_term(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
                     ),
                 )
                 if lookup.value is not None:
-                    picks.append(lookup.value)
                     sources_seen.add(lookup.source.value)
+                    yield lookup.value
 
-        if not params["quiet"] and sources_seen:
-            click.secho(
-                f"(source: {', '.join(sorted(sources_seen))})", fg="bright_black", err=True
-            )
-
-        async def _records() -> typing.AsyncIterator[SearchResult]:
-            for pick in picks:
-                yield pick
-
+    async def _run() -> int:
         return await output_results(
-            _records(),
+            _stream(),
             save_paths=params["save_paths"],
             format=params["format"],
             quiet=params["quiet"],
@@ -127,6 +116,9 @@ def random_term(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
             show_related=params["show_related"],
         )
 
+    sources_seen: set[str] = set()
     count_printed = run_async(_run())
+    if not params["quiet"] and sources_seen:
+        click.secho(f"(source: {', '.join(sorted(sources_seen))})", fg="bright_black", err=True)
     if not params["quiet"] and count_printed == 0:
         click.echo("No terms available to pick from.", err=True)

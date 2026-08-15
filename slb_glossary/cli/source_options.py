@@ -34,6 +34,7 @@ __all__ = [
     "open_configured_db",
     "live_session",
     "resolve_lookup",
+    "resolve_stream",
     "get_loaded_config",
 ]
 
@@ -259,3 +260,66 @@ async def resolve_lookup(
 
     async with live_session(ctx, params) as session:
         return await live_call(session)
+
+
+async def resolve_stream(
+    ctx: click.Context,
+    params: typing.Mapping[str, typing.Any],
+    db: Database | None,
+    *,
+    source: Source,
+    local_call: typing.Callable[[Database], typing.AsyncIterator[T]],
+    live_call: typing.Callable[[SearchSession], typing.AsyncIterator[T]],
+) -> typing.AsyncIterator[T]:
+    """
+    Stream a `slb_glossary.query`-style lookup, opening a live session only if actually needed.
+
+    The streaming counterpart to `resolve_lookup`, for commands built on a
+    `slb_glossary.query` function that yields several results (`search`,
+    `get_terms_on`, `get_terms_urls`) rather than a single `TermLookup`.
+
+    For `Source.INTELLIGENT`, `local_call` is fully drained first (no
+    browser launched); a live session is opened via `live_call` only if
+    that came back with nothing at all.
+
+    :param ctx: The current click context.
+    :param params: The command's parsed parameters (for `live_session`).
+    :param db: An already-open local `Database`, or `None` if local storage
+        is disabled for this run.
+    :param source: The resolved `Source` to honor (see `resolve_source`).
+    :param local_call: Async-generator-returning callable given `db`, e.g.
+        `lambda db: query.search(term, db=db, source=Source.LOCAL)`.
+    :param live_call: Async-generator-returning callable given an opened
+        `SearchSession`, e.g. `lambda s: query.search(term, db=db,
+        session=s, source=Source.LIVE, persist=cache_results)`.
+    :yield: Whatever `local_call`/`live_call` yield.
+    :raises click.UsageError: If `source` is `Source.LOCAL` but `db` is `None`.
+    """
+    if source is Source.LOCAL:
+        if db is None:
+            raise click.UsageError(
+                "--local needs a local database, but local storage is disabled "
+                "for this run (see `slb-glossary config get local.enabled`) "
+                "and no --db-path was given."
+            )
+        async for item in local_call(db):
+            yield item
+        return
+
+    if source is Source.LIVE:
+        async with live_session(ctx, params) as session:
+            async for item in live_call(session):
+                yield item
+        return
+
+    # Source.INTELLIGENT: a local hit never opens a browser.
+    if db is not None:
+        local_items = [item async for item in local_call(db)]
+        if local_items:
+            for item in local_items:
+                yield item
+            return
+
+    async with live_session(ctx, params) as session:
+        async for item in live_call(session):
+            yield item

@@ -4,12 +4,22 @@ import typing
 
 import click
 
+from slb_glossary import query as glossary_query
 from slb_glossary.browser import search_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
+from slb_glossary.cli.source_options import (
+    get_loaded_config,
+    local_db_option,
+    open_configured_db,
+    resolve_source,
+    resolve_stream,
+    source_options,
+)
 from slb_glossary.cli.tui import launch_tui
+from slb_glossary.query import Source
 from slb_glossary.topics import refresh_topics
 
 __all__ = ["topics"]
@@ -48,6 +58,8 @@ async def iter_topic_records(
 
 
 @topics.command("list")
+@source_options
+@local_db_option
 @config_option
 @session_options
 @output_options
@@ -63,19 +75,47 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
     """
     List every topic (discipline) the glossary is organized under, with term counts.
 
+    Reads from the local database, the live glossary, or both, depending on
+    --local/--live/--intelligent (--intelligent is the default): with a
+    local database available, its topics are listed first (only the topics
+    actually cached so far) and the live site is only visited if the local
+    database has none.
+
     \b
     Examples:
       slb-glossary topics list
       slb-glossary topics list --save topics.csv --quiet
+      slb-glossary topics list --local
     """
     if use_tui:
         launch_tui(ctx, command_path=("topics", "list"))
         return
 
+    source = resolve_source(params)
+    config = get_loaded_config(params)
+
+    async def _local_records(db: typing.Any) -> typing.AsyncIterator[TopicRecord]:
+        topics = await glossary_query.get_topics(db=db, source=Source.LOCAL)
+        async for record in iter_topic_records(topics):
+            yield record
+
+    async def _live_records(session: typing.Any) -> typing.AsyncIterator[TopicRecord]:
+        topics = await glossary_query.get_topics(session=session, source=Source.LIVE)
+        async for record in iter_topic_records(topics):
+            yield record
+
     async def _run() -> int:
-        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
+        async with open_configured_db(config, db_path_override=params["db_path"]) as db:
+            records = resolve_stream(
+                ctx,
+                params,
+                db,
+                source=source,
+                local_call=_local_records,
+                live_call=_live_records,
+            )
             return await output_results(
-                iter_topic_records(session.topics),
+                records,
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
@@ -93,12 +133,6 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
 
 
 @topics.command("refresh")
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Don't print topics to the console (useful with --save).",
-)
 @config_option
 @session_options
 @output_options

@@ -58,6 +58,8 @@ __all__ = [
     "TermLookup",
     "search",
     "get_terms_on",
+    "get_terms_urls",
+    "get_topics",
     "get_term",
     "related_terms",
     "get_random_term",
@@ -311,6 +313,130 @@ async def get_terms_on(
         live_results.append(result)
         yield result
     await _maybe_persist(db, live_results, persist=persist, language=session.language.value)
+
+
+async def get_terms_urls(
+    *,
+    db: Database | None = None,
+    session: SearchSession | None = None,
+    source: Source = Source.INTELLIGENT,
+    query: str | None = None,
+    topic: str | None = None,
+    start_letter: str | None = None,
+    limit: int | None = None,
+    fuzzy: bool = False,
+) -> typing.AsyncIterator[str]:
+    """
+    Yield term detail-page URLs matching the given filters, reading from `db`/`session` according to `source`.
+
+    Lighter-weight than `search`/`get_terms_on`: only the URLs themselves
+    are returned, no definitions are fetched or parsed. Same local-first,
+    live-fallback behavior as `search` for `Source.INTELLIGENT`.
+
+    :param db: An open local `Database`.
+    :param session: An open live `SearchSession`.
+    :param source: Which source(s) to read from. See the module docstring.
+    :param query: Restrict to a free-text query match.
+    :param topic: Restrict to this topic, or several comma-separated topics.
+    :param start_letter: Restrict to terms starting with this letter.
+    :param limit: Maximum number of URLs to yield. `None` for unlimited.
+    :param fuzzy: If `True`, any local-database read tolerates minor
+        misspellings/partial names in `topic` - see
+        `slb_glossary.local.fuzzy_match_topics`. Live reads already
+        fuzzy-match topics unconditionally, so this has no effect on them.
+    :yield: Matching term detail-page URLs.
+    :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
+        or the requested `source` needs one that wasn't given.
+    """
+    resolved = _resolve_source(db, session, source)
+
+    if resolved is Source.LOCAL:
+        assert db is not None
+        async for url in local_api.get_terms_urls(
+            db, query=query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+        ):
+            yield url
+        return
+
+    if resolved is Source.LIVE or source is not Source.INTELLIGENT:
+        assert session is not None
+        async for url in live.get_terms_urls(
+            session, query=query, topic=topic, start_letter=start_letter, limit=limit
+        ):
+            yield url
+        return
+
+    # source is Source.INTELLIGENT, resolved started as LOCAL: try it, then fall back.
+    assert db is not None
+    local_urls = [
+        url
+        async for url in local_api.get_terms_urls(
+            db, query=query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+        )
+    ]
+    if local_urls:
+        logger.debug("Serving get_terms_urls(...) from the local database")
+        for url in local_urls:
+            yield url
+        return
+
+    if session is None:
+        logger.debug(
+            "Local database had nothing for get_terms_urls(...); no session to fall back to"
+        )
+        return
+
+    logger.debug(
+        "Local database had nothing for get_terms_urls(...); falling back to the live glossary"
+    )
+    async for url in live.get_terms_urls(
+        session, query=query, topic=topic, start_letter=start_letter, limit=limit
+    ):
+        yield url
+
+
+async def get_topics(
+    *,
+    db: Database | None = None,
+    session: SearchSession | None = None,
+    source: Source = Source.INTELLIGENT,
+) -> dict[str, int]:
+    """
+    Return `{topic: term_count}`, reading from `db`/`session` according to `source`.
+
+    Unlike `search`/`get_terms_on`, a live read here never touches the
+    network by itself: `session.topics` is already loaded when the session
+    was opened, so this just returns it directly.
+
+    :param db: An open local `Database`. Its topic counts only reflect
+        terms that have actually been cached locally, which may be a
+        subset of the live glossary's full topic list.
+    :param session: An open live `SearchSession`.
+    :param source: Which source(s) to read from. `Source.INTELLIGENT`
+        prefers the local database when it has at least one topic, falling
+        back to `session.topics` otherwise. See the module docstring.
+    :return: Topic name to term count.
+    :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
+        or the requested `source` needs one that wasn't given.
+    """
+    resolved = _resolve_source(db, session, source)
+
+    if resolved is Source.LOCAL:
+        assert db is not None
+        return await local_api.get_topics(db)
+
+    if resolved is Source.LIVE or source is not Source.INTELLIGENT:
+        assert session is not None
+        return dict(session.topics)
+
+    assert db is not None
+    local_topics = await local_api.get_topics(db)
+    if local_topics:
+        return local_topics
+
+    if session is None:
+        return {}
+    return dict(session.topics)
 
 
 async def get_term(

@@ -4,13 +4,21 @@ import typing
 
 import click
 
-from slb_glossary.browser import search_session
+from slb_glossary import query as glossary_query
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
-from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
+from slb_glossary.cli.session_options import config_option, session_options
+from slb_glossary.cli.source_options import (
+    get_loaded_config,
+    local_db_option,
+    open_configured_db,
+    resolve_source,
+    resolve_stream,
+    source_options,
+)
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.live import search as run_search
+from slb_glossary.query import Source
 
 __all__ = ["search"]
 
@@ -91,6 +99,15 @@ def _validate_query(
     show_default=True,
     help="Number of concurrent term lookups to perform. Higher values may be faster, but use with discretion as we do not want to overload the glossary server.",
 )
+@click.option(
+    "--fuzzy",
+    is_flag=True,
+    help="Tolerate minor misspellings/partial names in --topic when reading "
+    "the local database, matched against topics actually stored locally, "
+    "instead of requiring an exact (case-insensitive) match.",
+)
+@source_options
+@local_db_option
 @config_option
 @session_options
 @output_options
@@ -110,12 +127,20 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     under), so more results than --limit may be printed; --limit bounds the
     number of terms looked up, not the number of definitions returned.
 
+    Reads from the local database, the live glossary, or both, depending on
+    --local/--live/--intelligent (--intelligent is the default): with a
+    local database available, cached results are used first and the live
+    site is only visited if the local database has nothing for QUERY.
+
     \b
     Examples:
       slb-glossary search porosity
       slb-glossary search "drilling fluid" --topic Drilling --limit 10
       slb-glossary search viscosity --save results.csv --quiet
       slb-glossary search viscosity --show-related --show-image
+      slb-glossary search porosity --local
+      slb-glossary search porosity --local --fuzzy --topic Petrophysic
+      slb-glossary search porosity --live --cache
       slb-glossary search porosity --config ~/my-config.toml
       slb-glossary search porosity --config none --headed
     """
@@ -125,16 +150,35 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
 
     limit = params["limit"] or None
     concurrency = params["concurrency"] or 1
+    source = resolve_source(params)
+    config = get_loaded_config(params)
 
     async def _run() -> int:
-        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
-            results = run_search(
-                session,
-                query,
-                topic=params["topic"],
-                start_letter=params["start_letter"],
-                limit=limit,
-                concurrency=concurrency,
+        async with open_configured_db(config, db_path_override=params["db_path"]) as db:
+            results = resolve_stream(
+                ctx,
+                params,
+                db,
+                source=source,
+                local_call=lambda db: glossary_query.search(
+                    query,
+                    db=db,
+                    source=Source.LOCAL,
+                    topic=params["topic"],
+                    limit=limit,
+                    fuzzy=params["fuzzy"],
+                ),
+                live_call=lambda session: glossary_query.search(
+                    query,
+                    db=db,
+                    session=session,
+                    source=Source.LIVE,
+                    topic=params["topic"],
+                    start_letter=params["start_letter"],
+                    limit=limit,
+                    concurrency=concurrency,
+                    persist=params["cache_results"],
+                ),
             )
             return await output_results(
                 results,

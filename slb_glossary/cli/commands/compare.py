@@ -78,11 +78,7 @@ def compare(
     source = resolve_source(params)
     config = get_loaded_config(params)
 
-    async def _run() -> int:
-        found: list[SearchResult] = []
-        missing: list[str] = []
-        sources_seen: set[str] = set()
-
+    async def _stream() -> typing.AsyncIterator[SearchResult]:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             for term in terms:
                 lookup = await resolve_lookup(
@@ -102,25 +98,14 @@ def compare(
                     ),
                 )
                 if lookup.value is not None:
-                    found.append(lookup.value)
                     sources_seen.add(lookup.source.value)
-                else:
-                    missing.append(term)
+                    yield lookup.value
+                elif not params["quiet"]:
+                    click.secho(f"Not found: {term!r}", fg="yellow", err=True)
 
-        if not params["quiet"]:
-            if sources_seen:
-                click.secho(
-                    f"(source: {', '.join(sorted(sources_seen))})", fg="bright_black", err=True
-                )
-            for term in missing:
-                click.secho(f"Not found: {term!r}", fg="yellow", err=True)
-
-        async def _records() -> typing.AsyncIterator[SearchResult]:
-            for result in found:
-                yield result
-
+    async def _run() -> int:
         return await output_results(
-            _records(),
+            _stream(),
             save_paths=params["save_paths"],
             format=params["format"],
             quiet=params["quiet"],
@@ -128,6 +113,9 @@ def compare(
             show_related=params["show_related"],
         )
 
+    sources_seen: set[str] = set()
     count = run_async(_run())
+    if not params["quiet"] and sources_seen:
+        click.secho(f"(source: {', '.join(sorted(sources_seen))})", fg="bright_black", err=True)
     if not params["quiet"] and count == 0:
         click.echo("None of the given terms were found.", err=True)
