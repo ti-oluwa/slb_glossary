@@ -213,14 +213,15 @@ async def _resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | 
         `fuzzy_match_topics` instead of using it as-is.
     :return: The topic filter to apply, or `None`/`""` if there's nothing
         to filter by - including when `fuzzy` is `True` and no locally
-        stored topic matched.
+        stored topic came close enough to match.
     """
     if not topic:
         return None
     if not fuzzy:
         return topic
-    topic_counts = await get_topics(db)
-    return fuzzy_match_topics(topic_counts, topic) or None
+
+    stored_topics = await get_topics(db)
+    return fuzzy_match_topics(stored_topics, topic) or None
 
 
 async def search(
@@ -270,8 +271,9 @@ async def search(
         params.append(limit)
 
     async with db.connection.execute(sql, params) as cursor:
-        async for row in cursor:
-            yield _row_to_result(row)
+        rows = await cursor.fetchall()
+    for row in rows:
+        yield _row_to_result(row)
 
 
 async def get_terms_on(
@@ -310,8 +312,9 @@ async def get_terms_on(
         params.append(limit)
 
     async with db.connection.execute(sql, params) as cursor:
-        async for row in cursor:
-            yield _row_to_result(row)
+        rows = await cursor.fetchall()
+    for row in rows:
+        yield _row_to_result(row)
 
 
 async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
@@ -412,9 +415,10 @@ async def get_terms_urls(
         params.append(limit)
 
     async with db.connection.execute(sql, params) as cursor:
-        async for row in cursor:
-            if url := row["url"]:
-                yield url
+        rows = await cursor.fetchall()
+    for row in rows:
+        if url := row["url"]:
+            yield url
 
 
 async def get_topics(db: Database) -> dict[str, int]:

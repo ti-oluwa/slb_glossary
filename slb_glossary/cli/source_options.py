@@ -309,7 +309,13 @@ async def resolve_stream(
     if source is Source.LIVE:
         async with live_session(ctx, params) as session:
             async for item in live_call(session):
-                yield item
+                # This intentionally holds `live_session` open across the yield: the
+                # whole point is to stream results as the live fetch produces them,
+                # rather than buffering the entire live fetch before yielding
+                # anything. Safe because every caller consumes `resolve_stream`
+                # through `output_results`, which wraps it in `contextlib.aclosing`
+                # so the session is still closed promptly on an early break/cancel.
+                yield item  # noqa: ASYNC119
         return
 
     # Source.INTELLIGENT: a local hit never opens a browser.
@@ -322,4 +328,4 @@ async def resolve_stream(
 
     async with live_session(ctx, params) as session:
         async for item in live_call(session):
-            yield item
+            yield item  # noqa: ASYNC119 - see the Source.LIVE branch above.

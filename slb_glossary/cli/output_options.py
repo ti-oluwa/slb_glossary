@@ -1,5 +1,6 @@
 """Shared output options for CLI commands that display or persist results."""
 
+import contextlib
 import json
 import pathlib
 import typing
@@ -108,6 +109,37 @@ async def output_results(
         `format`) resolves to a file format with no registered writer.
     :raises slb_glossary.store.WriterError: If writing to a save path fails.
     """
+    async with contextlib.aclosing(results) as results:
+        return await _collect_and_output(
+            results,
+            save_paths=save_paths,
+            format=format,
+            quiet=quiet,
+            json_output=json_output,
+            print_limit=print_limit,
+            show_url=show_url,
+            show_topic=show_topic,
+            show_grammar=show_grammar,
+            show_image=show_image,
+            show_related=show_related,
+        )
+
+
+async def _collect_and_output(
+    results: typing.AsyncIterator[RecordLike],
+    *,
+    save_paths: typing.Sequence[pathlib.Path],
+    format: str | None,
+    quiet: bool,
+    json_output: bool,
+    print_limit: int | None,
+    show_url: bool,
+    show_topic: bool,
+    show_grammar: bool,
+    show_image: bool,
+    show_related: bool,
+) -> int:
+    """The body of `output_results`, run inside its `contextlib.aclosing(results)` block."""
     collected: list[RecordLike] = []
     count = 0
     was_collected = False
