@@ -98,13 +98,13 @@ async def sync_query(
 
     :param db: The local database to write to.
     :param session: An open `BrowserSession` to fetch from.
-    :param query: Free-text query, as for `slb_glossary.engine.search`.
+    :param query: Free-text query, as for `slb_glossary.live.search`.
     :param topic: Restrict the fetch to this topic, or several
         comma-separated topics.
     :param start_letter: Restrict the fetch to terms starting with this letter.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches. Keep this low; see
-        `slb_glossary.engine.get_results_from_urls`'s own note on server load.
+        `slb_glossary.live.get_results_from_urls`'s own note on server load.
     :return: A summary of the sync.
     """
     results = live_search(

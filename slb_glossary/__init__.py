@@ -10,8 +10,7 @@ Visit <https://www.slb.com/en/terms-of-service> for the terms of use.
 This package can optionally cache glossary data locally (see `slb_glossary.local`)
 so repeat lookups don't have to re-visit the site. That local copy is still SLB's
 data: anyone who enables local storage is solely responsible for keeping its
-retention, refresh, and deletion in compliance with SLB's terms of use linked
-above. See `slb_glossary.paths` and `slb_glossary.local` for details.
+retention, refresh, and deletion in compliance with SLB's terms of use linked above.
 
 @Author: Daniel T. Afolayan (ti-oluwa)
 """

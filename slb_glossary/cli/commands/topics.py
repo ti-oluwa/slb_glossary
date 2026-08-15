@@ -5,7 +5,7 @@ import typing
 import click
 
 from slb_glossary import query as glossary_query
-from slb_glossary.browser import session
+from slb_glossary.browser import session as browser_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
@@ -161,7 +161,7 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
         return
 
     async def _run() -> int:
-        async with session(**resolve_session_kwargs(ctx, params)) as session:
+        async with browser_session(**resolve_session_kwargs(ctx, params)) as session:
             session = await refresh_topics(session)
             return await output_results(
                 iter_topic_records(session.topics),

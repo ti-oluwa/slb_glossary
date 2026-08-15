@@ -1,4 +1,4 @@
-"""API for launching and tearing down browser sessions used to search the glossary."""
+"""API for launching and tearing down live browser sessions used to search the glossary."""
 
 import contextlib
 import enum

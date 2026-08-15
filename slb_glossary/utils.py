@@ -39,7 +39,7 @@ def _format_cell(value: typing.Any, *, max_related_shown: int = 6) -> str:
     """
     Render an arbitrary record field value as printable table cell text.
 
-    Handles the shapes `slb_glossary` records actually carry: `None`, a
+    Handles the shapes records actually carry: `None`, a
     single `RelatedTerm`-like `NamedTuple`, and lists/tuples of those (e.g.
     `SearchResult.related`) - trimming long lists rather than flooding the
     cell, since this is for a terminal table, not a file export.
@@ -162,9 +162,7 @@ def _make_table_and_formatter(
     `slb_glossary`'s CLI prints several record shapes through this same
     function (search results, but also plain URL/topic listings), so this
     dispatches on the *first* item seen rather than assuming every caller
-    is printing `SearchResult`s - the previous hardcoded assumption is
-    exactly what made printing e.g. a topic listing raise `AttributeError:
-    'TopicRecord' object has no attribute 'definition'`.
+    is printing `SearchResult`s.
 
     :param sample: The first record to be printed, used only to pick a layout.
     :return: A `(table, formatter)` pair; call `formatter(record)` for

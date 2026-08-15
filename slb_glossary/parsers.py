@@ -203,8 +203,10 @@ class TermParagraph(typing.NamedTuple):
     """The paragraph's trimmed text content."""
 
     links: tuple[RelatedTerm, ...]
-    """Terms linked from this paragraph, e.g. in a "See related terms:" list.
-    Empty if the paragraph has no links."""
+    """
+    Terms linked from this paragraph, e.g. in a "See related terms:" list.
+    Empty if the paragraph has no links.
+    """
 
 
 async def get_term_detail_blocks(page: Page) -> list[list[TermParagraph]]:

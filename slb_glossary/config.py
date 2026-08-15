@@ -3,7 +3,7 @@ User-configurable settings, loadable from JSON/TOML/YAML.
 
 **Disclaimer**: this module only manages configuration; any local data it
 points `slb_glossary.local` at is still subject to the data-lifecycle
-notice in `slb_glossary.paths` and the package docstring.
+notice in the package docstring.
 """
 
 import dataclasses

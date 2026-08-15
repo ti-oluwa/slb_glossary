@@ -139,7 +139,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
       slb-glossary search viscosity --save results.csv --quiet
       slb-glossary search viscosity --show-related --show-image
       slb-glossary search porosity --local
-      slb-glossary search porosity --local --fuzzy --topic Petrophysic
+      slb-glossary search porosity --local --fuzzy --topic Petrophysics
       slb-glossary search porosity --live --cache
       slb-glossary search porosity --config ~/my-config.toml
       slb-glossary search porosity --config none --headed

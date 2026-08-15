@@ -82,7 +82,7 @@ class BrowserSession:
 
     Obtain one with `slb_glossary.browser.open_session`, `session`,
     or `BrowserSession.from_config`, then pass it to the search functions in
-    `slb_glossary.engine`.
+    `slb_glossary.live`.
 
     A session is single-page and not safe to use concurrently from multiple
     coroutines at once; open one session per concurrent task if you need parallelism.

@@ -1,13 +1,8 @@
 """
-Source-aware query API: one set of functions that can read the local
+Source-aware query API containing a set of functions that can read the local
 database, the live glossary, or both, without the caller having to
 hand-roll the "check local, fall back live, maybe cache what came back"
 dance every time.
-
-This is an intermediary layer `slb_glossary.local` and `slb_glossary.engine`
-do not provide on their own: `slb_glossary.local.api` only ever reads the
-local database, and `slb_glossary.engine` only ever talks to the live site.
-Everything here picks between (or combines) the two based on a `Source`.
 
 ```python
 import slb_glossary as slb
@@ -106,9 +101,11 @@ def _require(db: Database | None, session: BrowserSession | None, source: Source
             "`slb_glossary.query` needs at least one of `db` or `session` to query anything."
         )
     if source is Source.LOCAL and db is None:
-        raise QueryError("`source=Source.LOCAL` requires `db` (a database()/open_db() Database).")
+        raise QueryError(
+            "`source=Source.LOCAL` requires `db` (a `database()`/`open_db()` Database)."
+        )
     if source is Source.LIVE and session is None:
-        raise QueryError("`source=Source.LIVE` requires `session` (an open BrowserSession).")
+        raise QueryError("`source=Source.LIVE` requires `session` (an open `BrowserSession`).")
 
 
 def _resolve_source(db: Database | None, session: BrowserSession | None, source: Source) -> Source:
@@ -164,7 +161,7 @@ async def search(
     :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of terms to look up. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches, only relevant when a
-        live fetch happens. See `slb_glossary.engine.search`.
+        live fetch happens. See `slb_glossary.live.search`.
     :param persist: If `True`, and a live fetch happens, write its results
         into `db` (if given) so the next matching call can be served locally.
     :param fuzzy: If `True`, any local-database read (a `Source.LOCAL` read,
@@ -325,7 +322,8 @@ async def get_terms_urls(
     fuzzy: bool = False,
 ) -> typing.AsyncIterator[str]:
     """
-    Yield term detail-page URLs matching the given filters, reading from `db`/`session` according to `source`.
+    Yield term detail-page URLs matching the given filters, reading from
+    `db`/`session` according to `source`.
 
     Lighter-weight than `search`/`get_terms_on`: only the URLs themselves
     are returned, no definitions are fetched or parsed. Same local-first,
@@ -372,19 +370,19 @@ async def get_terms_urls(
         )
     ]
     if local_urls:
-        logger.debug("Serving get_terms_urls(...) from the local database")
+        logger.debug("Serving `get_terms_urls(...)` from the local database")
         for url in local_urls:
             yield url
         return
 
     if session is None:
         logger.debug(
-            "Local database had nothing for get_terms_urls(...); no session to fall back to"
+            "Local database had nothing for `get_terms_urls(...)`; no session to fall back to"
         )
         return
 
     logger.debug(
-        "Local database had nothing for get_terms_urls(...); falling back to the live glossary"
+        "Local database had nothing for `get_terms_urls(...)`; falling back to the live glossary"
     )
     async for url in live.get_terms_urls(
         session, query=query, topic=topic, start_letter=start_letter, limit=limit
@@ -468,7 +466,10 @@ async def get_term(
         assert session is not None
         result = await _fetch_live_term(session, term_or_url)
         persisted = await _maybe_persist(
-            db, [result] if result else [], persist=persist, language=session.language.value
+            db,
+            results=[result] if result else [],
+            persist=persist,
+            language=session.language.value,
         )
         return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
 
@@ -584,7 +585,10 @@ async def get_random_term(
         assert session is not None
         result = await _fetch_live_get_random_term(session, topic=topic)
         persisted = await _maybe_persist(
-            db, [result] if result else [], persist=persist, language=session.language.value
+            db,
+            results=[result] if result else [],
+            persist=persist,
+            language=session.language.value,
         )
         return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
 

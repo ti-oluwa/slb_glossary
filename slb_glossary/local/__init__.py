@@ -7,7 +7,7 @@ Open one with `open_db`/`database`, fill it from a live `BrowserSession`
 (`sync_topics`/`sync_query`/`sync_topic`/`sync_all`) or from your own
 CSV/JSON/XLSX file (`slb_glossary.local.loaders.load_file`), then query
 it with `search`/`get_terms_on`/`get_term`/`get_terms_urls`/`iter_topics`
-which all have the same shapes `slb_glossary.engine`'s live functions return, so code
+which all have the same shapes `slb_glossary.live`'s live functions return, so code
 written against one works against the other. `flush`/`reset` clear it out
 again when you're done with it.
 

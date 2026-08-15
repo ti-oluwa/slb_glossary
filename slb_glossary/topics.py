@@ -114,6 +114,7 @@ def get_topic_match(topics: typing.Mapping[str, int], topic: str) -> str:
         if candidate in available:
             resolved.append(candidate)
             continue
+
         matches = get_close_matches(candidate, available, n=1, cutoff=0.5)
         if not matches:
             logger.warning("No topic match found for %r", candidate)

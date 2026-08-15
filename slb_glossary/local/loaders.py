@@ -38,7 +38,7 @@ def read_json_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
 def read_xlsx_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
     """Read `path`'s first worksheet into a list of `{header: value}` rows."""
     try:
-        import openpyxl
+        import openpyxl  # type: ignore[import]
     except ImportError as exc:
         raise DatabaseError(
             "Reading a .xlsx file requires the 'openpyxl' package. "

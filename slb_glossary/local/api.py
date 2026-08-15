@@ -85,8 +85,8 @@ async def upsert_results(
 
     :param db: The local database to write to.
     :param results: Results to store - a plain or async iterable of
-        `SearchResult`, e.g. from `slb_glossary.engine.search`,
-        `slb_glossary.engine.get_terms_on`, or `slb_glossary.local.loaders`.
+        `SearchResult`, e.g. from `slb_glossary.live.search`,
+        `slb_glossary.live.get_terms_on`, or `slb_glossary.local.loaders`.
     :param language: Glossary language edition these results were fetched
         in, stored alongside each row.
     :param source: Provenance tag stored alongside each row: `"glossary"`
@@ -236,7 +236,7 @@ async def search(
     Full-text search the local database for `query`, best match first.
 
     Uses SQLite FTS5 with bm25 ranking over each stored term's name,
-    definition, and topic. Unlike `slb_glossary.engine.search`, this never
+    definition, and topic. Unlike `slb_glossary.live.search`, this never
     touches the live glossary site. Results are only as fresh as the
     last `slb_glossary.local.sync` or import.
 
@@ -286,7 +286,7 @@ async def get_terms_on(
     local database exactly (case-insensitively). Pass `fuzzy=True` to
     tolerate minor misspellings/partial names instead, resolved against
     whatever topics are actually present locally (there's no access to the
-    live site's full topic list here, unlike `slb_glossary.engine.get_terms_on`).
+    live site's full topic list here, unlike `slb_glossary.live.get_terms_on`).
 
     :param db: The local database to read from.
     :param topic: Topic name, or several comma-separated topic names.
@@ -406,6 +406,7 @@ async def get_terms_urls(
             placeholders = ", ".join("?" for _ in topics)
             sql += f" AND topic COLLATE NOCASE IN ({placeholders})"
             params.extend(topics)
+
     if start_letter:
         sql += " AND term COLLATE NOCASE LIKE ?"
         params.append(f"{start_letter}%")

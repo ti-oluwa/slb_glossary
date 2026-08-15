@@ -220,7 +220,7 @@ async def write_xlsx(records: Sequence[RecordLike], destination: pathlib.Path) -
         `uv add openpyxl` or `pip install openpyxl`.
     """
     try:
-        import openpyxl
+        import openpyxl  # type: ignore[import]
     except ImportError as exc:
         raise ImportError(
             '"openpyxl" is required to save .xlsx files. '

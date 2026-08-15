@@ -92,7 +92,7 @@ def run_driver(args: typing.Sequence[str]) -> None:
         import patchright  # noqa: F401
     except ImportError as exc:
         raise BrowserInstallError(
-            "patchright is not installed. Install it with `pip install patchright` "
+            "`patchright` is not installed. Install it with `pip install patchright` "
             "or `pip install slb-glossary` (it's a core dependency of the library)."
         ) from exc
 

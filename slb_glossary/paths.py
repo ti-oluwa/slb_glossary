@@ -1,9 +1,8 @@
 """
-Platform-appropriate filesystem locations for slb_glossary's local data.
+Platform-appropriate filesystem locations for the applications's local data.
 
 **Disclaimer**: the SLB Energy Glossary's content and data are
-owned by SLB (see the `slb_glossary` package docstring for the full
-notice). Anything cached locally via the paths in this module; the local
+owned by SLB. Anything cached locally via the paths in this module; the local
 search database (`slb_glossary.local`), its metadata, and the default
 config file (`slb_glossary.config`), is a local copy the user has chosen
 to keep on their own machine. The user is solely responsible for managing
@@ -43,7 +42,8 @@ CONFIG_DIR_ENV_VAR = "SLB_GLOSSARY_CONFIG_DIR"
 
 def get_data_dir(override: str | pathlib.Path | None = None) -> pathlib.Path:
     """
-    Resolve the directory slb_glossary stores local data in, creating it if needed.
+    Resolve the directory the application stores local data in,
+    creating it if needed.
 
     This is where `slb_glossary.local` keeps its SQLite database and
     `metadata.json`. Resolution order: `override` if given, then the
@@ -70,7 +70,8 @@ def get_data_dir(override: str | pathlib.Path | None = None) -> pathlib.Path:
 
 def get_config_dir(override: str | pathlib.Path | None = None) -> pathlib.Path:
     """
-    Resolve the directory slb_glossary looks for a config file in, creating it if needed.
+    Resolve the directory the application looks for a config file in,
+    creating it if needed.
 
     Same resolution order as `get_data_dir`, but for the OS-appropriate
     user *config* directory (e.g. `~/.config/slb-glossary` on Linux).
@@ -91,15 +92,15 @@ def get_config_dir(override: str | pathlib.Path | None = None) -> pathlib.Path:
 
 
 def default_config_path() -> pathlib.Path:
-    """Return the default path slb_glossary looks for a config file at."""
+    """Return the default path the application looks for a config file at."""
     return get_config_dir() / "config.toml"
 
 
 def default_db_path() -> pathlib.Path:
-    """Return the default path slb_glossary stores its local search database at."""
+    """Return the default path the application stores its local search database at."""
     return get_data_dir() / "glossary.db"
 
 
 def default_metadata_path() -> pathlib.Path:
-    """Return the default path slb_glossary stores local database metadata at."""
+    """Return the default path the application stores local database metadata at."""
     return get_data_dir() / "metadata.json"

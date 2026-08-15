@@ -1,4 +1,4 @@
-"""Pure helpers for building glossary search URLs."""
+"""Helpers for building glossary search URLs."""
 
 from urllib.parse import quote
 

@@ -1,5 +1,6 @@
 """`slb-glossary local` - inspect, search, and maintain the local search database directly."""
 
+import json
 import typing
 
 import click
@@ -86,8 +87,6 @@ def stats(**params: typing.Any) -> None:
     total, topics, metadata = run_async(_run())
 
     if params["json_output"]:
-        import json
-
         click.echo(
             json.dumps(
                 {
