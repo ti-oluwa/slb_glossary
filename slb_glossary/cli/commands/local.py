@@ -154,6 +154,9 @@ def local_search(query: str, **params: typing.Any) -> None:
         raise click.BadParameter("Missing search query.")
 
     limit = params["limit"] or None
+    title = f"Local Search Results for {query!r}"
+    if params["topic"]:
+        title += f" (topic: {params['topic']})"
 
     async def _run() -> int:
         config = get_loaded_config(params)
@@ -164,6 +167,7 @@ def local_search(query: str, **params: typing.Any) -> None:
             )
             return await output_results(
                 results,
+                title=title,
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
@@ -205,6 +209,7 @@ def local_get(term_or_url: str, **params: typing.Any) -> None:
 
             return await output_results(
                 _one(),
+                title=f"Local: {term_or_url}",
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
