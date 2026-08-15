@@ -27,3 +27,7 @@ class DatabaseError(GlossaryError):
 
 class QueryError(GlossaryError):
     """Raised when `slb_glossary.query` can't satisfy a lookup with the source(s) it was given."""
+
+
+class LoggingError(GlossaryError):
+    """Raised when a `slb_glossary.logging` sink (e.g. `--log-to`/`--log-sink`) could not be set up."""
