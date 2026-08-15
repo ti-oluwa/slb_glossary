@@ -2,7 +2,9 @@
 
 import contextlib
 import json
+import logging
 import pathlib
+import time
 import typing
 
 import click
@@ -11,6 +13,8 @@ from slb_glossary import store
 from slb_glossary.store import records_to_dicts
 from slb_glossary.store.records import RecordLike
 from slb_glossary.utils import async_print_results
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["output_options", "output_results"]
 
@@ -69,6 +73,7 @@ def output_options(func: F) -> F:
 async def output_results(
     results: typing.AsyncIterable[RecordLike] | typing.AsyncIterator[RecordLike],
     *,
+    title: str | None = None,
     save_paths: typing.Sequence[pathlib.Path],
     format: str | None,
     quiet: bool,
@@ -88,6 +93,11 @@ async def output_results(
     network-bound operation that produced them.
 
     :param results: The async stream of records to consume.
+    :param title: Title shown above the printed table, e.g.
+        `f"Terms under {topic}"`. Passed straight through to
+        `slb_glossary.utils.async_print_results`; ignored when
+        `json_output` is `True` (JSON output has no table to title).
+        Defaults to a generic type-based title - see `print_results`.
     :param save_paths: File paths to save the collected results to. Each
         path's format is inferred from its extension unless `format` is given.
     :param format: File format to use for every path in `save_paths`,
@@ -109,9 +119,11 @@ async def output_results(
         `format`) resolves to a file format with no registered writer.
     :raises slb_glossary.store.WriterError: If writing to a save path fails.
     """
+    started_at = time.monotonic()
     async with contextlib.aclosing(results) as results:  # type: ignore[arg-type]
-        return await _collect_and_output(
+        count = await _collect_and_output(
             results,  # type: ignore[arg-type]
+            title=title,
             save_paths=save_paths,
             format=format,
             quiet=quiet,
@@ -123,11 +135,20 @@ async def output_results(
             show_image=show_image,
             show_related=show_related,
         )
+    elapsed = time.monotonic() - started_at
+    logger.debug(
+        "Output %d result(s) in %.3fs (avg %.3fs/result)",
+        count,
+        elapsed,
+        elapsed / count if count else 0.0,
+    )
+    return count
 
 
 async def _collect_and_output(
     results: typing.AsyncIterator[RecordLike],
     *,
+    title: str | None,
     save_paths: typing.Sequence[pathlib.Path],
     format: str | None,
     quiet: bool,
@@ -187,6 +208,7 @@ async def _collect_and_output(
         else:
             printed_count = await async_print_results(
                 records,
+                title=title,
                 limit=print_limit,
                 show_url=show_url,
                 show_topic=show_topic,
