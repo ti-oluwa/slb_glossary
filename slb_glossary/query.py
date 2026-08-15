@@ -38,6 +38,7 @@ import enum
 import logging
 import random
 import string
+import time
 import typing
 
 from slb_glossary import live
@@ -123,9 +124,14 @@ async def _maybe_persist(
     """Upsert `results` into `db` if `persist` was requested and there's anything to write."""
     if not persist or db is None or not results:
         return False
+    started_at = time.monotonic()
     written = await local_api.upsert_results(db, results, language=language)
     if written:
-        logger.info("Cached %d result(s) fetched live into the local database", written)
+        logger.info(
+            "Cached %d result(s) fetched live into the local database in %.3fs",
+            written,
+            time.monotonic() - started_at,
+        )
     return written > 0
 
 
@@ -174,11 +180,20 @@ async def search(
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
+    started_at = time.monotonic()
     resolved = _resolve_source(db, session, source)
+    count = 0
     if resolved is Source.LOCAL:
         assert db is not None
         async for result in local_api.search(db, query, topic=topic, limit=limit, fuzzy=fuzzy):
+            count += 1
             yield result
+        logger.debug(
+            "query.search(%r, source=LOCAL) yielded %d result(s) in %.3fs",
+            query,
+            count,
+            time.monotonic() - started_at,
+        )
         return
 
     if resolved is Source.LIVE or source is not Source.AUTO:
@@ -195,6 +210,12 @@ async def search(
             results.append(result)
             yield result
         await _maybe_persist(db, results, persist=persist, language=session.language.value)
+        logger.debug(
+            "query.search(%r, source=LIVE) yielded %d result(s) in %.3fs",
+            query,
+            len(results),
+            time.monotonic() - started_at,
+        )
         return
 
     # source is Source.AUTO, resolved started as LOCAL: try it, then fall back.
@@ -210,7 +231,12 @@ async def search(
             if (result.term or "").lower().startswith(start_letter.lower())
         ]
     if local_results:
-        logger.debug("Serving search(%r) from the local database", query)
+        logger.debug(
+            "Serving search(%r) from the local database (%d result(s) in %.3fs)",
+            query,
+            len(local_results),
+            time.monotonic() - started_at,
+        )
         for result in local_results:
             yield result
         return
@@ -236,6 +262,12 @@ async def search(
         live_results.append(result)
         yield result
     await _maybe_persist(db, live_results, persist=persist, language=session.language.value)
+    logger.debug(
+        "query.search(%r, source=AUTO->LIVE) yielded %d result(s) in %.3fs total",
+        query,
+        len(live_results),
+        time.monotonic() - started_at,
+    )
 
 
 async def get_terms_on(
@@ -244,6 +276,7 @@ async def get_terms_on(
     db: Database | None = None,
     session: BrowserSession | None = None,
     source: Source = Source.AUTO,
+    start_letter: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
     persist: bool = False,
@@ -258,6 +291,7 @@ async def get_terms_on(
     :param db: An open local `Database`.
     :param session: An open live `BrowserSession`.
     :param source: Which source(s) to read from. See the module docstring.
+    :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of terms to yield. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches, only relevant when a
         live fetch happens.
@@ -270,30 +304,55 @@ async def get_terms_on(
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
+    started_at = time.monotonic()
     resolved = _resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
-        async for result in local_api.get_terms_on(db, topic, limit=limit, fuzzy=fuzzy):
+        count = 0
+        async for result in local_api.get_terms_on(
+            db, topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+        ):
+            count += 1
             yield result
+        logger.debug(
+            "query.get_terms_on(%r, source=LOCAL) yielded %d result(s) in %.3fs",
+            topic,
+            count,
+            time.monotonic() - started_at,
+        )
         return
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         results: list[SearchResult] = []
         async for result in live.get_terms_on(
-            session, topic, limit=limit, concurrency=concurrency
+            session, topic, start_letter=start_letter, limit=limit, concurrency=concurrency
         ):
             results.append(result)
             yield result
         await _maybe_persist(db, results, persist=persist, language=session.language.value)
+        logger.debug(
+            "query.get_terms_on(%r, source=LIVE) yielded %d result(s) in %.3fs",
+            topic,
+            len(results),
+            time.monotonic() - started_at,
+        )
         return
 
     assert db is not None
     local_results = [
-        result async for result in local_api.get_terms_on(db, topic, limit=limit, fuzzy=fuzzy)
+        result
+        async for result in local_api.get_terms_on(
+            db, topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+        )
     ]
     if local_results:
-        logger.debug("Serving get_terms_on(%r) from the local database", topic)
+        logger.debug(
+            "Serving get_terms_on(%r) from the local database (%d result(s) in %.3fs)",
+            topic,
+            len(local_results),
+            time.monotonic() - started_at,
+        )
         for result in local_results:
             yield result
         return
@@ -305,10 +364,18 @@ async def get_terms_on(
         "Local database had nothing for topic %r; falling back to the live glossary", topic
     )
     live_results: list[SearchResult] = []
-    async for result in live.get_terms_on(session, topic, limit=limit, concurrency=concurrency):
+    async for result in live.get_terms_on(
+        session, topic, start_letter=start_letter, limit=limit, concurrency=concurrency
+    ):
         live_results.append(result)
         yield result
     await _maybe_persist(db, live_results, persist=persist, language=session.language.value)
+    logger.debug(
+        "query.get_terms_on(%r, source=AUTO->LIVE) yielded %d result(s) in %.3fs total",
+        topic,
+        len(live_results),
+        time.monotonic() - started_at,
+    )
 
 
 async def get_terms_urls(
@@ -675,9 +742,17 @@ async def compare(
         raise QueryError("`compare()` needs at least one term to look up.")
 
     _require(db, session, source)
+    started_at = time.monotonic()
     results: dict[str, TermLookup[SearchResult | None]] = {}
     for term in terms:
         results[term] = await get_term(
             term, db=db, session=session, source=source, persist=persist
         )
+    elapsed = time.monotonic() - started_at
+    logger.debug(
+        "compare(%d term(s)) done in %.3fs (avg %.3fs/term)",
+        len(terms),
+        elapsed,
+        elapsed / len(terms),
+    )
     return results
