@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 
 from patchright.async_api import Page
 
@@ -43,6 +44,7 @@ async def fetch_topics(
     :return: A `(topics, size)` pair: a mapping of topic name to term count,
         and the total number of terms in the glossary.
     """
+    started_at = time.monotonic()
     logger.info("Loading glossary topics from %s", base_url)
 
     async def _load_facet_header() -> str:
@@ -51,7 +53,11 @@ async def fetch_topics(
 
     header_text = await retry_func(_load_facet_header, policy=retry, until=bool)
     if not header_text:
-        logger.warning("Topics did not load after %d attempts", retry.attempts)
+        logger.warning(
+            "Topics did not load after %d attempts (%.3fs)",
+            retry.attempts,
+            time.monotonic() - started_at,
+        )
         return {}, 0
 
     await asyncio.sleep(settle_delay)
@@ -59,15 +65,24 @@ async def fetch_topics(
     expand_button = page.locator(FACET_EXPAND_SELECTOR).first
     if await expand_button.count():
         try:
+            expand_started_at = time.monotonic()
             await expand_button.scroll_into_view_if_needed(timeout=5_000)
             await expand_button.click(timeout=5_000)
             await asyncio.sleep(settle_delay)
+            logger.debug(
+                "Expanded full topic list in %.3fs", time.monotonic() - expand_started_at
+            )
         except Exception:
             logger.debug("Could not expand the full topic list", exc_info=True)
 
     topics = await get_facet_topics(page)
     size = await get_glossary_size(page)
-    logger.info("Loaded %d topics; glossary has %d terms", len(topics), size)
+    logger.info(
+        "Loaded %d topics; glossary has %d terms (%.3fs)",
+        len(topics),
+        size,
+        time.monotonic() - started_at,
+    )
     return topics, size
 
 
@@ -78,6 +93,8 @@ async def refresh_topics(session: BrowserSession) -> BrowserSession:
     :param session: The session to refresh.
     :return: `session`, with `topics` and `size` updated in place.
     """
+    started_at = time.monotonic()
+    logger.debug("Refreshing topics for session on %s", session.base_url)
     topics, size = await fetch_topics(
         session.page,
         base_url=session.base_url,
@@ -86,4 +103,5 @@ async def refresh_topics(session: BrowserSession) -> BrowserSession:
     )
     session.topics = topics
     session.size = size
+    logger.debug("Refreshed topics in %.3fs", time.monotonic() - started_at)
     return session
