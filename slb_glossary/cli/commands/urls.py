@@ -121,6 +121,15 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
     source = resolve_source(params)
     config = get_loaded_config(params)
 
+    title_bits = []
+    if params["query"]:
+        title_bits.append(f"query={params['query']!r}")
+    if params["topic"]:
+        title_bits.append(f"topic={params['topic']!r}")
+    if params["start_letter"]:
+        title_bits.append(f"start_letter={params['start_letter']!r}")
+    title = f"Term URLs ({', '.join(title_bits)})" if title_bits else "Term URLs"
+
     async def _run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             url_iter = resolve_stream(
@@ -150,6 +159,7 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
             records = (UrlRecord(url=url) async for url in url_iter)
             return await output_results(
                 records,
+                title=title,
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
@@ -245,6 +255,7 @@ def fetch_url(ctx: click.Context, url: str, use_tui: bool, **params: typing.Any)
             results = get_results_from_url(session, url, topic=params["topic"])
             return await output_results(
                 results,
+                title=f"Definitions from {url}",
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
