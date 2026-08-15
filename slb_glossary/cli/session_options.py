@@ -1,4 +1,4 @@
-"""Shared, fully-configurable click options for opening a glossary `Session`."""
+"""Shared, fully-configurable click options for opening a glossary `BrowserSession`."""
 
 import typing
 

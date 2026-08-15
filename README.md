@@ -17,7 +17,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
     - [Library](#library)
     - [Command line](#command-line)
   - [Core concepts](#core-concepts)
-    - [`Session`: one session, many searches](#searchsession-one-session-many-searches)
+    - [`BrowserSession`: one session, many searches](#searchsession-one-session-many-searches)
     - [Retries and backoff](#retries-and-backoff)
     - [`SearchResult`](#searchresult)
     - [Live search: `slb_glossary.live`](#live-search-slb_glossarylive)
@@ -50,8 +50,8 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
 - **No browser install headaches.** Built on [patchright](https://pypi.org/project/patchright/), a stealth-patched Chromium automation driver, plus [playwright-stealth](https://pypi.org/project/playwright-stealth/) for extra fingerprint hardening. No Selenium, no manual driver management. Chromium, Firefox and WebKit are all supported.
 - **An optional local cache.** `slb_glossary.local` keeps a SQLite (FTS5) copy of terms you've already looked up, complete with fuzzy topic matching and an optional bring-your-own-embedding vector store, so repeat lookups don't need the browser at all.
 - **One API for local, live, or both.** `slb_glossary.query` reads local-first and falls back to the live site only when needed, optionally caching whatever it fetches live for next time - or pin it to `local`-only or `live`-only when you know which you want.
-- **File-based configuration.** Session, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
-- **Functions, not classes.** There's no `Glossary` object to subclass or configure. Open a session, get a plain `Session` value back, and pass it to whichever function you need.
+- **File-based configuration.** BrowserSession, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
+- **Functions, not classes.** There's no `Glossary` object to subclass or configure. Open a session, get a plain `BrowserSession` value back, and pass it to whichever function you need.
 - **A full-featured CLI.** Every capability above - search, local caching, config, sync - is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
 - **A decoupled `store` package.** Saving results to CSV/JSON/TXT/XLSX lives in its own package that only depends on ["things shaped like" a `SearchResult`](#saving-results-to-a-file-slb_glossarystore), not on the glossary or browser code at all.
 - **Configurable retries.** Flaky page loads are retried with a pluggable backoff policy - constant, linear, exponential or logarithmic.
@@ -182,9 +182,9 @@ See [Command-line interface](#command-line-interface) for the full command refer
 
 ## Core concepts
 
-### `Session`: one session, many searches
+### `BrowserSession`: one session, many searches
 
-`slb_glossary` has no `Glossary` class. Instead, `open_session` (or the `session` context manager) launches a browser and loads the glossary's topic list once, returning a `Session` - a plain dataclass holding the live browser session and that metadata. Every live search function takes this session as its first argument.
+`slb_glossary` has no `Glossary` class. Instead, `open_session` (or the `session` context manager) launches a browser and loads the glossary's topic list once, returning a `BrowserSession` - a plain dataclass holding the live browser session and that metadata. Every live search function takes this session as its first argument.
 
 ```python
 session = await slb.open_session(language=slb.Language.ENGLISH)
@@ -317,7 +317,7 @@ With no path given, it opens at the OS-appropriate user data directory (see `slb
 
 ### Filling the local database
 
-Sync functions in `slb_glossary.local.sync` pull from a live `Session` into a `Database`, from cheapest to most expensive:
+Sync functions in `slb_glossary.local.sync` pull from a live `BrowserSession` into a `Database`, from cheapest to most expensive:
 
 ```python
 from slb_glossary import local
@@ -576,8 +576,8 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
 - Image, font and media requests are blocked at the network layer by default (`block=True`) - the glossary is a JavaScript app, so scripts and stylesheets are always loaded, but nothing else needs to be.
 - Page data (topic lists, result links, definition text) is read with single `evaluate`-style JavaScript calls rather than one round-trip per DOM element.
 - Because live search is lazy, `async for result in live.search(session, "x"): break` after the first result does the minimum work needed to produce it.
-- Reuse one `Session` for every live search you need instead of opening a new one per query - most of the cost of a session is the one-time browser launch and topic fetch.
-- A `Session` drives a single browser page and isn't safe to share across concurrent coroutines. For parallel searches, open one session per concurrent task, or use a function's `concurrency` argument to open extra pages on the same session.
+- Reuse one `BrowserSession` for every live search you need instead of opening a new one per query - most of the cost of a session is the one-time browser launch and topic fetch.
+- A `BrowserSession` drives a single browser page and isn't safe to share across concurrent coroutines. For parallel searches, open one session per concurrent task, or use a function's `concurrency` argument to open extra pages on the same session.
 - A local-database read never launches a browser; `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) takes advantage of this by trying the local database first.
 
 ## Exceptions

@@ -13,7 +13,7 @@ import typing
 
 import click
 
-from slb_glossary.browser import session
+from slb_glossary.browser import session as browser_session
 from slb_glossary.cli.session_options import (
     load_named_config,
     resolve_session_kwargs,
@@ -21,7 +21,7 @@ from slb_glossary.cli.session_options import (
 from slb_glossary.config import Config
 from slb_glossary.local.connection import database
 from slb_glossary.local.models import Database
-from slb_glossary.models import Session
+from slb_glossary.models import BrowserSession
 from slb_glossary.paths import get_data_dir
 from slb_glossary.query import Source, TermLookup
 
@@ -184,9 +184,9 @@ async def open_configured_db(
 @contextlib.asynccontextmanager
 async def live_session(
     ctx: click.Context, params: typing.Mapping[str, typing.Any]
-) -> typing.AsyncIterator[Session]:
+) -> typing.AsyncIterator[BrowserSession]:
     """
-    Open a live `Session` for the duration of an `async with` block.
+    Open a live `BrowserSession` for the duration of an `async with` block.
 
     A thin wrapper around `slb_glossary.browser.session` using this
     run's resolved `--config`/session flags - kept here so query commands
@@ -196,9 +196,9 @@ async def live_session(
     :param ctx: The current click context.
     :param params: The command's parsed parameters, including everything
         `slb_glossary.cli.session_options.session_options`/`config_option` attach.
-    :yield: An open `Session`.
+    :yield: An open `BrowserSession`.
     """
-    async with session(**resolve_session_kwargs(ctx, params)) as session:
+    async with browser_session(**resolve_session_kwargs(ctx, params)) as session:
         yield session
 
 
@@ -217,7 +217,7 @@ async def resolve_lookup(
     *,
     source: Source,
     local_call: typing.Callable[[Database], typing.Awaitable[TermLookup[T]]],
-    live_call: typing.Callable[[Session], typing.Awaitable[TermLookup[T]]],
+    live_call: typing.Callable[[BrowserSession], typing.Awaitable[TermLookup[T]]],
 ) -> TermLookup[T]:
     """
     Run a single-value `slb_glossary.query` lookup, opening a live session only if actually needed.
@@ -234,7 +234,7 @@ async def resolve_lookup(
     :param local_call: Awaitable-returning callable given `db`, e.g.
         `lambda db: query.get_term(term, db=db, source=Source.LOCAL)`.
     :param live_call: Awaitable-returning callable given an opened
-        `Session`, e.g. `lambda s: query.get_term(term, db=db,
+        `BrowserSession`, e.g. `lambda s: query.get_term(term, db=db,
         session=s, source=Source.LIVE, persist=cache_results)`.
     :return: The resolved `TermLookup`.
     :raises click.UsageError: If `source` is `Source.LOCAL` but `db` is `None`.
@@ -269,7 +269,7 @@ async def resolve_stream(
     *,
     source: Source,
     local_call: typing.Callable[[Database], typing.AsyncIterator[T]],
-    live_call: typing.Callable[[Session], typing.AsyncIterator[T]],
+    live_call: typing.Callable[[BrowserSession], typing.AsyncIterator[T]],
 ) -> typing.AsyncIterator[T]:
     """
     Stream a `slb_glossary.query`-style lookup, opening a live session only if actually needed.
@@ -290,7 +290,7 @@ async def resolve_stream(
     :param local_call: Async-generator-returning callable given `db`, e.g.
         `lambda db: query.search(term, db=db, source=Source.LOCAL)`.
     :param live_call: Async-generator-returning callable given an opened
-        `Session`, e.g. `lambda s: query.search(term, db=db,
+        `BrowserSession`, e.g. `lambda s: query.search(term, db=db,
         session=s, source=Source.LIVE, persist=cache_results)`.
     :yield: Whatever `local_call`/`live_call` yield.
     :raises click.UsageError: If `source` is `Source.LOCAL` but `db` is `None`.

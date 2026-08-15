@@ -5,14 +5,14 @@ import typing
 import click
 
 from slb_glossary import query as glossary_query
-from slb_glossary.browser import session
+from slb_glossary.browser import session as browser_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.source_options import (
-    get_loaded_config,
     database_option,
+    get_loaded_config,
     open_configured_db,
     resolve_source,
     resolve_stream,
@@ -241,7 +241,7 @@ def fetch_url(ctx: click.Context, url: str, use_tui: bool, **params: typing.Any)
         return
 
     async def _run() -> int:
-        async with session(**resolve_session_kwargs(ctx, params)) as session:
+        async with browser_session(**resolve_session_kwargs(ctx, params)) as session:
             results = get_results_from_url(session, url, topic=params["topic"])
             return await output_results(
                 results,

@@ -7,7 +7,7 @@ from difflib import get_close_matches
 
 from patchright.async_api import Page
 
-from slb_glossary.models import Session
+from slb_glossary.models import BrowserSession
 from slb_glossary.parsers import (
     FACET_EXPAND_SELECTOR,
     FACET_HEADER_SELECTOR,
@@ -73,7 +73,7 @@ async def fetch_topics(
     return topics, size
 
 
-async def refresh_topics(session: Session) -> Session:
+async def refresh_topics(session: BrowserSession) -> BrowserSession:
     """
     Reload `session.topics` and `session.size` from the glossary site.
 
@@ -96,7 +96,7 @@ def get_topic_match(topics: typing.Mapping[str, int], topic: str) -> str:
     Resolve a user-supplied topic name to its closest match in `topics`.
 
     :param topics: Known glossary topics, as returned by `fetch_topics` or
-        held on `Session.topics`.
+        held on `BrowserSession.topics`.
     :param topic: One topic name, or several separated by commas, e.g.
         `"Geophysics,Geology"`. Matching is case-insensitive and tolerant of
         minor misspellings.

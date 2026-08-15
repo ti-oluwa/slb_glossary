@@ -22,7 +22,7 @@ __all__ = [
     "DatabaseConfig",
     "OutputConfig",
     "RetryConfig",
-    "SessionConfig",
+    "BrowserSessionConfig",
 ]
 
 
@@ -83,7 +83,7 @@ class RetryConfig:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class SessionConfig:
+class BrowserSessionConfig:
     """Serializable counterpart of the options `slb_glossary.browser.open_session` takes."""
 
     language: str = "en"
@@ -293,7 +293,7 @@ def _strip_none(data: typing.Any) -> typing.Any:
     TOML has no null type, so `tomlkit.dumps` raises on any `None` value
     anywhere in the structure. `Config.to_dict()` includes several
     `Optional` fields that default to `None` (e.g.
-    `SessionConfig.executable_path`, `DatabaseConfig.data_dir`), so those
+    `BrowserSessionConfig.executable_path`, `DatabaseConfig.data_dir`), so those
     need to be dropped rather than written before a TOML dump can succeed.
 
     A dropped key round-trips safely: `_dataclass_from_mapping` falls back
@@ -357,16 +357,16 @@ def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format: 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class Config:
     """
-    Top-level, file-loadable configuration for a `Session` and local database.
+    Top-level, file-loadable configuration for a `BrowserSession` and local database.
 
     ```python
     config = Config.load()  # default path if it exists, else built-in defaults
-    async with Session.from_config(config) as session:
+    async with BrowserSession.from_config(config) as session:
         ...
     ```
     """
 
-    session: SessionConfig = dataclasses.field(default_factory=SessionConfig)
+    session: BrowserSessionConfig = dataclasses.field(default_factory=BrowserSessionConfig)
     """Browser/session options."""
 
     local: DatabaseConfig = dataclasses.field(default_factory=DatabaseConfig)

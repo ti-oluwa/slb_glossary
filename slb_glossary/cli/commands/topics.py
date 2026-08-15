@@ -11,8 +11,8 @@ from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.source_options import (
-    get_loaded_config,
     database_option,
+    get_loaded_config,
     open_configured_db,
     resolve_source,
     resolve_stream,

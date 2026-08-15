@@ -12,7 +12,7 @@ from playwright_stealth import Stealth
 
 from slb_glossary.config import Config
 from slb_glossary.errors import BrowserError, NetworkError
-from slb_glossary.models import Language, Session
+from slb_glossary.models import BrowserSession, Language
 from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
 from slb_glossary.topics import fetch_topics
 from slb_glossary.urls import get_glossary_base_url
@@ -28,6 +28,7 @@ __all__ = [
     "open_session_from_config",
     "ResourceType",
     "BrowserType",
+    "browser_session",
 ]
 
 
@@ -116,37 +117,39 @@ CHROMIUM_LAUNCH_ARGS = [
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
 
 
-BLOCKED_HOSTS = frozenset({
-    "google-analytics.com",
-    "googletagmanager.com",
-    "doubleclick.net",
-    "facebook.com",
-    "facebook.net",
-    "connect.facebook.net",
-    "hotjar.com",
-    "segment.io",
-    "segment.com",
-    "clarity.ms",
-    "cookiepro.com",
-    "onetrust.com",
-    "linkedin.com",
-    "googlesyndication.com",
-    "googleadservices.com",
-    "sharethis.com",
-    "csi.slb.com",
-    "segments.company-target.com",
-    "kaltura.com",
-    "peer5.com",
-    "bing.com",
-    "addthis.com",
-    "perk0mean.com",
-    "brightcove.net",
-    "botframework.com",
-    "google.com",
-    "powerplatform.com",
-    "crwdcntrl.net",
-    "arcgis.com",
-})
+BLOCKED_HOSTS = frozenset(
+    {
+        "google-analytics.com",
+        "googletagmanager.com",
+        "doubleclick.net",
+        "facebook.com",
+        "facebook.net",
+        "connect.facebook.net",
+        "hotjar.com",
+        "segment.io",
+        "segment.com",
+        "clarity.ms",
+        "cookiepro.com",
+        "onetrust.com",
+        "linkedin.com",
+        "googlesyndication.com",
+        "googleadservices.com",
+        "sharethis.com",
+        "csi.slb.com",
+        "segments.company-target.com",
+        "kaltura.com",
+        "peer5.com",
+        "bing.com",
+        "addthis.com",
+        "perk0mean.com",
+        "brightcove.net",
+        "botframework.com",
+        "google.com",
+        "powerplatform.com",
+        "crwdcntrl.net",
+        "arcgis.com",
+    }
+)
 
 
 def should_block_host(hostname: str, blocked_hosts: frozenset[str]) -> bool:
@@ -268,7 +271,7 @@ async def open_session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
-) -> Session:
+) -> BrowserSession:
     """
     Launch a (stealth) browser session and load the glossary's topics and size.
 
@@ -311,7 +314,7 @@ async def open_session(
         Values passed here are merged with the library defaults.
     :param use_stealth: Whether to apply Playwright stealth patches to the
         browser context. Defaults to `True`.
-    :return: An open `Session` ready to pass to `slb_glossary.search`
+    :return: An open `BrowserSession` ready to pass to `slb_glossary.search`
         functions. Close it with `close_session` when done, or use
         `session` instead of calling this function directly.
     :raises NetworkError: If the glossary site could not be reached.
@@ -365,7 +368,7 @@ async def open_session(
         except Exception as exc:
             raise NetworkError(f"Could not reach the glossary at {base_url}") from exc
 
-        session = Session(
+        session = BrowserSession(
             playwright=playwright,
             browser=browser,
             context=context,
@@ -395,11 +398,11 @@ async def open_session(
 
 async def open_session_from_config(
     config: Config | str | pathlib.Path, **overrides: typing.Any
-) -> Session:
+) -> BrowserSession:
     """
-    Open a `Session` using a `Config`, or a path to a config file.
+    Open a `BrowserSession` using a `Config`, or a path to a config file.
 
-    Equivalent to `Session.from_config`; provided here as well so
+    Equivalent to `BrowserSession.from_config`; provided here as well so
     `slb_glossary.browser` stays a complete, self-contained entry point for
     opening sessions without needing an import from `slb_glossary.models`.
 
@@ -407,7 +410,7 @@ async def open_session_from_config(
         TOML/YAML file `Config.from_file` can load.
     :param overrides: Keyword arguments forwarded to `open_session`,
         overriding whatever `config` specifies.
-    :return: An open `Session`. Close it with `close_session`, or
+    :return: An open `BrowserSession`. Close it with `close_session`, or
         prefer `session_from_config` for automatic cleanup.
     """
     resolved_config = config if isinstance(config, Config) else Config.from_file(config)
@@ -416,7 +419,7 @@ async def open_session_from_config(
     return await open_session(**kwargs)
 
 
-async def close_session(session: Session) -> None:
+async def close_session(session: BrowserSession) -> None:
     """
     Close every resource opened for `session`.
 
@@ -451,9 +454,9 @@ async def session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
-) -> typing.AsyncIterator[Session]:
+) -> typing.AsyncIterator[BrowserSession]:
     """
-    Open a `Session` for the duration of an `async with` block.
+    Open a `BrowserSession` for the duration of an `async with` block.
 
     ```python
     async with session(...) as session:
@@ -515,12 +518,15 @@ async def session(
         await close_session(session)
 
 
+browser_session = session  # Alias for `session` to match the naming in `slb_glossary.models.BrowserSession.from_config`.
+
+
 @contextlib.asynccontextmanager
 async def session_from_config(
     config: Config | str | pathlib.Path, **overrides: typing.Any
-) -> typing.AsyncIterator[Session]:
+) -> typing.AsyncIterator[BrowserSession]:
     """
-    Open a `Session` from a `Config` (or config file path) for an `async with` block.
+    Open a `BrowserSession` from a `Config` (or config file path) for an `async with` block.
 
     ```python
     async with session_from_config("config.toml") as session:

@@ -9,7 +9,7 @@ import typing
 from collections.abc import AsyncIterable
 
 from slb_glossary.grammar import resolve_grammatical_label
-from slb_glossary.models import RelatedTerm, SearchResult, Session
+from slb_glossary.models import BrowserSession, RelatedTerm, SearchResult
 from slb_glossary.parsers import (
     TermParagraph,
     get_result_links,
@@ -62,7 +62,7 @@ def _find_related_links(
 
 
 async def _wait_for_settle(
-    session: Session,
+    session: BrowserSession,
     url: str,
     *,
     previous_links: typing.Sequence[str],
@@ -116,7 +116,7 @@ async def _wait_for_settle(
 
 
 async def get_terms_urls(
-    session: Session,
+    session: BrowserSession,
     *,
     query: str | None = None,
     topic: str | None = None,
@@ -213,7 +213,7 @@ async def get_terms_urls(
 
 
 async def get_results_from_url(
-    session: Session, url: str, *, topic: str | None = None
+    session: BrowserSession, url: str, *, topic: str | None = None
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Load a term detail page and lazily yield each definition found on it.
@@ -295,7 +295,7 @@ def _as_async_iter(
 
 
 async def get_results_from_urls(
-    session: Session,
+    session: BrowserSession,
     urls: typing.Iterable[str] | typing.AsyncIterable[str],
     *,
     topic: str | None = None,
@@ -345,7 +345,7 @@ async def get_results_from_urls(
     # same browser context, so every worker can navigate independently
     # without racing over a single shared page.
     extra_pages = [await session.context.new_page() for _ in range(concurrency - 1)]
-    worker_sessions: list[Session] = [session]
+    worker_sessions: list[BrowserSession] = [session]
     worker_sessions.extend(dataclasses.replace(session, page=page) for page in extra_pages)
 
     url_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=concurrency * 2)
@@ -357,7 +357,7 @@ async def get_results_from_urls(
         for _ in worker_sessions:
             await url_queue.put(None)  # one stop signal per worker
 
-    async def _consume(worker_session: Session) -> None:
+    async def _consume(worker_session: BrowserSession) -> None:
         while True:
             url = await url_queue.get()
             if url is None:
@@ -393,7 +393,7 @@ async def get_results_from_urls(
 
 
 async def search(
-    session: Session,
+    session: BrowserSession,
     query: str,
     *,
     topic: str | None = None,
@@ -433,7 +433,7 @@ async def search(
 
 
 async def get_terms_on(
-    session: Session,
+    session: BrowserSession,
     topic: str,
     *,
     limit: int | None = None,

@@ -22,6 +22,7 @@ from . import live, local, query, store
 from .browser import (
     BrowserType,
     ResourceType,
+    browser_session,
     close_session,
     open_session,
     open_session_from_config,
@@ -38,7 +39,7 @@ from .errors import (
     ParsingError,
     QueryError,
 )
-from .models import Language, SearchResult, Session
+from .models import BrowserSession, Language, SearchResult
 from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics
 from .utils import async_print_results, print_results
@@ -55,10 +56,11 @@ __all__ = [
     "store",
     "open_session",
     "open_session_from_config",
+    "browser_session",
     "close_session",
     "session",
     "session_from_config",
-    "Session",
+    "BrowserSession",
     "Config",
     "Language",
     "SearchResult",
