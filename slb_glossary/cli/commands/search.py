@@ -152,6 +152,9 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     concurrency = params["concurrency"] or 1
     source = resolve_source(params)
     config = get_loaded_config(params)
+    title = f"Search Results for {query!r}"
+    if params["topic"]:
+        title += f" (topic: {params['topic']})"
 
     async def _run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
@@ -182,6 +185,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
             )
             return await output_results(
                 results,
+                title=title,
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
