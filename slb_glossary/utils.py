@@ -92,7 +92,7 @@ def _format_cell(value: typing.Any, *, max_related_shown: int = 6) -> str:
 
     Handles the shapes records actually carry: `None`, a
     single `RelatedTerm`-like `NamedTuple`, and lists/tuples of those (e.g.
-    `SearchResult.related`) - trimming long lists rather than flooding the
+    `SearchResult.related`). Trims long lists rather than flooding the
     cell, since this is for a terminal table, not a file export.
 
     :param value: A field value from `record.asdict()`.
@@ -317,14 +317,14 @@ def print_results(
         show_related=show_related,
     )
 
-    def _remaining() -> typing.Iterator[typing.Any]:
+    def _records() -> typing.Iterator[typing.Any]:
         yield first
         yield from iterator
 
     count = 0
     if console.is_terminal:
         with Live(table, console=console, refresh_per_second=8, transient=False) as live:
-            for record in _remaining():
+            for record in _records():
                 if limit is not None and count >= limit:
                     break
                 table.add_row(*format_row(record))
@@ -332,7 +332,7 @@ def print_results(
                 count += 1
         return count
 
-    for record in _remaining():
+    for record in _records():
         if limit is not None and count >= limit:
             break
         table.add_row(*format_row(record))

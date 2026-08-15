@@ -214,7 +214,7 @@ def session_options(func: F) -> F:
             default=None,
             metavar="PATH|stderr|stdout",
             help=(
-                "Where to route slb_glossary's logging for this run: a file "
+                "Where to route the applications's logging for this run: a file "
                 "path to append log lines to (handy for bug reports), or "
                 "'stderr'/'stdout' for the console. Defaults to whatever "
                 "logging is already configured (console, via "
@@ -227,7 +227,7 @@ def session_options(func: F) -> F:
             default=None,
             metavar="module:ClassName",
             help=(
-                "Import path of a custom slb_glossary.logging.LogSink class "
+                "Import path of a custom `slb_glossary.logging.LogSink` class "
                 "(or instance) to route logging to instead of a built-in "
                 "sink, e.g. 'myapp.logging:BugReportSink'. Takes priority "
                 "over --log-to if both are given."

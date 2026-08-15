@@ -119,39 +119,37 @@ CHROMIUM_LAUNCH_ARGS = [
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
 
 
-BLOCKED_HOSTS = frozenset(
-    {
-        "google-analytics.com",
-        "googletagmanager.com",
-        "doubleclick.net",
-        "facebook.com",
-        "facebook.net",
-        "connect.facebook.net",
-        "hotjar.com",
-        "segment.io",
-        "segment.com",
-        "clarity.ms",
-        "cookiepro.com",
-        "onetrust.com",
-        "linkedin.com",
-        "googlesyndication.com",
-        "googleadservices.com",
-        "sharethis.com",
-        "csi.slb.com",
-        "segments.company-target.com",
-        "kaltura.com",
-        "peer5.com",
-        "bing.com",
-        "addthis.com",
-        "perk0mean.com",
-        "brightcove.net",
-        "botframework.com",
-        "google.com",
-        "powerplatform.com",
-        "crwdcntrl.net",
-        "arcgis.com",
-    }
-)
+BLOCKED_HOSTS = frozenset({
+    "google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
+    "facebook.com",
+    "facebook.net",
+    "connect.facebook.net",
+    "hotjar.com",
+    "segment.io",
+    "segment.com",
+    "clarity.ms",
+    "cookiepro.com",
+    "onetrust.com",
+    "linkedin.com",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "sharethis.com",
+    "csi.slb.com",
+    "segments.company-target.com",
+    "kaltura.com",
+    "peer5.com",
+    "bing.com",
+    "addthis.com",
+    "perk0mean.com",
+    "brightcove.net",
+    "botframework.com",
+    "google.com",
+    "powerplatform.com",
+    "crwdcntrl.net",
+    "arcgis.com",
+})
 
 
 def should_block_host(hostname: str, blocked_hosts: frozenset[str]) -> bool:
@@ -208,7 +206,7 @@ def _build_blocker(
     return _handle_route
 
 
-def _apply_log_sink(log_sink: "LogSink | type[LogSink] | str | pathlib.Path | None") -> None:
+def _apply_log_sink(log_sink: LogSink | type[LogSink] | str | pathlib.Path | None) -> None:
     """
     Resolve and install `log_sink` as the destination for `slb_glossary`'s logging.
 
@@ -297,7 +295,7 @@ async def open_session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
-    log_sink: "LogSink | type[LogSink] | str | pathlib.Path | None" = None,
+    log_sink: LogSink | type[LogSink] | str | pathlib.Path | None = None,
 ) -> BrowserSession:
     """
     Launch a (stealth) browser session and load the glossary's topics and size.
@@ -514,7 +512,7 @@ async def session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
-    log_sink: "LogSink | type[LogSink] | str | pathlib.Path | None" = None,
+    log_sink: LogSink | type[LogSink] | str | pathlib.Path | None = None,
 ) -> typing.AsyncIterator[BrowserSession]:
     """
     Open a `BrowserSession` for the duration of an `async with` block.

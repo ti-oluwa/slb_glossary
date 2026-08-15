@@ -17,7 +17,8 @@ retention, refresh, and deletion in compliance with SLB's terms of use linked ab
 
 import logging
 
-from . import live, local, logging as log, query, store
+from . import live, local, query, store
+from . import logging as log
 from .browser import (
     BrowserType,
     ResourceType,

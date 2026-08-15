@@ -32,7 +32,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
   - [Saving results to a file: `slb_glossary.store`](#saving-results-to-a-file-slb_glossarystore)
   - [Command-line interface](#command-line-interface)
     - [Command reference](#command-reference)
-    - [Choosing a source: `--local` / `--live` / `--auto`](#choosing-a-source---local---live---auto)
+    - [Choosing a source: `--local` / `--live` / `--auto`](#choosing-a-source---local----live----auto)
     - [Saving and formatting output](#saving-and-formatting-output)
     - [The interactive TUI](#the-interactive-tui)
   - [Logging](#logging)

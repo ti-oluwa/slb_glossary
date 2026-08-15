@@ -123,9 +123,9 @@ class FileSink:
         self.path = pathlib.Path(path)
         self._mode = mode
         self._encoding = encoding
-        self._file: typing.TextIO | None = None
+        self._file: typing.IO | None = None
 
-    def _ensure_open(self) -> typing.TextIO:
+    def _ensure_open(self) -> typing.IO:
         if self._file is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._file = open(self.path, self._mode, encoding=self._encoding)
@@ -186,7 +186,7 @@ def import_sink(dotted_path: str) -> typing.Any:
 
     :param dotted_path: Either `"module:attr"` (splitting on the last
         `":"`) or `"package.module.attr"` (splitting on the last `"."`).
-    :return: Whatever `attr` resolves to - typically a `LogSink` subclass
+    :return: Whatever `attr` resolves to. Typically a `LogSink` subclass
         or an already-constructed `LogSink` instance.
     :raises ValueError: If `dotted_path` doesn't look like a valid import path.
     :raises ImportError: If the module can't be imported, or has no such attribute.
@@ -214,9 +214,9 @@ def _looks_like_import_path(text: str) -> bool:
 
 
 def resolve_sink(
-    spec: "LogSink | type[LogSink] | str | pathlib.Path | None",
+    spec: LogSink | type[LogSink] | str | pathlib.Path | None,
     *,
-    default: "LogSink | None" = None,
+    default: LogSink | None = None,
 ) -> LogSink:
     """
     Resolve `--log-to`/`--log-sink`-style input (or a library-level equivalent) into a `LogSink`.
@@ -262,7 +262,7 @@ def resolve_sink(
 
 def configure_logging(
     *,
-    sinks: "typing.Iterable[LogSink] | LogSink | None" = None,
+    sinks: typing.Iterable[LogSink] | LogSink | None = None,
     level: int | str | None = None,
     logger_name: str = "slb_glossary",
     fmt: str = DEFAULT_LOG_FORMAT,
