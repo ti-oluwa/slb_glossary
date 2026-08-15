@@ -116,6 +116,7 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
             )
             return await output_results(
                 records,
+                title="Topics",
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
@@ -165,6 +166,7 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
             session = await refresh_topics(session)
             return await output_results(
                 iter_topic_records(session.topics),
+                title="Topics (refreshed)",
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
