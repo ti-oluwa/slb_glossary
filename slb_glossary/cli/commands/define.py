@@ -110,6 +110,7 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
 
         return await output_results(
             _one(),
+            title=f"Definition: {term}",
             save_paths=params["save_paths"],
             format=params["format"],
             quiet=params["quiet"],
