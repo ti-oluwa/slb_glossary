@@ -35,6 +35,12 @@ def _validate_topic(
 @click.command("terms")
 @click.argument("topic", default="", callback=_validate_topic)
 @click.option(
+    "--start-letter",
+    "-a",
+    default=None,
+    help="Restrict results to terms starting with this letter.",
+)
+@click.option(
     "--limit",
     "-n",
     type=int,
@@ -122,6 +128,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
     Examples:
       slb-glossary terms Geophysics
       slb-glossary terms "Well completions,Perforating" --limit 20
+      slb-glossary terms Drilling --start-letter p
       slb-glossary terms Drilling --save drilling_terms.json
       slb-glossary terms Drilling --local --fuzzy
       slb-glossary terms Drilling --config ~/my-config.toml
@@ -132,8 +139,13 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
 
     limit = params["limit"] or None
     concurrency = params["concurrency"] or 1
+    start_letter = params["start_letter"]
     source = resolve_source(params)
     config = get_loaded_config(params)
+
+    title = f"Terms under {topic!r}"
+    if start_letter:
+        title += f" starting with {start_letter!r}"
 
     async def _run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
@@ -146,6 +158,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
                     topic,
                     db=db,
                     source=Source.LOCAL,
+                    start_letter=start_letter,
                     limit=limit,
                     fuzzy=params["fuzzy"],
                 ),
@@ -154,6 +167,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
                     db=db,
                     session=session,
                     source=Source.LIVE,
+                    start_letter=start_letter,
                     limit=limit,
                     concurrency=concurrency,
                     persist=params["cache_results"],
@@ -161,6 +175,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
             )
             return await output_results(
                 results,
+                title=title,
                 save_paths=params["save_paths"],
                 format=params["format"],
                 quiet=params["quiet"],
