@@ -17,7 +17,7 @@ retention, refresh, and deletion in compliance with SLB's terms of use linked ab
 
 import logging
 
-from . import live, local, query, store
+from . import live, local, logging as log, query, store
 from .browser import (
     BrowserType,
     ResourceType,
@@ -34,6 +34,7 @@ from .errors import (
     ConfigError,
     DatabaseError,
     GlossaryError,
+    LoggingError,
     NetworkError,
     ParsingError,
     QueryError,
@@ -51,6 +52,7 @@ __version__ = "0.1.0"
 __all__ = [
     "live",
     "local",
+    "log",
     "query",
     "store",
     "open_session",
@@ -76,6 +78,7 @@ __all__ = [
     "ConfigError",
     "DatabaseError",
     "QueryError",
+    "LoggingError",
     "BrowserType",
     "ResourceType",
 ]
