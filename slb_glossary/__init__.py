@@ -15,7 +15,7 @@ retention, refresh, and deletion in compliance with SLB's terms of use linked ab
 @Author: Daniel T. Afolayan (ti-oluwa)
 """
 
-import logging
+import logging as py_logging
 
 from . import live, local, query, store
 from . import logging as log
@@ -45,8 +45,8 @@ from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics
 from .utils import async_print_results, print_results
 
-logging.basicConfig(
-    format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s", level=logging.INFO
+py_logging.basicConfig(
+    format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s", level=py_logging.INFO
 )
 
 __version__ = "0.1.0"
