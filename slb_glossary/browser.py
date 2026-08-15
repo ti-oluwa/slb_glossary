@@ -5,7 +5,7 @@ import enum
 import logging
 import pathlib
 import typing
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from patchright.async_api import Browser, Playwright, Route, async_playwright
 from playwright_stealth import Stealth
@@ -116,30 +116,47 @@ CHROMIUM_LAUNCH_ARGS = [
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
 
 
-TRACKING_HOSTS = (
+BLOCKED_HOSTS = frozenset({
     "google-analytics.com",
-    "www.google-analytics.com",
     "googletagmanager.com",
-    "www.googletagmanager.com",
     "doubleclick.net",
-    "connect.facebook.net",
     "facebook.com",
+    "facebook.net",
+    "connect.facebook.net",
     "hotjar.com",
     "segment.io",
     "segment.com",
-)
+    "clarity.ms",
+    "cookiepro.com",
+    "onetrust.com",
+    "linkedin.com",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "sharethis.com",
+    "csi.slb.com",
+    "segments.company-target.com",
+    "kaltura.com",
+    "peer5.com",
+    "bing.com",
+    "addthis.com",
+    "perk0mean.com",
+    "brightcove.net",
+    "botframework.com",
+    "google.com",
+    "powerplatform.com",
+    "crwdcntrl.net",
+    "arcgis.com",
+})
 
 
-def should_block_url(url: str) -> bool:
-    hostname = urlparse(url).hostname
-    if hostname is None:
-        return False
-
+def should_block_host(hostname: str, blocked_hosts: frozenset[str]) -> bool:
     hostname = hostname.lower()
-    return any(hostname == host or hostname.endswith("." + host) for host in TRACKING_HOSTS)
+    return hostname in blocked_hosts or any(
+        hostname.endswith("." + host) for host in blocked_hosts
+    )
 
 
-def get_resource_type_names(resource_types: ResourceType) -> list[str]:
+def get_resource_names(resource_types: ResourceType) -> list[str]:
     return [
         name
         for kind, name in RESOURCE_TYPE_NAME_MAP.items()
@@ -147,16 +164,16 @@ def get_resource_type_names(resource_types: ResourceType) -> list[str]:
     ]
 
 
-def _resolve_blocked_resource_types(
+def _resolve_blocked_resources(
     block: bool | typing.Iterable[str] | ResourceType,
 ) -> frozenset[str]:
     """Turn the `block` argument into a concrete set of resource types."""
     if block is True:
-        return frozenset(get_resource_type_names(DEFAULT_BLOCKED_RESOURCE_TYPES))
+        return frozenset(get_resource_names(DEFAULT_BLOCKED_RESOURCE_TYPES))
     if block is False:
         return frozenset()
     if isinstance(block, ResourceType):
-        return frozenset(get_resource_type_names(block))
+        return frozenset(get_resource_names(block))
     return frozenset(
         RESOURCE_TYPE_NAME_MAP.get(ResourceType[name.upper()], name.lower())
         if isinstance(name, str)
@@ -165,14 +182,20 @@ def _resolve_blocked_resource_types(
     )
 
 
-def _build_resource_blocker(
-    blocked_resource_types: frozenset[str],
+def _build_blocker(
+    blocked_resources: frozenset[str], blocked_hosts: frozenset[str] | None = None
 ) -> typing.Callable[[Route], typing.Awaitable[None]]:
-    """Build a Playwright route handler that aborts blocked resource types."""
+    """Build a Playwright route handler that aborts blocked resource types or hosts."""
 
     async def _handle_route(route: Route) -> None:
         request = route.request
-        if request.resource_type in blocked_resource_types or should_block_url(request.url):
+        if request.resource_type in blocked_resources:
+            await route.abort()
+        elif (
+            blocked_hosts
+            and (hostname := urlsplit(request.url).hostname)
+            and should_block_host(hostname, blocked_hosts)
+        ):
             await route.abort()
         else:
             await route.continue_()
@@ -324,10 +347,12 @@ async def open_session(
         page.set_default_timeout(timeout)
         page.set_default_navigation_timeout(timeout)
 
-        blocked_resource_types = _resolve_blocked_resource_types(block)
-        if blocked_resource_types:
-            await context.route("**/*", _build_resource_blocker(blocked_resource_types))
-            logger.debug("Blocking resource types: %s", ", ".join(sorted(blocked_resource_types)))
+        blocked_resources = _resolve_blocked_resources(block)
+        if blocked_resources:
+            await context.route(
+                "**/*", _build_blocker(blocked_resources, blocked_hosts=BLOCKED_HOSTS)
+            )
+            logger.debug("Blocking resource types: %s", ", ".join(sorted(blocked_resources)))
 
         base_url = get_glossary_base_url(language)
         try:
@@ -351,7 +376,7 @@ async def open_session(
             size=size,
             browser_type=browser_type,
             terms_per_tab=terms_per_tab,
-            blocked_resource_types=blocked_resource_types,
+            blocked_resource_types=blocked_resources,
             retry=retry,
             settle_timeout=settle_timeout,
             poll_interval=poll_interval,

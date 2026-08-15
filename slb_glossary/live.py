@@ -6,10 +6,12 @@ import logging
 import math
 import time
 import typing
+from collections.abc import AsyncIterable
 
 from slb_glossary.grammar import resolve_grammatical_label
 from slb_glossary.models import RelatedTerm, SearchResult, SearchSession
 from slb_glossary.parsers import (
+    TermParagraph,
     get_result_links,
     get_results_header_text,
     get_term_detail_blocks,
@@ -33,7 +35,7 @@ __all__ = [
 
 
 def _find_related_links(
-    paragraphs: typing.Sequence[typing.Any],
+    paragraphs: typing.Sequence[TermParagraph],
 ) -> tuple[RelatedTerm, ...]:
     """
     Return the related-term links from a definition block's paragraphs.
@@ -211,10 +213,7 @@ async def get_terms_urls(
 
 
 async def get_results_from_url(
-    session: SearchSession,
-    url: str,
-    *,
-    topic: str | None = None,
+    session: SearchSession, url: str, *, topic: str | None = None
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Load a term detail page and lazily yield each definition found on it.
@@ -290,9 +289,9 @@ def _as_async_iter(
         for url in sync_urls:
             yield url
 
-    if hasattr(urls, "__aiter__"):
-        return typing.cast(typing.AsyncIterator[str], urls.__aiter__())  # type: ignore[attr-defined]
-    return _wrap_sync(typing.cast(typing.Iterable[str], urls))
+    if isinstance(urls, AsyncIterable):
+        return urls.__aiter__()
+    return _wrap_sync(urls)
 
 
 async def get_results_from_urls(
