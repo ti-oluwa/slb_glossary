@@ -77,6 +77,7 @@ def compare(
 
     source = resolve_source(params)
     config = get_loaded_config(params)
+    title = f"Comparing: {', '.join(terms)}"
 
     async def _stream() -> typing.AsyncIterator[SearchResult]:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
@@ -112,6 +113,7 @@ def compare(
     async def _run() -> int:
         return await output_results(
             _stream(),
+            title=title,
             save_paths=params["save_paths"],
             format=params["format"],
             quiet=params["quiet"],
