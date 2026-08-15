@@ -2,6 +2,8 @@
 
 import datetime
 import json
+import logging
+import time
 import typing
 from difflib import get_close_matches
 
@@ -9,6 +11,8 @@ import aiosqlite
 
 from slb_glossary.local.models import Database
 from slb_glossary.models import RelatedTerm, SearchResult
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "upsert_results",
@@ -94,8 +98,10 @@ async def upsert_results(
         caller-chosen value such as `"user"` for imported data.
     :return: Number of rows written (results with no `url` don't count).
     """
+    started_at = time.monotonic()
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     rows: list[tuple[typing.Any, ...]] = []
+    skipped = 0
 
     def get_row(result: SearchResult) -> tuple[typing.Any, ...] | None:
         if not result.url:
@@ -119,17 +125,33 @@ async def upsert_results(
             row = get_row(result)
             if row is not None:
                 rows.append(row)
+            else:
+                skipped += 1
     else:
         for result in results:
             row = get_row(result)
             if row is not None:
                 rows.append(row)
+            else:
+                skipped += 1
+
+    if skipped:
+        logger.debug("Skipped %d result(s) with no url during upsert", skipped)
 
     if not rows:
+        logger.debug("upsert_results: nothing to write (0 rows in %.3fs)", time.monotonic() - started_at)
         return 0
 
     await db.connection.executemany(UPSERT_STATEMENT, rows)
     await db.connection.commit()
+    elapsed = time.monotonic() - started_at
+    logger.info(
+        "Upserted %d row(s) into the local database in %.3fs (avg %.3fs/row, source=%r)",
+        len(rows),
+        elapsed,
+        elapsed / len(rows),
+        source,
+    )
     return len(rows)
 
 
@@ -196,9 +218,10 @@ def fuzzy_match_topics(
         if matches:
             resolved.append(lowered_to_original[matches[0]])
 
-    # dict.fromkeys dedupes while preserving order (e.g. two input parts
-    # both fuzzy-matching the same stored topic).
-    return ",".join(dict.fromkeys(resolved))
+    result = ",".join(dict.fromkeys(resolved))
+    if result != topic:
+        logger.debug("Fuzzy-matched topic %r -> %r", topic, result)
+    return result
 
 
 async def _resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | None:
@@ -250,6 +273,8 @@ async def search(
         see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
     :yield: Matching `SearchResult`s, best match first.
     """
+    logger.debug("Local search: query=%r topic=%r limit=%r fuzzy=%r", query, topic, limit, fuzzy)
+    started_at = time.monotonic()
     sql = """
         SELECT terms.* FROM terms
         JOIN terms_fts ON terms.rowid = terms_fts.rowid
@@ -272,12 +297,25 @@ async def search(
 
     async with db.connection.execute(sql, params) as cursor:
         rows = await cursor.fetchall()
+
+    count_yielded = 0
     for row in rows:
+        count_yielded += 1
         yield _row_to_result(row)
+
+    elapsed = time.monotonic() - started_at
+    logger.debug(
+        "Local search for %r yielded %d result(s) in %.3fs", query, count_yielded, elapsed
+    )
 
 
 async def get_terms_on(
-    db: Database, topic: str, *, limit: int | None = None, fuzzy: bool = False
+    db: Database,
+    topic: str,
+    *,
+    start_letter: str | None = None,
+    limit: int | None = None,
+    fuzzy: bool = False,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield every locally stored term filed under `topic`.
@@ -290,14 +328,24 @@ async def get_terms_on(
 
     :param db: The local database to read from.
     :param topic: Topic name, or several comma-separated topic names.
+    :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of results. `None` for unlimited.
     :param fuzzy: If `True`, resolve `topic` against locally stored topic
         names first - see `fuzzy_match_topics` - instead of requiring an
         exact (case-insensitive) match.
     :yield: `SearchResult`s filed under `topic`, ordered by term name.
     """
+    logger.debug(
+        "Local get_terms_on: topic=%r start_letter=%r limit=%r fuzzy=%r",
+        topic,
+        start_letter,
+        limit,
+        fuzzy,
+    )
+    started_at = time.monotonic()
     resolved_topic = await _resolve_topic(db, topic, fuzzy)
     if not resolved_topic:
+        logger.debug("No local topic resolved for %r, yielding nothing", topic)
         return
 
     topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
@@ -305,16 +353,28 @@ async def get_terms_on(
         return
 
     placeholders = ", ".join("?" for _ in topics)
-    sql = f"SELECT * FROM terms WHERE topic COLLATE NOCASE IN ({placeholders}) ORDER BY term"
+    sql = f"SELECT * FROM terms WHERE topic COLLATE NOCASE IN ({placeholders})"
     params: list[typing.Any] = list(topics)
+    if start_letter:
+        sql += " AND term COLLATE NOCASE LIKE ?"
+        params.append(f"{start_letter}%")
+    sql += " ORDER BY term"
     if limit:
         sql += " LIMIT ?"
         params.append(limit)
 
     async with db.connection.execute(sql, params) as cursor:
         rows = await cursor.fetchall()
+
+    count_yielded = 0
     for row in rows:
+        count_yielded += 1
         yield _row_to_result(row)
+
+    elapsed = time.monotonic() - started_at
+    logger.debug(
+        "Local get_terms_on(%r) yielded %d term(s) in %.3fs", topic, count_yielded, elapsed
+    )
 
 
 async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
@@ -326,12 +386,16 @@ async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
         (case-insensitive) term name.
     :return: The stored `SearchResult`, or `None` if not found locally.
     """
+    logger.debug("Local get_term: %r", term_or_url)
     async with db.connection.execute(
         "SELECT * FROM terms WHERE url = ? OR term = ? COLLATE NOCASE LIMIT 1",
         (term_or_url, term_or_url),
     ) as cursor:
         row = await cursor.fetchone()
-    return _row_to_result(row) if row is not None else None
+    if row is None:
+        logger.debug("No local term found for %r", term_or_url)
+        return None
+    return _row_to_result(row)
 
 
 async def get_random_term(
@@ -349,6 +413,7 @@ async def get_random_term(
     :return: A random `SearchResult`, or `None` if the local database (or
         the given topic within it) has no terms stored yet.
     """
+    logger.debug("Local get_random_term: topic=%r fuzzy=%r", topic, fuzzy)
     sql = "SELECT * FROM terms"
     params: list[typing.Any] = []
 
@@ -363,7 +428,10 @@ async def get_random_term(
 
     async with db.connection.execute(sql, params) as cursor:
         row = await cursor.fetchone()
-    return _row_to_result(row) if row is not None else None
+    if row is None:
+        logger.debug("No local term available for random pick (topic=%r)", topic)
+        return None
+    return _row_to_result(row)
 
 
 async def get_terms_urls(
@@ -389,12 +457,29 @@ async def get_terms_urls(
         see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
     :yield: Matching term URLs.
     """
+    logger.debug(
+        "Local get_terms_urls: query=%r topic=%r start_letter=%r limit=%r",
+        query,
+        topic,
+        start_letter,
+        limit,
+    )
+    started_at = time.monotonic()
+    yielded = 0
+
     if query:
         async for result in search(db, query, topic=topic, limit=limit, fuzzy=fuzzy):
             if start_letter and not (result.term or "").lower().startswith(start_letter.lower()):
                 continue
             if url := result.url:
+                yielded += 1
                 yield url
+        logger.debug(
+            "Local get_terms_urls(query=%r) yielded %d url(s) in %.3fs",
+            query,
+            yielded,
+            time.monotonic() - started_at,
+        )
         return
 
     resolved_topic = await _resolve_topic(db, topic, fuzzy)
@@ -419,7 +504,12 @@ async def get_terms_urls(
         rows = await cursor.fetchall()
     for row in rows:
         if url := row["url"]:
+            yielded += 1
             yield url
+
+    logger.debug(
+        "Local get_terms_urls yielded %d url(s) in %.3fs", yielded, time.monotonic() - started_at
+    )
 
 
 async def get_topics(db: Database) -> dict[str, int]:
@@ -440,6 +530,7 @@ async def get_topics(db: Database) -> dict[str, int]:
     async with db.connection.execute(sql) as cursor:
         async for row in cursor:
             counts[row["topic"]] = row["term_count"]
+    logger.debug("Local database has %d topic(s) stored", len(counts))
     return counts
 
 
@@ -452,4 +543,6 @@ async def count(db: Database) -> int:
     """
     async with db.connection.execute("SELECT COUNT(*) AS n FROM terms") as cursor:
         row = await cursor.fetchone()
-    return row["n"] if row is not None else 0
+    total = row["n"] if row is not None else 0
+    logger.debug("Local database has %d term(s) stored", total)
+    return total
