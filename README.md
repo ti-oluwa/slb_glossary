@@ -17,7 +17,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
     - [Library](#library)
     - [Command line](#command-line)
   - [Core concepts](#core-concepts)
-    - [`BrowserSession`: one session, many searches](#searchsession-one-session-many-searches)
+    - [`BrowserSession`: one session, many searches](#browsersession-one-session-many-searches)
     - [Retries and backoff](#retries-and-backoff)
     - [`SearchResult`](#searchresult)
     - [Live search: `slb_glossary.live`](#live-search-slb_glossarylive)
@@ -32,7 +32,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
   - [Saving results to a file: `slb_glossary.store`](#saving-results-to-a-file-slb_glossarystore)
   - [Command-line interface](#command-line-interface)
     - [Command reference](#command-reference)
-    - [Choosing a source: `--local` / `--live` / `--auto`](#choosing-a-source---local----live----auto)
+    - [Choosing a source: `--local` / `--live` / `--auto`](#choosing-a-source---local---live---auto)
     - [Saving and formatting output](#saving-and-formatting-output)
     - [The interactive TUI](#the-interactive-tui)
   - [Logging](#logging)
@@ -47,14 +47,15 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
 
 - **Pure async.** Every glossary lookup is an `async` function; nothing blocks the event loop.
 - **Lazy by default.** Search functions are async generators - they `yield` results as they're found instead of building a list up front, so you can `break` out early without paying for work you don't need.
-- **No browser install headaches.** Built on [patchright](https://pypi.org/project/patchright/), a stealth-patched Chromium automation driver, plus [playwright-stealth](https://pypi.org/project/playwright-stealth/) for extra fingerprint hardening. No Selenium, no manual driver management. Chromium, Firefox and WebKit are all supported.
+- **No browser install headaches.** Built on [patchright](https://pypi.org/project/patchright/), a stealth-patched Chromium automation driver, plus [playwright-stealth](https://pypi.org/project/playwright-stealth/) for extra fingerprint hardening. No manual driver management, no separate browser-driver toolchain to babysit. Chromium, Firefox and WebKit are all supported.
 - **An optional local cache.** `slb_glossary.local` keeps a SQLite (FTS5) copy of terms you've already looked up, complete with fuzzy topic matching and an optional bring-your-own-embedding vector store, so repeat lookups don't need the browser at all.
 - **One API for local, live, or both.** `slb_glossary.query` reads local-first and falls back to the live site only when needed, optionally caching whatever it fetches live for next time - or pin it to `local`-only or `live`-only when you know which you want.
-- **File-based configuration.** BrowserSession, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
-- **Functions, not classes.** There's no `Glossary` object to subclass or configure. Open a session, get a plain `BrowserSession` value back, and pass it to whichever function you need.
+- **File-based configuration.** Browser-session, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
+- **Mostly a functional API.** There's no `Glossary` object to construct, subclass, or configure. Open a session, get back a plain `BrowserSession` value, and pass it to whichever function you need - most of what you'll call is a free function, not a method on some stateful object.
 - **A full-featured CLI.** Every capability above - search, local caching, config, sync - is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
-- **A decoupled `store` package.** Saving results to CSV/JSON/TXT/XLSX lives in its own package that only depends on ["things shaped like" a `SearchResult`](#saving-results-to-a-file-slb_glossarystore), not on the glossary or browser code at all.
+- **A `store` package that stands on its own.** Saving results to CSV/JSON/TXT/XLSX lives in a separate package that only cares about ["things shaped like" a `SearchResult`](#saving-results-to-a-file-slb_glossarystore) - it has no idea the glossary or a browser even exists, so you can reuse it to save any of your own record types too.
 - **Configurable retries.** Flaky page loads are retried with a pluggable backoff policy - constant, linear, exponential or logarithmic.
+- **Reasonably complete on the API front.** Nearly everything the CLI can do, the library can do too - search, caching, config, sync, saving to a file - so you're not stuck shelling out just to get at a feature.
 
 ## Installation
 
@@ -150,18 +151,17 @@ Caching what you look up locally, then reading it back without a browser, is a f
 ```python
 import asyncio
 import slb_glossary as slb
-from slb_glossary import query
 
 
 async def main() -> None:
     async with slb.local.database() as db, slb.session() as session:
         # Local first; only opens a live page if the local DB has nothing.
         # persist=True writes whatever came back live into `db`.
-        async for result in query.search("water saturation", db=db, session=session, persist=True):
+        async for result in slb.query.search("water saturation", db=db, session=session, persist=True):
             print(result.term, "-", result.definition)
 
         # A repeat call for the same query is now served from `db` alone.
-        async for result in query.search("water saturation", db=db, source=query.Source.LOCAL):
+        async for result in slb.query.search("water saturation", db=db, source=slb.query.Source.LOCAL):
             print("(cached)", result.term)
 
 
@@ -233,9 +233,7 @@ async with slb.session_from_config("~/.config/slb-glossary/config.toml") as sess
 Page loads that briefly render before the glossary's JavaScript widget finishes populating are retried using a `RetryPolicy`:
 
 ```python
-from slb_glossary import RetryPolicy
-
-policy = RetryPolicy.exponential(base_delay=0.5, attempts=5, max_delay=8.0)
+policy = slb.RetryPolicy.exponential(base_delay=0.5, attempts=5, max_delay=8.0)
 async with slb.session(retry=policy) as session:
     ...
 ```
@@ -258,33 +256,31 @@ class SearchResult(typing.NamedTuple):
     related: tuple[RelatedTerm, ...] | None = None
 ```
 
-Being a plain `NamedTuple`, it already supports `result._asdict()`, `result._replace(...)`, indexing, and unpacking - no custom methods needed. `related` holds `RelatedTerm(term, url)` pairs parsed from a definition's "See related terms" list, when present.
+It's a plain `NamedTuple` underneath, so `result._asdict()`, `result._replace(...)`, indexing, and unpacking all work as you'd expect. It also adds `result.fields` and `result.asdict()` - the shape [`slb_glossary.store`](#saving-results-to-a-file-slb_glossarystore) and the CLI's output actually use - so you rarely need to reach for the underscore-prefixed versions yourself. `related` holds `RelatedTerm(term, url)` pairs parsed from a definition's "See related terms" list, when present.
 
 ### Live search: `slb_glossary.live`
 
 `slb_glossary.live` talks only to the live site and never touches the local database. All of its functions are **async generators**: iterate them with `async for`, and nothing more is fetched than you actually consume.
 
 ```python
-from slb_glossary import live
-
 # Search the whole glossary for a query
-async for result in live.search(session, "gas lift", limit=5):
+async for result in slb.live.search(session, "gas lift", limit=5):
     ...
 
 # Search within one or more topics (comma-separated)
-async for result in live.search(session, "flow", topic="Well completions,Production"):
+async for result in slb.live.search(session, "flow", topic="Well completions,Production"):
     ...
 
 # Every term filed under a topic - one result per term
-async for result in live.get_terms_on(session, topic="Directional drilling"):
+async for result in slb.live.get_terms_on(session, topic="Directional drilling"):
     ...
 
 # Just the term detail URLs, if that's all you need
-async for url in live.get_terms_urls(session, query="porosity"):
+async for url in slb.live.get_terms_urls(session, query="porosity"):
     ...
 
 # Fetch every definition on one term detail page directly
-async for result in live.get_results_from_url(session, url):
+async for result in slb.live.get_results_from_url(session, url):
     ...
 ```
 
@@ -320,13 +316,11 @@ With no path given, it opens at the OS-appropriate user data directory (see `slb
 Sync functions in `slb_glossary.local.sync` pull from a live `BrowserSession` into a `Database`, from cheapest to most expensive:
 
 ```python
-from slb_glossary import local
-
-await local.sync_topics(db, session)  # just the topic list/counts
-await local.sync_query(db, session, "porosity")  # one query's results
-await local.sync_topic(db, session, "Drilling")  # every term under a topic
-await local.sync_letter(db, session, "p")  # every term starting with "p"
-await local.sync_all(db, session, concurrency=3)  # the entire glossary
+await slb.local.sync_topics(db, session)  # just the topic list/counts
+await slb.local.sync_query(db, session, "porosity")  # one query's results
+await slb.local.sync_topic(db, session, "Drilling")  # every term under a topic
+await slb.local.sync_letter(db, session, "p")  # every term starting with "p"
+await slb.local.sync_all(db, session, concurrency=3)  # the entire glossary
 ```
 
 Prefer `sync_query`/`sync_topic`/`sync_letter` over `sync_all` where you can - fetching only what you actually look up keeps this package's footprint on the live site as light as possible. Each returns a `SyncSummary` (`terms_written`, `total_terms`, `topics`, `synced_at`), and updates `metadata.json` alongside the database.
@@ -336,29 +330,29 @@ Prefer `sync_query`/`sync_topic`/`sync_letter` over `sync_all` where you can - f
 `slb_glossary.local`'s query functions mirror the shapes `slb_glossary.live`'s functions return, so code written against one mostly works against the other:
 
 ```python
-async for result in local.search(db, "porosity", limit=10):
+async for result in slb.local.search(db, "porosity", limit=10):
     ...
 
-async for result in local.get_terms_on(db, "Drilling"):
+async for result in slb.local.get_terms_on(db, "Drilling"):
     ...
 
-result = await local.get_term(db, "porosity")  # exact name or URL
-pick = await local.get_random_term(db, topic="Drilling")
-topics = await local.get_topics(db)  # {topic: term_count}
-total = await local.count(db)
+result = await slb.local.get_term(db, "porosity")  # exact name or URL
+pick = await slb.local.get_random_term(db, topic="Drilling")
+topics = await slb.local.get_topics(db)  # {topic: term_count}
+total = await slb.local.count(db)
 ```
 
 `flush(db)` deletes every stored term (keeping sync history); `reset(db)` also forgets the sync history.
 
 ### Fuzzy topic matching
 
-Topic filters (`search`, `get_terms_on`, `random_term`, `get_terms_urls`) match locally stored topic names exactly, case-insensitively, by default - the local database doesn't have access to the live site's full topic list to fuzzy-match against automatically. Pass `fuzzy=True` to tolerate minor misspellings or partial names instead, resolved against whatever topics are actually present locally:
+Topic filters (`search`, `get_terms_on`, `get_random_term`, `get_terms_urls`) match locally stored topic names exactly, case-insensitively, by default - the local database doesn't have access to the live site's full topic list to fuzzy-match against automatically. Pass `fuzzy=True` to tolerate minor misspellings or partial names instead, resolved against whatever topics are actually present locally:
 
 ```python
-async for result in local.get_terms_on(db, "Petrophysic", fuzzy=True):
+async for result in slb.local.get_terms_on(db, "Petrophysic", fuzzy=True):
     ...  # resolves to "Petrophysics" if that's what's stored locally
 
-local.fuzzy_match_topics(await local.get_topics(db), "Drillng,Geolog")
+slb.local.fuzzy_match_topics(await slb.local.get_topics(db), "Drillng,Geolog")
 # "Drilling,Geology"
 ```
 
@@ -369,7 +363,7 @@ On the CLI, this is `slb-glossary local search --topic Petrophysic --fuzzy`.
 `load_file` imports a CSV, JSON, or `.xlsx`/`.xlsm` file (the last needs the `xlsx` extra) into the local database, with configurable column/field names:
 
 ```python
-await local.load_file(
+await slb.local.load_file(
     db,
     "my_terms.csv",
     term_field="Term",
@@ -385,9 +379,9 @@ Rows need at least a term name; every other field is optional. A row with no URL
 `slb_glossary.local` doesn't bundle an embedding model - that would drag in a heavy ML dependency most callers won't use. Instead, `slb_glossary.local.vectors` stores whatever embedding vector you've already computed and ranks stored vectors by cosine similarity against a query vector you supply:
 
 ```python
-await local.upsert_vector(db, result.url, my_embedding, model="text-embedding-3-small")
+await slb.local.upsert_vector(db, result.url, my_embedding, model="text-embedding-3-small")
 
-matches = await local.vector_search(
+matches = await slb.local.vector_search(
     db, my_query_embedding, model="text-embedding-3-small", limit=5
 )
 for result, similarity in matches:
@@ -401,10 +395,8 @@ This is a brute-force scan, fine for a glossary-sized dataset but not built for 
 `slb_glossary.local` only ever reads the local database, and `slb_glossary.live` only ever talks to the live site. `slb_glossary.query` is the layer that picks between (or combines) the two, so you don't have to hand-roll the "check local, fall back live, maybe cache what came back" dance yourself:
 
 ```python
-from slb_glossary import query
-
 async with slb.local.database() as db, slb.session() as session:
-    async for result in query.search("water saturation", db=db, session=session, persist=True):
+    async for result in slb.query.search("water saturation", db=db, session=session, persist=True):
         print(result.term, "-", result.definition)
 ```
 
@@ -416,18 +408,16 @@ At least one of `db` or `session` must be given to every function here - there's
 | `LIVE`           | The live glossary only. Never touches the local database. Requires `session`.                   |
 | `AUTO`    | (Default when both `db` and `session` are given.) Try `db` first; only fall back to `session` if the local database has nothing. Pass `persist=True` to cache whatever came back live. |
 
-When only one of `db`/`session` is given, `AUTO` simply behaves like whichever of `LOCAL`/`LIVE` that one supports. The available functions are `search`, `get_terms_on`, `get_term`, `related_terms`, `random_term`, and `compare` (look up several terms at once); each accepts a `fuzzy=True` flag that, for any local read, tolerates minor misspellings/partial names in `topic` (see [Fuzzy topic matching](#fuzzy-topic-matching) - live reads already fuzzy-match topics unconditionally).
+When only one of `db`/`session` is given, `AUTO` simply behaves like whichever of `LOCAL`/`LIVE` that one supports. The available functions mirror `slb_glossary.live`/`slb_glossary.local`'s own shapes: `search`, `get_terms_on`, `get_terms_urls`, and `get_topics` stream/return several results; `get_term`, `related_terms`, and `get_random_term` return one; `compare` looks up several terms at once. Each accepts a `fuzzy=True` flag that, for any local read, tolerates minor misspellings/partial names in `topic` (see [Fuzzy topic matching](#fuzzy-topic-matching) - live reads already fuzzy-match topics unconditionally).
 
-`get_term`, `related_terms`, and `random_term` return a `TermLookup(value, source, persisted)`, so callers can tell where a result actually came from and whether it was written back to `db`.
+`get_term`, `related_terms`, and `get_random_term` return a `TermLookup(value, source, persisted)`, so callers can tell where a result actually came from and whether it was written back to `db`.
 
 ## Configuration: `slb_glossary.config`
 
 `slb_glossary.config.Config` is a dataclass, loadable from and savable to a JSON, TOML, or YAML file (TOML/YAML need the `config` extra):
 
 ```python
-from slb_glossary import Config
-
-config = Config.load()  # default path if it exists, else built-in defaults
+config = slb.Config.load()  # default path if it exists, else built-in defaults
 async with slb.session_from_config(config) as session:
     ...
 ```
@@ -452,7 +442,7 @@ On the CLI, `slb-glossary config` opens a guided, section-by-section wizard; `co
 
 ## Saving results to a file: `slb_glossary.store`
 
-`slb_glossary.store` is a self-contained package with no dependency on the rest of `slb_glossary`. `save` works with any sequence of records that look like a `NamedTuple` (they just need `_asdict()` and `_fields`) - so it can save `SearchResult`s, records from your own code, or the async generators the search functions return directly:
+`slb_glossary.store` is a self-contained package with no dependency on the rest of `slb_glossary` - it doesn't know a browser or a glossary exists. `save` works with anything that satisfies `RecordLike`: a `.fields` property and an `.asdict()` method (`SearchResult` already has both - see [`SearchResult`](#searchresult)). That's it, so it happily saves `SearchResult`s, your own records, or the async generators the search functions return directly, without you collecting them first:
 
 ```python
 results = slb.live.search(session, "gas lift")
@@ -467,23 +457,26 @@ await slb.store.save(results_list, "results.data", format="csv")
 
 Built-in formats: `csv`, `json`, `jsonl`/`ndjson`, `txt`, and `xlsx` (requires the `xlsx` extra). Check what's available with `slb.store.supported_formats()`.
 
-Add support for a new format with `register_writer` - no subclassing required:
+Add support for a new format with the `writer` decorator - no subclassing required:
 
 ```python
 import pathlib
-from slb_glossary.store import register_writer, RecordLike
+
+from slb_glossary.store import RecordLike  # just a type hint, so a direct import is fine here
 
 
+@slb.store.writer("yaml")
 async def write_yaml(records: list[RecordLike], destination: pathlib.Path) -> None:
     import yaml
 
     with open(destination, "w") as file:
-        yaml.dump([record._asdict() for record in records], file)
+        yaml.dump([record.asdict() for record in records], file)
 
 
-register_writer("yaml", write_yaml)
 await slb.store.save(results_list, "results.yaml")
 ```
+
+Prefer a plain function call over a decorator? `slb.store.register_writer("yaml", write_yaml)` does the same thing.
 
 ## Command-line interface
 
@@ -502,16 +495,16 @@ Run `slb --help`, or `--help` after any subcommand, for the full set of options 
 
 | Command            | Talks to                       | What it does                                                                                     |
 | -------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `search`             | Live only                          | Free-text search of the whole glossary.                                                          |
-| `terms`              | Live only                          | Every term filed under a topic.                                                                  |
-| `topics list`        | Live only                          | List every topic (discipline) with term counts.                                                  |
+| `search`             | Local, live, or auto               | Free-text search of the whole glossary. See [Choosing a source](#choosing-a-source---local---live---auto). |
+| `terms`              | Local, live, or auto               | Every term filed under a topic.                                                                  |
+| `topics list`        | Local, live, or auto               | List every topic (discipline) with term counts.                                                  |
 | `topics refresh`     | Live only                          | Reload the topic list directly from the site.                                                    |
-| `urls list`          | Live only                          | List term detail-page URLs matching a query/topic/letter.                                        |
+| `urls list`          | Local, live, or auto               | List term detail-page URLs matching a query/topic/letter.                                        |
 | `urls fetch`         | Live only                          | Fetch every definition on one term detail-page URL.                                               |
-| `define`             | Local, live, or intelligent        | Look up a single term's definition. See [Choosing a source](#choosing-a-source---local---live---auto). |
-| `related`            | Local, live, or intelligent        | List a term's "related terms" links.                                                             |
-| `compare`            | Local, live, or intelligent        | Look up several terms side by side.                                                               |
-| `random`             | Local, live, or intelligent        | Print one or more randomly chosen terms.                                                          |
+| `define`             | Local, live, or auto               | Look up a single term's definition.                                                               |
+| `related`            | Local, live, or auto               | List a term's "related terms" links.                                                             |
+| `compare`            | Local, live, or auto               | Look up several terms side by side.                                                               |
+| `random`             | Local, live, or auto               | Print one or more randomly chosen terms.                                                          |
 | `sync`               | Live -> local                      | Check the browser engine is installed, then refresh the local database.                          |
 | `update`             | Live -> local                      | Refresh the local database (assumes the browser is already installed).                            |
 | `local path`         | Local only                          | Print the resolved database/metadata file paths.                                                 |
@@ -523,20 +516,20 @@ Run `slb --help`, or `--help` after any subcommand, for the full set of options 
 | `config`             | -                                  | Interactive wizard for the config file (see [Configuration](#configuration-slb_glossaryconfig)). |
 | `install`            | -                                  | Install/list/remove/update the browser engines patchright launches.                              |
 
-`search`, `terms`, `topics`, and `urls` are the direct, live-only equivalents of `slb_glossary.live`'s functions - they take the full set of session-configuring flags (`--language`, `--browser-type`, `--headless`, retry options, and so on; see `session_options` in the library) but no `--local`/`--live`/`--auto`, since there's no local database in the picture for them by design. `local search`/`local get` are their local-only counterparts, reading only the cached copy. `define`/`related`/`compare`/`random` sit in between: they're built on `slb_glossary.query`, so they support both.
+Every command in the "Local, live, or auto" rows is built on `slb_glossary.query`, so they all take the same `--local`/`--live`/`--auto` trio described below. `topics refresh` and `urls fetch` are the two holdouts that stay live-only by design: a "refresh" is explicitly asking for a fresh copy from the site, and fetching one specific URL doesn't have a meaningful local equivalent. `local search`/`local get` read the cached copy exclusively, with no live fallback at all - reach for those when you want a hard guarantee that nothing will touch the network.
 
 ### Choosing a source: `--local` / `--live` / `--auto`
 
-`define`, `related`, `compare`, and `random` all accept:
+`search`, `terms`, `urls list`, `topics list`, `define`, `related`, `compare`, and `random` all accept:
 
 ```bash
 slb define porosity --local           # local database only, error if disabled/missing
 slb define porosity --live --cache    # live site only; --cache saves the result locally
-slb define porosity --auto     # local first, live as a fallback (the default)
+slb define porosity --auto            # local first, live as a fallback (the default)
 slb define porosity --source live     # equivalent, spelled out
 ```
 
-`--db-path PATH` overrides the local database file for that run (see `local path`/`Config.local`). With `--auto` (the default), a local hit never launches a browser at all.
+`--db-path PATH` overrides the local database file for that run (see `local path`/`Config.local`). With `--auto` (the default), a local hit never launches a browser at all - so a search you've already cached comes back instantly, and only a genuine cache miss pays for opening a page.
 
 ### Saving and formatting output
 
@@ -578,7 +571,9 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
 - Because live search is lazy, `async for result in live.search(session, "x"): break` after the first result does the minimum work needed to produce it.
 - Reuse one `BrowserSession` for every live search you need instead of opening a new one per query - most of the cost of a session is the one-time browser launch and topic fetch.
 - A `BrowserSession` drives a single browser page and isn't safe to share across concurrent coroutines. For parallel searches, open one session per concurrent task, or use a function's `concurrency` argument to open extra pages on the same session.
-- A local-database read never launches a browser; `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) takes advantage of this by trying the local database first.
+- A local-database read never launches a browser; `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) takes advantage of this by trying the local database first. On the CLI, this means `slb search "gas lift"` costs nothing beyond an SQLite read on a repeat run, and only touches the network the first time.
+- `--concurrency` (on `search`/`terms`, and the equivalent `concurrency=` argument in the library) fetches several term detail pages in parallel on a live search - useful for a first-time sync of a large query, but keep it modest, since it's still one site being asked for more work at once.
+- `slb-glossary local sync`/`update` (or their `slb_glossary.local.sync` counterparts) let you build up the local cache ahead of time, in one batch, so day-to-day lookups afterward stay entirely local.
 
 ## Exceptions
 
@@ -588,6 +583,7 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
 - `slb_glossary.ConfigError` - a config file or dotted key (`Config.get`/`Config.set`) was invalid.
 - `slb_glossary.DatabaseError` - the local database failed to open, query, or import from a file.
 - `slb_glossary.QueryError` - `slb_glossary.query` can't satisfy a lookup with the source(s) it was given (e.g. `Source.LOCAL` with no `db`).
+- `slb_glossary.LoggingError` - a custom `log_sink` (see [Logging](#logging)) couldn't be set up.
 - `slb_glossary.store.UnsupportedFormatError` - `save` was asked for a format with no registered writer.
 - `slb_glossary.store.WriterError` - the registered writer raised while writing, e.g. a permissions error or a full disk. The original exception is chained as `__cause__`.
 
