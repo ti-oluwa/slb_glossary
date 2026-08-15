@@ -3,8 +3,8 @@ Pluggable logging sinks for `slb_glossary`, meant for CLI/bug-report use.
 
 `slb_glossary.__init__` calls `logging.basicConfig` so the package logs
 somewhere useful out of the box. This module exists for callers who want
-more control over *where* those log records end up - a file for bug
-reports, `stderr`/`stdout` explicitly, or a fully custom destination -
+more control over *where* those log records end up. May be a file for bug
+reports, `stderr`/`stdout` explicitly, or a fully custom destination,
 without having to hand-roll `logging.Handler` boilerplate themselves.
 
 ```python

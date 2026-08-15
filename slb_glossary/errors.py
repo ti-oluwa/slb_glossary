@@ -1,5 +1,7 @@
 """Exceptions raised by the package."""
 
+import pathlib
+
 
 class GlossaryError(Exception):
     """Base exception for all errors in the glossary"""
@@ -31,3 +33,24 @@ class QueryError(GlossaryError):
 
 class LoggingError(GlossaryError):
     """Raised when a `slb_glossary.logging` sink (e.g. `--log-to`/`--log-sink`) could not be set up."""
+
+
+class UnsupportedFormatError(ValueError, GlossaryError):
+    """Raised when `save` is asked to write a format with no registered writer."""
+
+
+class WriterError(OSError, GlossaryError):
+    """
+    Raised when a registered writer fails while writing `records`.
+
+    Wraps whatever the writer itself raised (typically an `OSError` from
+    the filesystem, but any exception is caught) with the destination path
+    and resolved format attached, so callers get useful context without
+    needing to inspect the writer's internals. The original exception is
+    always available via `__cause__`.
+    """
+
+    def __init__(self, message: str, *, destination: pathlib.Path, format: str) -> None:
+        super().__init__(message)
+        self.destination = destination
+        self.format = format

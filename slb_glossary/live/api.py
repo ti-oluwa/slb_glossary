@@ -8,9 +8,9 @@ import time
 import typing
 from collections.abc import AsyncIterable
 
-from slb_glossary.grammar import resolve_grammatical_label
-from slb_glossary.models import BrowserSession, RelatedTerm, SearchResult
-from slb_glossary.parsers import (
+from slb_glossary.live.browser import BrowserSession
+from slb_glossary.live.grammar import resolve_grammatical_label
+from slb_glossary.live.parsers import (
     TermParagraph,
     get_result_links,
     get_results_header_text,
@@ -19,8 +19,9 @@ from slb_glossary.parsers import (
     get_term_name,
     get_total_term_count,
 )
-from slb_glossary.topics import get_topic_match
-from slb_glossary.urls import build_pager_query, build_search_url
+from slb_glossary.live.urls import build_pager_query, build_search_url
+from slb_glossary.models import RelatedTerm, SearchResult
+from slb_glossary.utils import get_topic_match
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +135,7 @@ async def get_terms_urls(
     :param topic: Restrict results to this topic, or several
         comma-separated topics, e.g. `"Well completions,Perforating"`. Need
         not be an exact match; the closest topic(s) in `session.topics` are
-        used. See `slb_glossary.topics.get_topic_match`.
+        used. See `slb_glossary.utils.get_topic_match`.
     :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of URLs to yield. Yields every matching URL if `None`.
     :yield: Term detail page URLs, in the order the glossary site returns them.

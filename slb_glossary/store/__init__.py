@@ -1,8 +1,8 @@
 """
-API for persisting search results to a store.
+API for persisting search results to a (file) store.
 
-`save` is the only function most callers need; `register_writer` (or the
-`@writer` decorator) extends it to new file formats without subclassing
+`save` is the only function most callers need; The `@writer` decorator
+extends it to new file formats without subclassing
 anything. See `slb_glossary.store.writers` for the built-in writers and the
 shape a custom one should have.
 """
@@ -10,41 +10,19 @@ shape a custom one should have.
 import pathlib
 import typing
 
+from slb_glossary.errors import UnsupportedFormatError, WriterError
+
 from .records import RecordLike, materialize_records
 from .writers import WRITERS, Writer, records_to_dicts
 
 __all__ = [
     "RecordLike",
-    "UnsupportedFormatError",
-    "WriterError",
     "Writer",
     "writer",
-    "register_writer",
     "records_to_dicts",
     "save",
     "supported_formats",
 ]
-
-
-class UnsupportedFormatError(ValueError):
-    """Raised when `save` is asked to write a format with no registered writer."""
-
-
-class WriterError(OSError):
-    """
-    Raised when a registered writer fails while writing `records`.
-
-    Wraps whatever the writer itself raised (typically an `OSError` from
-    the filesystem, but any exception is caught) with the destination path
-    and resolved format attached, so callers get useful context without
-    needing to inspect the writer's internals. The original exception is
-    always available via `__cause__`.
-    """
-
-    def __init__(self, message: str, *, destination: pathlib.Path, format: str) -> None:
-        super().__init__(message)
-        self.destination = destination
-        self.format = format
 
 
 async def save(
@@ -79,18 +57,18 @@ async def save(
     destination = pathlib.Path(destination)
     resolved_format = (format or destination.suffix.lstrip(".") or "txt").lower()
 
-    selected_writer = WRITERS.get(resolved_format)
-    if selected_writer is None:
+    writer = WRITERS.get(resolved_format)
+    if writer is None:
         raise UnsupportedFormatError(
             f"No writer registered for '{resolved_format}' files. "
             f"Supported formats: {', '.join(supported_formats())}. "
-            "Register a custom writer with `register_writer`."
+            "Register a custom writer with `@writer(format)`."
         )
 
     record_list = await materialize_records(records)
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
-        await selected_writer(record_list, destination)
+        await writer(record_list, destination)
     except Exception as exc:
         raise WriterError(
             f"Failed to write {len(record_list)} record(s) to {destination!s} "
@@ -100,7 +78,7 @@ async def save(
         ) from exc
 
 
-def register_writer(format: str, writer: Writer) -> None:
+def _register_writer(format: str, writer: Writer) -> None:
     """
     Register `writer` as the handler for `format`, adding or replacing it.
 
@@ -123,7 +101,7 @@ def writer(format: str) -> typing.Callable[[Writer], Writer]:
     """
 
     def decorator(func: Writer) -> Writer:
-        register_writer(format, func)
+        _register_writer(format, func)
         return func
 
     return decorator

@@ -5,7 +5,6 @@ import typing
 import click
 
 from slb_glossary import local
-from slb_glossary.browser import session as browser_session
 from slb_glossary.cli.browsers import (
     BrowserInstallError,
     install_browsers,
@@ -22,6 +21,7 @@ from slb_glossary.cli.sync_options import (
     validate_sync_filters,
 )
 from slb_glossary.cli.tui import launch_tui
+from slb_glossary.live.browser import session as browser_session
 from slb_glossary.local.sync import SyncSummary
 
 __all__ = ["sync"]

@@ -2,13 +2,11 @@
 
 import asyncio
 import logging
-import typing
-from difflib import get_close_matches
 
 from patchright.async_api import Page
 
-from slb_glossary.models import BrowserSession
-from slb_glossary.parsers import (
+from slb_glossary.live.browser import BrowserSession
+from slb_glossary.live.parsers import (
     FACET_EXPAND_SELECTOR,
     FACET_HEADER_SELECTOR,
     get_element_text,
@@ -21,7 +19,7 @@ from slb_glossary.retries import retry as retry_func
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["fetch_topics", "get_topic_match", "refresh_topics"]
+__all__ = ["fetch_topics", "refresh_topics"]
 
 
 async def fetch_topics(
@@ -51,7 +49,7 @@ async def fetch_topics(
         await page.goto(base_url, wait_until="domcontentloaded")
         return await get_element_text(page, FACET_HEADER_SELECTOR)
 
-    header_text = await retry_func(_load_facet_header, policy=retry)
+    header_text = await retry_func(_load_facet_header, policy=retry, until=bool)
     if not header_text:
         logger.warning("Topics did not load after %d attempts", retry.attempts)
         return {}, 0
@@ -89,36 +87,3 @@ async def refresh_topics(session: BrowserSession) -> BrowserSession:
     session.topics = topics
     session.size = size
     return session
-
-
-def get_topic_match(topics: typing.Mapping[str, int], topic: str) -> str:
-    """
-    Resolve a user-supplied topic name to its closest match in `topics`.
-
-    :param topics: Known glossary topics, as returned by `fetch_topics` or
-        held on `BrowserSession.topics`.
-    :param topic: One topic name, or several separated by commas, e.g.
-        `"Geophysics,Geology"`. Matching is case-insensitive and tolerant of
-        minor misspellings.
-    :return: The resolved topic(s), comma-separated and title-cased, ready
-        to pass to `slb_glossary.urls.build_search_url`. Returns `""` if
-        `topic` is empty or any of its parts has no close match in `topics`.
-    """
-    if not topic:
-        return topic
-
-    available = [name.lower() for name in topics]
-    resolved: list[str] = []
-    for raw_part in topic.split(","):
-        candidate = raw_part.strip().lower()
-        if candidate in available:
-            resolved.append(candidate)
-            continue
-
-        matches = get_close_matches(candidate, available, n=1, cutoff=0.5)
-        if not matches:
-            logger.warning("No topic match found for %r", candidate)
-            return ""
-        resolved.append(matches[0])
-
-    return ",".join(resolved).title()

@@ -123,12 +123,12 @@ async def retry(
     func: typing.Callable[[], typing.Awaitable[T | None]],
     *,
     policy: RetryPolicy = DEFAULT_RETRY_POLICY,
+    until: typing.Callable[[T | None], bool] | None = None,
+    raise_exception: bool = True,
 ) -> T | None:
     """
-    Call `func` repeatedly, backing off per `policy`, until it returns truthy.
-
-    Useful for glossary pages that briefly render empty content while their
-    JavaScript search widget finishes loading.
+    Call `func` repeatedly, backing off per `policy`, until it is successful (no error),
+    and the condition (*until*) is satisfied, if provided.
 
     :param func: A zero-argument async callable to retry.
     :param policy: Controls how many attempts are made and how long to wait
@@ -137,18 +137,24 @@ async def retry(
         once `policy.attempts` is exhausted.
     """
     result: T | None = None
+    err: BaseException | None = None
     for attempt in range(1, policy.attempts + 1):
-        result = await func()
-        if result:
-            return result
+        try:
+            result = await func()
+            if until is not None and until(result):
+                return result
+        except BaseException as exc:
+            err = exc
+            logger.debug("Error occurred on attempt %d: %s", attempt, exc, exc_info=True)
+
         if attempt < policy.attempts:
             delay = policy.delay_for_attempt(attempt)
             logger.debug(
-                "Attempt %d/%d returned nothing, retrying in %.2fs",
-                attempt,
-                policy.attempts,
-                delay,
+                "Attempt %d/%d failed, retrying in %.2fs", attempt, policy.attempts, delay
             )
             await asyncio.sleep(delay)
+
     logger.warning("Gave up after %d attempts calling %s", policy.attempts, func)
+    if raise_exception and err is not None:
+        raise err
     return result

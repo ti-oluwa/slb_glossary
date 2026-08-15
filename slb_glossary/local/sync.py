@@ -9,13 +9,13 @@ import dataclasses
 import datetime
 import logging
 
-from slb_glossary.live import get_results_from_urls, get_terms_urls
-from slb_glossary.live import get_terms_on as fetch_terms_on
-from slb_glossary.live import search as live_search
+from slb_glossary.live.api import get_results_from_urls, get_terms_urls
+from slb_glossary.live.api import get_terms_on as fetch_terms_on
+from slb_glossary.live.api import search as live_search
+from slb_glossary.live.browser import BrowserSession
 from slb_glossary.local.api import count as count_terms
 from slb_glossary.local.api import get_topics, upsert_results
 from slb_glossary.local.models import Database, Metadata
-from slb_glossary.models import BrowserSession
 
 logger = logging.getLogger(__name__)
 

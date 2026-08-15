@@ -11,8 +11,8 @@ from urllib.parse import urljoin
 
 from patchright.async_api import Page
 
+from slb_glossary.live.urls import BASE_URL
 from slb_glossary.models import RelatedTerm
-from slb_glossary.urls import BASE_URL
 from slb_glossary.utils import parse_int
 
 logger = logging.getLogger(__name__)

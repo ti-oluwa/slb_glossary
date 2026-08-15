@@ -160,7 +160,7 @@ def fuzzy_match_topics(
     """
     Resolve a user-supplied topic name to its closest match(es) among locally stored topics.
 
-    Same difflib-based approach as `slb_glossary.topics.get_topic_match`
+    Same difflib-based approach as `slb_glossary.utils.get_topic_match`
     uses for the live glossary's topic list, applied to whatever's actually
     been synced/imported into the local database instead.
 

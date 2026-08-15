@@ -5,8 +5,8 @@ import typing
 
 import click
 
-from slb_glossary.browser import BrowserType, ResourceType
 from slb_glossary.config import Config
+from slb_glossary.live.browser import BrowserType, ResourceType
 from slb_glossary.models import Language
 from slb_glossary.retries import BackoffType
 

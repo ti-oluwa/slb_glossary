@@ -1,7 +1,7 @@
 """The record shape `slb_glossary.store` saves, and how to collect it."""
 
 import typing
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, Sequence
 
 __all__ = ["RecordLike", "materialize_records"]
 
@@ -32,6 +32,6 @@ async def materialize_records(
         generators `slb_glossary.search` yields results from.
     :return: `records` as a plain list.
     """
-    if hasattr(records, "__aiter__"):
-        return [record async for record in records]  # type: ignore[union-attr]
-    return list(records)  # type: ignore[union-attr]
+    if isinstance(records, AsyncIterable):
+        return [record async for record in records]
+    return list(records)

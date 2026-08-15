@@ -4,6 +4,7 @@ import logging
 import sys
 import time
 import typing
+from difflib import get_close_matches
 
 from rich import box
 from rich.console import Console
@@ -13,6 +14,8 @@ from rich.table import Table
 from slb_glossary.models import SearchResult
 
 __all__ = ["parse_int", "print_results", "async_print_results", "log_timed_yields"]
+
+logger = logging.getLogger(__name__)
 
 T = typing.TypeVar("T")
 
@@ -27,6 +30,39 @@ def parse_int(text: str) -> int:
         commas and surrounding whitespace are stripped.
     """
     return int(text.replace(",", "").replace(" ", ""))
+
+
+def get_topic_match(topics: typing.Mapping[str, int], topic: str) -> str:
+    """
+    Resolve a user-supplied topic name to its closest match in `topics`.
+
+    :param topics: Known glossary topics, as returned by `fetch_topics` or
+        held on `BrowserSession.topics`.
+    :param topic: One topic name, or several separated by commas, e.g.
+        `"Geophysics,Geology"`. Matching is case-insensitive and tolerant of
+        minor misspellings.
+    :return: The resolved topic(s), comma-separated and title-cased, ready
+        to pass to `slb_glossary.urls.build_search_url`. Returns `""` if
+        `topic` is empty or any of its parts has no close match in `topics`.
+    """
+    if not topic:
+        return topic
+
+    available = [name.lower() for name in topics]
+    resolved: list[str] = []
+    for raw_part in topic.split(","):
+        candidate = raw_part.strip().lower()
+        if candidate in available:
+            resolved.append(candidate)
+            continue
+
+        matches = get_close_matches(candidate, available, n=1, cutoff=0.5)
+        if not matches:
+            logger.warning("No topic match found for %r", candidate)
+            return ""
+        resolved.append(matches[0])
+
+    return ",".join(resolved).title()
 
 
 _ACRONYMS = frozenset({"url", "id"})

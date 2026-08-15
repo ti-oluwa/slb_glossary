@@ -125,12 +125,14 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex; uv tool install slb-g
 Whichever method you use, finish with the one-time browser install - `sync` does this for you too, see below:
 
 ```bash
-slb-glossary install
+slb-glossary install "chromium" # Or "firefox"/"webkit"
 ```
 
 ## Quick start
 
 ### Library
+
+Do a quick live search on the glossary:
 
 ```python
 import asyncio
@@ -138,7 +140,7 @@ import slb_glossary as slb
 
 
 async def main() -> None:
-    async with slb.session() as session:
+    async with slb.live.session() as session:
         async for result in slb.live.search(session, "porosity"):
             print(result.term, "-", result.definition)
 
@@ -154,14 +156,14 @@ import slb_glossary as slb
 
 
 async def main() -> None:
-    async with slb.local.database() as db, slb.session() as session:
+    async with slb.local.database() as db, slb.live.session() as session:
         # Local first; only opens a live page if the local DB has nothing.
         # persist=True writes whatever came back live into `db`.
-        async for result in slb.query.search("water saturation", db=db, session=session, persist=True):
+        async for result in slb.search("water saturation", db=db, session=session, persist=True):
             print(result.term, "-", result.definition)
 
         # A repeat call for the same query is now served from `db` alone.
-        async for result in slb.query.search("water saturation", db=db, source=slb.query.Source.LOCAL):
+        async for result in slb.search("water saturation", db=db):
             print("(cached)", result.term)
 
 
@@ -197,7 +199,7 @@ finally:
 Prefer `session` for anything but long-lived services; it guarantees the browser is closed even if your code raises:
 
 ```python
-async with slb.session(headless=True) as session:
+async with slb.live.session(headless=True) as session:
     ...
 ```
 
@@ -234,7 +236,7 @@ Page loads that briefly render before the glossary's JavaScript widget finishes 
 
 ```python
 policy = slb.RetryPolicy.exponential(base_delay=0.5, attempts=5, max_delay=8.0)
-async with slb.session(retry=policy) as session:
+async with slb.live.session(retry=policy) as session:
     ...
 ```
 
@@ -395,7 +397,7 @@ This is a brute-force scan, fine for a glossary-sized dataset but not built for 
 `slb_glossary.local` only ever reads the local database, and `slb_glossary.live` only ever talks to the live site. `slb_glossary.query` is the layer that picks between (or combines) the two, so you don't have to hand-roll the "check local, fall back live, maybe cache what came back" dance yourself:
 
 ```python
-async with slb.local.database() as db, slb.session() as session:
+async with slb.local.database() as db, slb.live.session() as session:
     async for result in slb.query.search("water saturation", db=db, session=session, persist=True):
         print(result.term, "-", result.definition)
 ```
@@ -461,22 +463,19 @@ Add support for a new format with the `writer` decorator - no subclassing requir
 
 ```python
 import pathlib
+import yaml
 
 from slb_glossary.store import RecordLike  # just a type hint, so a direct import is fine here
 
 
 @slb.store.writer("yaml")
 async def write_yaml(records: list[RecordLike], destination: pathlib.Path) -> None:
-    import yaml
-
     with open(destination, "w") as file:
         yaml.dump([record.asdict() for record in records], file)
 
 
 await slb.store.save(results_list, "results.yaml")
 ```
-
-Prefer a plain function call over a decorator? `slb.store.register_writer("yaml", write_yaml)` does the same thing.
 
 ## Command-line interface
 
@@ -495,7 +494,7 @@ Run `slb --help`, or `--help` after any subcommand, for the full set of options 
 
 | Command            | Talks to                       | What it does                                                                                     |
 | -------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `search`             | Local, live, or auto               | Free-text search of the whole glossary. See [Choosing a source](#choosing-a-source---local---live---auto). |
+| `search`             | Local, live, or auto               | Free-text search of the whole glossary. See [Choosing a source](#choosing-a-source---local----live----auto). |
 | `terms`              | Local, live, or auto               | Every term filed under a topic.                                                                  |
 | `topics list`        | Local, live, or auto               | List every topic (discipline) with term counts.                                                  |
 | `topics refresh`     | Live only                          | Reload the topic list directly from the site.                                                    |

@@ -49,7 +49,7 @@ def build_search_url(
 
     :param base_url: Base search URL, as returned by `get_glossary_base_url`.
     :param topic: An exact, already-resolved topic (or comma-separated
-        topics) to filter results by. Use `slb_glossary.topics.get_topic_match`
+        topics) to filter results by. Use `slb_glossary.utils.get_topic_match`
         to resolve a user-supplied topic name before passing it here.
     :param query: A free-text search query.
     :param start_letter: Limit results to terms starting with this letter.

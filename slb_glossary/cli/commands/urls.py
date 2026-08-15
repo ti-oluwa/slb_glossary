@@ -5,7 +5,6 @@ import typing
 import click
 
 from slb_glossary import query as glossary_query
-from slb_glossary.browser import session as browser_session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
@@ -20,6 +19,7 @@ from slb_glossary.cli.source_options import (
 )
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.live import get_results_from_url
+from slb_glossary.live.browser import session as browser_session
 from slb_glossary.query import Source
 
 __all__ = ["urls"]

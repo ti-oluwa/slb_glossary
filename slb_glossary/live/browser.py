@@ -1,6 +1,7 @@
 """API for launching and tearing down live browser sessions used to search the glossary."""
 
 import contextlib
+import dataclasses
 import enum
 import logging
 import pathlib
@@ -8,16 +9,15 @@ import time
 import typing
 from urllib.parse import urlsplit
 
-from patchright.async_api import Browser, Playwright, Route, async_playwright
+from patchright.async_api import Browser, BrowserContext, Page, Playwright, Route, async_playwright
 from playwright_stealth import Stealth
 
 from slb_glossary.config import Config
 from slb_glossary.errors import BrowserError, LoggingError, NetworkError
+from slb_glossary.live.urls import get_glossary_base_url
 from slb_glossary.logging import LogSink, configure_logging, resolve_sink
-from slb_glossary.models import BrowserSession, Language
+from slb_glossary.models import Language
 from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
-from slb_glossary.topics import fetch_topics
-from slb_glossary.urls import get_glossary_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ __all__ = [
     "open_session_from_config",
     "ResourceType",
     "BrowserType",
+    "BrowserSession",
     "browser_session",
 ]
 
@@ -75,6 +76,92 @@ class ResourceType(enum.IntFlag):
     )
 
 
+@dataclasses.dataclass(slots=True, kw_only=True)
+class BrowserSession:
+    """
+    An open, ready-to-query browser session against the SLB glossary.
+
+    Obtain one with `slb_glossary.browser.open_session`, `session`,
+    or `BrowserSession.from_config`, then pass it to the search functions in
+    `slb_glossary.live`.
+
+    A session is single-page and not safe to use concurrently from multiple
+    coroutines at once; open one session per concurrent task if you need parallelism.
+    """
+
+    playwright: Playwright
+    """The running Playwright driver instance backing this session."""
+
+    browser: Browser
+    """The browser instance launched for this session."""
+
+    context: BrowserContext
+    """The browser context (cookies, cache, stealth patches) `page` runs in."""
+
+    page: Page
+    """The browser page searches and lookups are performed on."""
+
+    language: Language
+    """The glossary language this session searches."""
+
+    base_url: str
+    """Base search URL for `language`."""
+
+    topics: dict[str, int]
+    """Mapping of topic name to number of glossary terms filed under it."""
+
+    size: int
+    """Total number of terms in the glossary, as reported by the site."""
+
+    browser_type: str = "chromium"
+    """Playwright browser family this session launched (`"chromium"`,
+    `"firefox"` or `"webkit"`)."""
+
+    terms_per_tab: int = 12
+    """Number of results the glossary site returns per results page."""
+
+    blocked_resource_types: frozenset[str] = dataclasses.field(default_factory=frozenset)
+    """Request resource types (e.g. `"image"`) dropped for this session."""
+
+    retry: RetryPolicy = dataclasses.field(default_factory=RetryPolicy)
+    """Policy used to retry page loads that render before their JavaScript
+    search widget has finished populating."""
+
+    settle_timeout: float = 8.0
+    """Seconds to wait for the results list to update after a search
+    filter changes, since the glossary updates its results via JavaScript
+    rather than a full page navigation."""
+
+    poll_interval: float = 0.3
+    """Seconds to wait between polls while waiting on `settle_timeout`."""
+
+    @classmethod
+    async def from_config(
+        cls, config: Config | str | pathlib.Path, **overrides: typing.Any
+    ) -> "BrowserSession":
+        """
+        Open a `BrowserSession` using a `Config`, or a path to a config file.
+
+        ```python
+        session = await BrowserSession.from_config("~/.config/slb-glossary/config.toml")
+        ```
+
+        :param config: A `slb_glossary.config.Config`, or a path to a JSON/
+            TOML/YAML file `Config.from_file` can load.
+        :param overrides: Keyword arguments forwarded to
+            `slb_glossary.browser.open_session`, overriding whatever
+            `config` specifies (e.g. `headless=False` for a one-off debug run).
+        :return: An open `BrowserSession`. Close it with
+            `slb_glossary.browser.close_session`, or prefer
+            `slb_glossary.browser.session_from_config` for automatic
+            cleanup via `async with`.
+        """
+        resolved_config = config if isinstance(config, Config) else Config.from_file(config)
+        kwargs = resolved_config.to_session_kwargs()
+        kwargs.update(overrides)
+        return await open_session(**kwargs)
+
+
 RESOURCE_TYPE_NAME_MAP: dict[ResourceType, str] = {
     ResourceType.DOCUMENT: "document",
     ResourceType.STYLESHEET: "stylesheet",
@@ -109,8 +196,9 @@ CHROMIUM_LAUNCH_ARGS = [
     "--disable-features=MediaRouter",
     # Reduce disk/cache overhead for ephemeral browser sessions
     "--disable-backgrounding-occluded-windows",
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
+    # TODO: Only useful for containerized apps. Might remove
+    # "--no-sandbox",
+    # "--disable-dev-shm-usage",
     # Prevent Chromium from deprioritizing background tabs.
     # Especially for concurency > 1 which spins up multiple
     # tabs/pages in one session.
@@ -119,37 +207,39 @@ CHROMIUM_LAUNCH_ARGS = [
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
 
 
-BLOCKED_HOSTS = frozenset({
-    "google-analytics.com",
-    "googletagmanager.com",
-    "doubleclick.net",
-    "facebook.com",
-    "facebook.net",
-    "connect.facebook.net",
-    "hotjar.com",
-    "segment.io",
-    "segment.com",
-    "clarity.ms",
-    "cookiepro.com",
-    "onetrust.com",
-    "linkedin.com",
-    "googlesyndication.com",
-    "googleadservices.com",
-    "sharethis.com",
-    "csi.slb.com",
-    "segments.company-target.com",
-    "kaltura.com",
-    "peer5.com",
-    "bing.com",
-    "addthis.com",
-    "perk0mean.com",
-    "brightcove.net",
-    "botframework.com",
-    "google.com",
-    "powerplatform.com",
-    "crwdcntrl.net",
-    "arcgis.com",
-})
+BLOCKED_HOSTS = frozenset(
+    {
+        "google-analytics.com",
+        "googletagmanager.com",
+        "doubleclick.net",
+        "facebook.com",
+        "facebook.net",
+        "connect.facebook.net",
+        "hotjar.com",
+        "segment.io",
+        "segment.com",
+        "clarity.ms",
+        "cookiepro.com",
+        "onetrust.com",
+        "linkedin.com",
+        "googlesyndication.com",
+        "googleadservices.com",
+        "sharethis.com",
+        "csi.slb.com",
+        "segments.company-target.com",
+        "kaltura.com",
+        "peer5.com",
+        "bing.com",
+        "addthis.com",
+        "perk0mean.com",
+        "brightcove.net",
+        "botframework.com",
+        "google.com",
+        "powerplatform.com",
+        "crwdcntrl.net",
+        "arcgis.com",
+    }
+)
 
 
 def should_block_host(hostname: str, blocked_hosts: frozenset[str]) -> bool:
@@ -400,7 +490,10 @@ async def open_session(
 
         base_url = get_glossary_base_url(language)
         topics_started_at = time.monotonic()
+
         try:
+            from slb_glossary.live.topics import fetch_topics
+
             topics, size = await fetch_topics(
                 page,
                 base_url=base_url,

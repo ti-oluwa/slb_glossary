@@ -7,7 +7,7 @@ dance every time.
 ```python
 import slb_glossary as slb
 
-async with slb.database() as db, slb.session() as session:
+async with slb.local.database() as db, slb.live.session() as session:
     # Local first; only opens a live page if the local DB has nothing.
     # Whatever came back live is written to `db` so the next call is local-only.
     async for result in slb.query.search(
@@ -42,9 +42,10 @@ import typing
 
 from slb_glossary import live
 from slb_glossary.errors import QueryError
+from slb_glossary.live.browser import BrowserSession
 from slb_glossary.local import api as local_api
 from slb_glossary.local.models import Database
-from slb_glossary.models import BrowserSession, RelatedTerm, SearchResult
+from slb_glossary.models import RelatedTerm, SearchResult
 
 logger = logging.getLogger(__name__)
 

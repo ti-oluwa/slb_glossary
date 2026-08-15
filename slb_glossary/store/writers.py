@@ -27,19 +27,17 @@ Writer = typing.Callable[[Sequence[RecordLike], pathlib.Path], typing.Awaitable[
 """
 An async callable that writes a list of records to a destination path.
 
-Register one with `slb_glossary.store.register_writer(format, writer)` (or
-the `@slb_glossary.store.writer(format)` decorator) to teach `store.save`
+Register one with `@slb_glossary.store.writer(format)` decorator to teach `store.save`
 a new file format:
 
 ```python
+@slb_glossary.store.writer("yaml")
 async def write_yaml(records: Sequence[RecordLike], destination: pathlib.Path) -> None:
     import yaml
 
     with open(destination, "w") as file:
         yaml.dump(records_to_dicts(records), file)
 
-
-register_writer("yaml", write_yaml)
 ```
 
 A writer only needs to write the file; it does not need to create
@@ -250,4 +248,4 @@ WRITERS: dict[str, Writer] = {
     "txt": write_txt,
     "xlsx": write_xlsx,
 }
-"""Registry of file format to writer, mutated by `slb_glossary.store.register_writer`."""
+"""Registry of file format to writer, mutated by `@slb_glossary.store.writer(format)`."""

@@ -19,16 +19,6 @@ import logging as py_logging
 
 from . import live, local, query, store
 from . import logging as log
-from .browser import (
-    BrowserType,
-    ResourceType,
-    browser_session,
-    close_session,
-    open_session,
-    open_session_from_config,
-    session,
-    session_from_config,
-)
 from .config import Config
 from .errors import (
     BrowserError,
@@ -39,11 +29,36 @@ from .errors import (
     NetworkError,
     ParsingError,
     QueryError,
+    UnsupportedFormatError,
+    WriterError,
 )
-from .models import BrowserSession, Language, SearchResult
+from .live.browser import (
+    BrowserSession,
+    BrowserType,
+    ResourceType,
+    browser_session,
+    close_session,
+    open_session,
+    open_session_from_config,
+    session,
+    session_from_config,
+)
+from .live.topics import refresh_topics
+from .models import Language, SearchResult
+from .query import (
+    Source,
+    TermLookup,
+    compare,
+    get_random_term,
+    get_term,
+    get_terms_on,
+    get_terms_urls,
+    get_topics,
+    related_terms,
+    search,
+)
 from .retries import BackoffType, RetryPolicy
-from .topics import get_topic_match, refresh_topics
-from .utils import async_print_results, print_results
+from .utils import async_print_results, get_topic_match, print_results
 
 py_logging.basicConfig(
     format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s", level=py_logging.INFO
@@ -78,8 +93,20 @@ __all__ = [
     "ParsingError",
     "ConfigError",
     "DatabaseError",
+    "UnsupportedFormatError",
+    "WriterError",
     "QueryError",
     "LoggingError",
     "BrowserType",
     "ResourceType",
+    "Source",
+    "TermLookup",
+    "search",
+    "get_terms_on",
+    "get_terms_urls",
+    "get_topics",
+    "get_term",
+    "related_terms",
+    "get_random_term",
+    "compare",
 ]
