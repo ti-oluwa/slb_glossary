@@ -21,7 +21,7 @@ from slb_glossary.live.parsers import (
 )
 from slb_glossary.live.urls import build_pager_query, build_search_url
 from slb_glossary.models import RelatedTerm, SearchResult
-from slb_glossary.utils import get_topic_match
+from slb_glossary.utils import get_topic_match, log_timed_yields
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +97,24 @@ async def _wait_for_settle(
         or the last values read if `session.settle_timeout` elapsed first
         without any observed change.
     """
+    goto_started_at = time.monotonic()
     await session.page.goto(url, wait_until="domcontentloaded")
+    logger.debug("Loaded %s in %.3fs", url, time.monotonic() - goto_started_at)
 
-    deadline = time.monotonic() + session.settle_timeout
+    settle_started_at = time.monotonic()
+    deadline = settle_started_at + session.settle_timeout
     previous_links = list(previous_links)
+    polls = 0
     while True:
         current_links = await get_result_links(session.page)
         current_header = await get_results_header_text(session.page)
         if current_links != previous_links or current_header != previous_header:
+            logger.debug(
+                "Results panel settled after %.3fs (%d poll(s)) for %s",
+                time.monotonic() - settle_started_at,
+                polls,
+                url,
+            )
             return current_links, current_header
         if time.monotonic() >= deadline:
             logger.debug(
@@ -113,6 +123,7 @@ async def _wait_for_settle(
                 url,
             )
             return current_links, current_header
+        polls += 1
         await asyncio.sleep(session.poll_interval)
 
 
@@ -146,6 +157,7 @@ async def get_terms_urls(
     if not topic and not (query or start_letter):
         return
 
+    started_at = time.monotonic()
     topic_match = get_topic_match(session.topics, topic=topic) if topic else None
     logger.debug(
         "Iterating term URLs: query=%r topic=%r start_letter=%r limit=%r",
@@ -169,48 +181,66 @@ async def get_terms_urls(
     previous_links = await get_result_links(session.page)
     previous_header = await get_results_header_text(session.page)
 
-    while True:
-        pager_query = build_pager_query(tab_number=tab, terms_per_tab=session.terms_per_tab)
-        url = build_search_url(
-            base_url=session.base_url,
-            topic=topic_match,
-            query=query,
-            start_letter=start_letter,
-            pager_query=pager_query,
-        )
-        links, header_text = await _wait_for_settle(
-            session,
-            url=url,
-            previous_links=previous_links,
-            previous_header=previous_header,
-        )
+    try:
+        while True:
+            pager_query = build_pager_query(tab_number=tab, terms_per_tab=session.terms_per_tab)
+            url = build_search_url(
+                base_url=session.base_url,
+                topic=topic_match,
+                query=query,
+                start_letter=start_letter,
+                pager_query=pager_query,
+            )
+            links, header_text = await _wait_for_settle(
+                session,
+                url=url,
+                previous_links=previous_links,
+                previous_header=previous_header,
+            )
 
-        if not links:
-            logger.debug("No result links on tab %d, stopping", tab)
-            return
-        if not header_text:
-            logger.debug("No results header on tab %d, stopping", tab)
-            return
-
-        total_terms = await get_total_term_count(session.page)
-        if total_terms is None:
-            logger.debug("Could not read a total term count on tab %d, stopping", tab)
-            return
-        if max_tabs is None:
-            max_tabs = math.ceil(total_terms / session.terms_per_tab)
-            logger.debug("Search matched %d terms across %d tabs", total_terms, max_tabs)
-
-        for href in links:
-            yield href
-            yielded += 1
-            if limit is not None and yielded >= limit:
+            if not links:
+                logger.debug("No result links on tab %d, stopping", tab)
+                return
+            if not header_text:
+                logger.debug("No results header on tab %d, stopping", tab)
                 return
 
-        previous_links = links
-        previous_header = header_text
-        if tab >= max_tabs:
-            return
-        tab += 1
+            total_terms = await get_total_term_count(session.page)
+            if total_terms is None:
+                logger.debug("Could not read a total term count on tab %d, stopping", tab)
+                return
+            if max_tabs is None:
+                max_tabs = math.ceil(total_terms / session.terms_per_tab)
+                logger.debug("Search matched %d terms across %d tabs", total_terms, max_tabs)
+
+            tab_started_at = time.monotonic()
+            for href in links:
+                yield href
+                yielded += 1
+                if limit is not None and yielded >= limit:
+                    return
+            logger.debug(
+                "Yielded %d url(s) from tab %d/%d in %.3fs",
+                len(links),
+                tab,
+                max_tabs,
+                time.monotonic() - tab_started_at,
+            )
+
+            previous_links = links
+            previous_header = header_text
+            if tab >= max_tabs:
+                return
+            tab += 1
+    finally:
+        elapsed = time.monotonic() - started_at
+        logger.debug(
+            "get_terms_urls done: %d url(s) across %d tab(s) in %.3fs (avg %.3fs/url)",
+            yielded,
+            tab,
+            elapsed,
+            elapsed / yielded if yielded else 0.0,
+        )
 
 
 async def get_results_from_url(
@@ -238,11 +268,12 @@ async def get_results_from_url(
     """
     resolved_topic = get_topic_match(session.topics, topic) if topic else None
 
+    started_at = time.monotonic()
     await session.page.goto(url, wait_until="domcontentloaded")
     term_name = await get_term_name(session.page)
     detail_blocks = await get_term_detail_blocks(session.page)
     if not term_name or not detail_blocks:
-        logger.debug("No definitions found at %s", url)
+        logger.debug("No definitions found at %s (%.3fs)", url, time.monotonic() - started_at)
         return
 
     # A term page carries at most one illustrative image, shared across
@@ -252,6 +283,7 @@ async def get_results_from_url(
         (term_image.url, term_image.caption) if term_image is not None else (None, None)
     )
 
+    yielded = 0
     for block in detail_blocks:
         if len(block) < 2:
             continue
@@ -269,6 +301,7 @@ async def get_results_from_url(
         else:
             topic = summary_line.split(".")[-1].strip().removeprefix("[").removesuffix("]")
 
+        yielded += 1
         yield SearchResult(
             term=term_name,
             definition=definition,
@@ -279,6 +312,14 @@ async def get_results_from_url(
             image_caption=image_caption,
             related=related,
         )
+
+    logger.debug(
+        "Fetched %r: %d definition(s) from %s in %.3fs",
+        term_name,
+        yielded,
+        url,
+        time.monotonic() - started_at,
+    )
 
 
 def _as_async_iter(
@@ -332,14 +373,26 @@ async def get_results_from_urls(
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
 
+    started_at = time.monotonic()
+    yielded = 0
     url_iter = _as_async_iter(urls)
 
     if concurrency == 1:
-        async for url in url_iter:
-            async for result in get_results_from_url(session, url, topic=topic):
-                yield result
-                if first_only:
-                    break
+        try:
+            async for url in url_iter:
+                async for result in get_results_from_url(session, url, topic=topic):
+                    yielded += 1
+                    yield result
+                    if first_only:
+                        break
+        finally:
+            elapsed = time.monotonic() - started_at
+            logger.debug(
+                "get_results_from_urls (sequential) done: %d result(s) in %.3fs (avg %.3fs/result)",
+                yielded,
+                elapsed,
+                elapsed / yielded if yielded else 0.0,
+            )
         return
 
     # One worker reuses `session.page`; the rest get their own page on the
@@ -348,6 +401,7 @@ async def get_results_from_urls(
     extra_pages = [await session.context.new_page() for _ in range(concurrency - 1)]
     worker_sessions: list[BrowserSession] = [session]
     worker_sessions.extend(dataclasses.replace(session, page=page) for page in extra_pages)
+    logger.debug("Fetching with %d concurrent worker(s)", len(worker_sessions))
 
     url_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=concurrency * 2)
     result_queue: asyncio.Queue[SearchResult | None] = asyncio.Queue()
@@ -383,6 +437,7 @@ async def get_results_from_urls(
             if item is None:
                 finished_workers += 1
                 continue
+            yielded += 1
             yield item
     finally:
         producer_task.cancel()
@@ -391,6 +446,14 @@ async def get_results_from_urls(
         await asyncio.gather(producer_task, *worker_tasks, return_exceptions=True)
         for page in extra_pages:
             await page.close()
+        elapsed = time.monotonic() - started_at
+        logger.debug(
+            "get_results_from_urls (concurrency=%d) done: %d result(s) in %.3fs (avg %.3fs/result)",
+            concurrency,
+            yielded,
+            elapsed,
+            elapsed / yielded if yielded else 0.0,
+        )
 
 
 async def search(
@@ -423,20 +486,33 @@ async def search(
         concurrency, results may arrive out of relevance order.
     """
     logger.info("Searching glossary for %r (limit=%r, concurrency=%r)", query, limit, concurrency)
+    started_at = time.monotonic()
     urls = get_terms_urls(
         session, query=query, topic=topic, start_letter=start_letter, limit=limit
     )
     count = 0
-    async for result in get_results_from_urls(session, urls, topic=topic, concurrency=concurrency):
+    async for result in log_timed_yields(
+        get_results_from_urls(session, urls, topic=topic, concurrency=concurrency),
+        logger=logger,
+        label=f"search({query!r})",
+    ):
         count += 1
         yield result
-    logger.info("Search for %r yielded %d result(s)", query, count)
+    elapsed = time.monotonic() - started_at
+    logger.info(
+        "Search for %r yielded %d result(s) in %.3fs (avg %.3fs/result)",
+        query,
+        count,
+        elapsed,
+        elapsed / count if count else 0.0,
+    )
 
 
 async def get_terms_on(
     session: BrowserSession,
     topic: str,
     *,
+    start_letter: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
 ) -> typing.AsyncIterator[SearchResult]:
@@ -450,6 +526,7 @@ async def get_terms_on(
     :param session: An open glossary session.
     :param topic: The topic to look up terms for. Need not be an exact
         match; see `get_terms_urls` for matching rules.
+    :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of terms to yield. Yields every term filed
         under `topic` if `None`.
     :param concurrency: Number of term detail pages to fetch in parallel.
@@ -457,13 +534,27 @@ async def get_terms_on(
     :yield: One `SearchResult` per term filed under `topic`.
     """
     logger.info(
-        "Fetching terms under topic %r (limit=%r, concurrency=%r)", topic, limit, concurrency
+        "Fetching terms under topic %r (start_letter=%r, limit=%r, concurrency=%r)",
+        topic,
+        start_letter,
+        limit,
+        concurrency,
     )
-    urls = get_terms_urls(session, topic=topic, limit=limit)
+    started_at = time.monotonic()
+    urls = get_terms_urls(session, topic=topic, start_letter=start_letter, limit=limit)
     count = 0
-    async for result in get_results_from_urls(
-        session, urls, topic=topic, concurrency=concurrency, first_only=True
+    async for result in log_timed_yields(
+        get_results_from_urls(session, urls, topic=topic, concurrency=concurrency, first_only=True),
+        logger=logger,
+        label=f"get_terms_on({topic!r})",
     ):
         count += 1
         yield result
-    logger.info("Fetched %d term(s) under topic %r", count, topic)
+    elapsed = time.monotonic() - started_at
+    logger.info(
+        "Fetched %d term(s) under topic %r in %.3fs (avg %.3fs/term)",
+        count,
+        topic,
+        elapsed,
+        elapsed / count if count else 0.0,
+    )
