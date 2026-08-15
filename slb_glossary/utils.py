@@ -1,6 +1,8 @@
 """Utilities shared across the package."""
 
+import logging
 import sys
+import time
 import typing
 
 from rich import box
@@ -10,7 +12,9 @@ from rich.table import Table
 
 from slb_glossary.models import SearchResult
 
-__all__ = ["parse_int", "print_results", "async_print_results"]
+__all__ = ["parse_int", "print_results", "async_print_results", "log_timed_yields"]
+
+T = typing.TypeVar("T")
 
 
 def parse_int(text: str) -> int:
@@ -33,6 +37,53 @@ def humanize_field(field: str) -> str:
     """Turn a `snake_case` field name into a `Title Case` column header."""
     words = field.split("_")
     return " ".join(word.upper() if word in _ACRONYMS else word.title() for word in words)
+
+
+async def log_timed_yields(
+    iterable: typing.AsyncIterator[T],
+    *,
+    logger: logging.Logger,
+    label: str,
+    level: int = logging.DEBUG,
+) -> typing.AsyncIterator[T]:
+    """
+    Wrap an async iterator, logging per-yield and running-average timing metrics.
+
+    Every item logs one `level` line with the time since the previous
+    yield (or since iteration started, for the first item), the running
+    average time per yield so far, and the total elapsed time so far -
+    e.g. for spotting a slow tail end of an otherwise-fast fetch. Nothing
+    is logged if the wrapped iterator never yields anything.
+
+    This only instruments timing; it doesn't buffer or otherwise change
+    what's yielded - `async for item in log_timed_yields(inner, ...)` is
+    equivalent to `async for item in inner` except for the added logging.
+
+    :param iterable: The async iterator to wrap.
+    :param logger: Logger to emit timing records to.
+    :param label: Short description of what's being iterated, included in
+        every log line, e.g. `"search(%r)" % query`.
+    :param level: Logging level for the per-yield lines.
+    :yield: Each item from `iterable`, unchanged.
+    """
+    start = time.monotonic()
+    previous = start
+    count = 0
+    async for item in iterable:
+        now = time.monotonic()
+        count += 1
+        elapsed = now - start
+        logger.log(
+            level,
+            "%s: yield #%d took %.3fs (avg %.3fs/yield so far, %.3fs elapsed total)",
+            label,
+            count,
+            now - previous,
+            elapsed / count,
+            elapsed,
+        )
+        previous = now
+        yield item
 
 
 def _format_cell(value: typing.Any, *, max_related_shown: int = 6) -> str:
@@ -67,8 +118,16 @@ def _format_cell(value: typing.Any, *, max_related_shown: int = 6) -> str:
     return text or "-"
 
 
+DEFAULT_RESULT_TABLE_TITLE = "Search Results"
+"""Default table title used by `print_results`/`async_print_results` for `SearchResult`s."""
+
+DEFAULT_GENERIC_TABLE_TITLE = "Results"
+"""Default table title used by `print_results`/`async_print_results` for non-`SearchResult` records."""
+
+
 def _make_result_table(
     *,
+    title: str | None = None,
     show_url: bool = True,
     show_topic: bool = True,
     show_grammar: bool = True,
@@ -77,7 +136,7 @@ def _make_result_table(
 ) -> Table:
     """Build the specialized table used to display `SearchResult`s."""
     table = Table(
-        title="Search Results",
+        title=title or DEFAULT_RESULT_TABLE_TITLE,
         title_style="bold bright_blue",
         box=box.HEAVY,
         expand=True,
@@ -127,10 +186,10 @@ def _format_result_row(
     return row
 
 
-def _make_generic_table(fields: typing.Sequence[str]) -> Table:
+def _make_generic_table(fields: typing.Sequence[str], *, title: str | None = None) -> Table:
     """Build a plain table with one humanized column per field, for non-`SearchResult` records."""
     table = Table(
-        title="Results",
+        title=title or DEFAULT_GENERIC_TABLE_TITLE,
         title_style="bold bright_blue",
         box=box.HEAVY,
         expand=True,
@@ -150,6 +209,7 @@ def _format_generic_row(record: typing.Any, fields: typing.Sequence[str]) -> lis
 def _make_table_and_formatter(
     sample: typing.Any,
     *,
+    title: str | None,
     show_url: bool,
     show_topic: bool,
     show_grammar: bool,
@@ -165,11 +225,15 @@ def _make_table_and_formatter(
     is printing `SearchResult`s.
 
     :param sample: The first record to be printed, used only to pick a layout.
+    :param title: Table/section title to use instead of the type-based
+        default (`"Search Results"` for `SearchResult`s, `"Results"`
+        otherwise). `None` keeps that default.
     :return: A `(table, formatter)` pair; call `formatter(record)` for
         every record (including `sample`) to get its row cells.
     """
     if isinstance(sample, SearchResult):
         table = _make_result_table(
+            title=title,
             show_url=show_url,
             show_topic=show_topic,
             show_grammar=show_grammar,
@@ -190,7 +254,7 @@ def _make_table_and_formatter(
         return table, _result_formatter
 
     fields = list(getattr(sample, "fields", None) or sample.asdict().keys())
-    table = _make_generic_table(fields)
+    table = _make_generic_table(fields, title=title)
 
     def _generic_formatter(record: typing.Any) -> list[str]:
         return _format_generic_row(record, fields)
@@ -201,6 +265,7 @@ def _make_table_and_formatter(
 def print_results(
     results: typing.Iterable[typing.Any],
     *,
+    title: str | None = None,
     out: typing.TextIO | None = None,
     limit: int | None = None,
     show_url: bool = True,
@@ -218,6 +283,9 @@ def print_results(
     including lazily produced generators.
 
     :param results: The records to print. May be empty.
+    :param title: Title shown above the table, e.g. `"Terms under Drilling"`.
+        Defaults to `"Search Results"` for `SearchResult`s, or `"Results"`
+        for any other record type.
     :param out: Stream to print to. Defaults to `sys.stdout`.
     :param limit: Maximum number of records to print. Prints every record
         if `None`.
@@ -236,11 +304,12 @@ def print_results(
     try:
         first = next(iterator)
     except StopIteration:
-        console.print(_make_generic_table([]))
+        console.print(_make_generic_table([], title=title))
         return 0
 
     table, format_row = _make_table_and_formatter(
         first,
+        title=title,
         show_url=show_url,
         show_topic=show_topic,
         show_grammar=show_grammar,
@@ -276,6 +345,7 @@ def print_results(
 async def async_print_results(
     results: typing.AsyncIterable[typing.Any],
     *,
+    title: str | None = None,
     out: typing.TextIO | None = None,
     limit: int | None = None,
     show_url: bool = True,
@@ -293,11 +363,12 @@ async def async_print_results(
     try:
         first = await iterator.__anext__()
     except StopAsyncIteration:
-        console.print(_make_generic_table([]))
+        console.print(_make_generic_table([], title=title))
         return 0
 
     table, format_row = _make_table_and_formatter(
         first,
+        title=title,
         show_url=show_url,
         show_topic=show_topic,
         show_grammar=show_grammar,
