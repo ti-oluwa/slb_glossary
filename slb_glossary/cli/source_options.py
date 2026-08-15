@@ -62,7 +62,7 @@ def source_options(func: F) -> F:
         "--auto",
         "source_intelligent",
         is_flag=True,
-        help="Shorthand for --source intelligent (the default): local first, live as a fallback.",
+        help="Shorthand for --source auto (the default): local first, live as a fallback.",
     )(func)
     func = click.option(
         "--live",

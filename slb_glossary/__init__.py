@@ -5,7 +5,7 @@ All rights to the data and content on the SLB Energy Glossary website are owned 
 This package is not affiliated with or endorsed by SLB.
 Visit <https://www.slb.com/en/terms-of-service> for the terms of use.
 
-**Not for commercial use. This package is intended for educational and research purposes only.**
+**Not for commercial use. This package is intended for instructional and research purposes only.**
 
 This package can optionally cache glossary data locally (see `slb_glossary.local`)
 so repeat lookups don't have to re-visit the site. That local copy is still SLB's
