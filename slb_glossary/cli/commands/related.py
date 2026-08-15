@@ -109,6 +109,7 @@ def related(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) 
 
         return await output_results(
             _records(),
+            title=f"Terms related to {term!r}",
             save_paths=params["save_paths"],
             format=params["format"],
             quiet=params["quiet"],
