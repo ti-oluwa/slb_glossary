@@ -8,6 +8,7 @@ responsible-use note on `sync_all` in particular.
 import dataclasses
 import datetime
 import logging
+import time
 
 from slb_glossary.live.api import get_results_from_urls, get_terms_urls
 from slb_glossary.live.api import get_terms_on as fetch_terms_on
@@ -59,6 +60,12 @@ async def _record_sync(db: Database, *, terms_written: int, language: str) -> Sy
     metadata.topics = topics
     metadata.save(db.metadata_path)
 
+    logger.debug(
+        "Recorded sync metadata: %d term(s) written, %d total, %d topic(s)",
+        terms_written,
+        total,
+        len(topics),
+    )
     return SyncSummary(
         terms_written=terms_written, total_terms=total, topics=topics, synced_at=now
     )
@@ -77,6 +84,7 @@ async def sync_topics(db: Database, session: BrowserSession) -> SyncSummary:
     :param session: An open `BrowserSession` to read topic counts from.
     :return: A summary of the sync (`terms_written` is always `0`).
     """
+    logger.debug("Syncing topic list only (%d topic(s) known to session)", len(session.topics))
     return await _record_sync(db, terms_written=0, language=session.language.value)
 
 
@@ -107,6 +115,8 @@ async def sync_query(
         `slb_glossary.live.get_results_from_urls`'s own note on server load.
     :return: A summary of the sync.
     """
+    started_at = time.monotonic()
+    logger.info("Syncing query %r to the local database", query)
     results = live_search(
         session,
         query,
@@ -116,7 +126,11 @@ async def sync_query(
         concurrency=concurrency,
     )
     written = await upsert_results(db, results, language=session.language.value)
-    return await _record_sync(db, terms_written=written, language=session.language.value)
+    summary = await _record_sync(db, terms_written=written, language=session.language.value)
+    logger.info(
+        "Synced query %r: %d term(s) written in %.3fs", query, written, time.monotonic() - started_at
+    )
+    return summary
 
 
 async def sync_topic(
@@ -137,9 +151,15 @@ async def sync_topic(
     :param concurrency: Concurrent term-page fetches.
     :return: A summary of the sync.
     """
+    started_at = time.monotonic()
+    logger.info("Syncing topic %r to the local database", topic)
     results = fetch_terms_on(session, topic, limit=limit, concurrency=concurrency)
     written = await upsert_results(db, results, language=session.language.value)
-    return await _record_sync(db, terms_written=written, language=session.language.value)
+    summary = await _record_sync(db, terms_written=written, language=session.language.value)
+    logger.info(
+        "Synced topic %r: %d term(s) written in %.3fs", topic, written, time.monotonic() - started_at
+    )
+    return summary
 
 
 async def sync_letter(
@@ -167,12 +187,21 @@ async def sync_letter(
     :param concurrency: Concurrent term-page fetches.
     :return: A summary of the sync.
     """
+    started_at = time.monotonic()
+    logger.info("Syncing letter %r (topic=%r) to the local database", start_letter, topic)
     urls = get_terms_urls(session, topic=topic, start_letter=start_letter, limit=limit)
     results = get_results_from_urls(
         session, urls, topic=topic, concurrency=concurrency, first_only=True
     )
     written = await upsert_results(db, results, language=session.language.value)
-    return await _record_sync(db, terms_written=written, language=session.language.value)
+    summary = await _record_sync(db, terms_written=written, language=session.language.value)
+    logger.info(
+        "Synced letter %r: %d term(s) written in %.3fs",
+        start_letter,
+        written,
+        time.monotonic() - started_at,
+    )
+    return summary
 
 
 async def sync_all(db: Database, session: BrowserSession, *, concurrency: int = 1) -> SyncSummary:
@@ -194,9 +223,35 @@ async def sync_all(db: Database, session: BrowserSession, *, concurrency: int = 
     :param concurrency: Concurrent term-page fetches, per topic.
     :return: A summary of the sync.
     """
-    logger.info("Syncing entire glossary (%d topics) to local database", len(session.topics))
+    started_at = time.monotonic()
+    topic_names = sorted(session.topics)
+    logger.info("Syncing entire glossary (%d topics) to local database", len(topic_names))
     total_written = 0
-    for topic_name in sorted(session.topics):
+    for index, topic_name in enumerate(topic_names, start=1):
+        topic_started_at = time.monotonic()
         results = fetch_terms_on(session, topic_name, concurrency=concurrency)
-        total_written += await upsert_results(db, results, language=session.language.value)
-    return await _record_sync(db, terms_written=total_written, language=session.language.value)
+        written = await upsert_results(db, results, language=session.language.value)
+        total_written += written
+        elapsed = time.monotonic() - started_at
+        logger.debug(
+            "Synced topic %d/%d (%r): %d term(s) in %.3fs (%d total so far, %.3fs elapsed, avg %.3fs/topic)",
+            index,
+            len(topic_names),
+            topic_name,
+            written,
+            time.monotonic() - topic_started_at,
+            total_written,
+            elapsed,
+            elapsed / index,
+        )
+
+    summary = await _record_sync(db, terms_written=total_written, language=session.language.value)
+    elapsed = time.monotonic() - started_at
+    logger.info(
+        "Synced entire glossary: %d term(s) written across %d topic(s) in %.3fs (avg %.3fs/topic)",
+        total_written,
+        len(topic_names),
+        elapsed,
+        elapsed / len(topic_names) if topic_names else 0.0,
+    )
+    return summary
