@@ -6,6 +6,7 @@ import enum
 import logging
 import math
 import random
+import time
 import typing
 
 T = typing.TypeVar("T")
@@ -136,25 +137,59 @@ async def retry(
     :return: The first truthy result of `func`, or its last (falsy) result
         once `policy.attempts` is exhausted.
     """
+    started_at = time.monotonic()
     result: T | None = None
     err: BaseException | None = None
+    attempts_made = 0
+    total_delay = 0.0
     for attempt in range(1, policy.attempts + 1):
+        attempts_made = attempt
+        attempt_started_at = time.monotonic()
         try:
             result = await func()
             if until is not None and until(result):
+                logger.debug(
+                    "%s succeeded on attempt %d/%d after %.3fs (total %.3fs including %.3fs of backoff)",
+                    func,
+                    attempt,
+                    policy.attempts,
+                    time.monotonic() - attempt_started_at,
+                    time.monotonic() - started_at,
+                    total_delay,
+                )
                 return result
         except BaseException as exc:
             err = exc
-            logger.debug("Error occurred on attempt %d: %s", attempt, exc, exc_info=True)
+            logger.debug(
+                "Error occurred on attempt %d/%d (%.3fs into this attempt): %s",
+                attempt,
+                policy.attempts,
+                time.monotonic() - attempt_started_at,
+                exc,
+                exc_info=True,
+            )
 
         if attempt < policy.attempts:
             delay = policy.delay_for_attempt(attempt)
+            total_delay += delay
             logger.debug(
-                "Attempt %d/%d failed, retrying in %.2fs", attempt, policy.attempts, delay
+                "Attempt %d/%d failed, retrying in %.2fs (%.3fs elapsed so far)",
+                attempt,
+                policy.attempts,
+                delay,
+                time.monotonic() - started_at,
             )
             await asyncio.sleep(delay)
 
-    logger.warning("Gave up after %d attempts calling %s", policy.attempts, func)
+    elapsed = time.monotonic() - started_at
+    logger.warning(
+        "Gave up after %d/%d attempt(s) calling %s in %.3fs (%.3fs of that spent backing off)",
+        attempts_made,
+        policy.attempts,
+        func,
+        elapsed,
+        total_delay,
+    )
     if raise_exception and err is not None:
         raise err
     return result
