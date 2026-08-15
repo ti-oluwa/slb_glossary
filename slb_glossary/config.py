@@ -8,6 +8,7 @@ notice in the package docstring.
 
 import dataclasses
 import json
+import logging
 import pathlib
 import typing
 from collections.abc import Mapping
@@ -16,6 +17,8 @@ from slb_glossary.errors import ConfigError
 from slb_glossary.models import Language
 from slb_glossary.paths import default_config_path
 from slb_glossary.retries import BackoffType, RetryPolicy
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Config",
@@ -126,6 +129,16 @@ class BrowserSessionConfig:
     use_stealth: bool = True
     """Whether to apply Playwright stealth patches to the browser context."""
 
+    log_sink: str | None = None
+    """
+    Where to route `slb_glossary`'s logging for this run: a file path,
+    `"stderr"`/`"stdout"`, or a `"module:ClassName"` import path to a
+    custom `slb_glossary.logging.LogSink`. `None` (the default) leaves
+    whatever logging setup is already in place untouched. See
+    `slb_glossary.browser.open_session`'s `log_sink` parameter and the
+    CLI's `--log-to`/`--log-sink` options.
+    """
+
     retry: RetryConfig = dataclasses.field(default_factory=RetryConfig)
     """Policy for retrying a flaky initial page load."""
 
@@ -150,6 +163,12 @@ class BrowserSessionConfig:
                 f"Unknown language {self.language!r}. Expected one of: {choices}."
             ) from exc
 
+        logger.debug(
+            "Built session kwargs from config: language=%s browser_type=%s headless=%s",
+            language.value,
+            self.browser_type,
+            self.headless,
+        )
         return {
             "language": language,
             "browser_type": self.browser_type,
@@ -164,6 +183,7 @@ class BrowserSessionConfig:
             "proxy": self.proxy,
             "viewport": self.viewport,
             "use_stealth": self.use_stealth,
+            "log_sink": self.log_sink,
         }
 
 
@@ -402,6 +422,7 @@ class Config:
         :raises FileNotFoundError: If `path` does not exist.
         """
         path = pathlib.Path(path)
+        logger.debug("Loading config from %s", path)
         try:
             data = _read_config_file(path)
         except ConfigError:
@@ -427,6 +448,7 @@ class Config:
         resolved = pathlib.Path(path) if path is not None else default_config_path()
         if resolved.exists():
             return cls.from_file(resolved)
+        logger.debug("No config file at %s; using built-in defaults", resolved)
         return cls()
 
     def to_file(self, path: str | pathlib.Path, *, format: str | None = None) -> None:
@@ -444,6 +466,7 @@ class Config:
         resolved_format = (format or path.suffix.lstrip(".") or "toml").lower()
         path.parent.mkdir(parents=True, exist_ok=True)
         _write_config_file(self.to_dict(), path, resolved_format)
+        logger.info("Saved config to %s (%s)", path, resolved_format)
 
     def to_session_kwargs(self) -> dict[str, typing.Any]:
         """Build keyword arguments for `open_session`/`session` from `self.session`."""
@@ -489,6 +512,7 @@ class Config:
 
         current = getattr(target, leaf)
         setattr(target, leaf, _coerce_value(value, like=current))
+        logger.debug("Set config key %s = %r", key, getattr(target, leaf))
 
     @classmethod
     def default_path(cls) -> pathlib.Path:
