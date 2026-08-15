@@ -1,4 +1,4 @@
-"""Shared, fully-configurable click options for opening a glossary `SearchSession`."""
+"""Shared, fully-configurable click options for opening a glossary `Session`."""
 
 import typing
 
@@ -96,7 +96,7 @@ def session_options(func: F) -> F:
     keyword argument named after its destination (e.g. `browser_type`,
     `settle_timeout`); pass the command's `**kwargs` to
     `resolve_session_kwargs` to turn them into arguments for
-    `slb_glossary.browser.open_session`/`search_session`.
+    `slb_glossary.browser.open_session`/`session`.
 
     :param func: The click command callback to attach options to.
     :return: `func`, with session-configuration options attached.
@@ -293,7 +293,7 @@ def resolve_session_kwargs(
     ctx: click.Context, params: typing.Mapping[str, typing.Any]
 ) -> dict[str, typing.Any]:
     """
-    Build `open_session`/`search_session` kwargs from `--config`, overridden by explicit flags.
+    Build `open_session`/`session` kwargs from `--config`, overridden by explicit flags.
 
     Loads the `Config` named by `params["config_path"]` (see
     `config_option`) as the baseline, then applies every `session_options`
@@ -308,7 +308,7 @@ def resolve_session_kwargs(
     :param params: The command's parsed parameters, including `config_path`
         (from `config_option`) and everything `session_options` attaches.
     :return: A keyword-argument dict ready to splat into
-        `slb_glossary.browser.open_session` or `search_session`.
+        `slb_glossary.browser.open_session` or `session`.
     """
     resolved = load_named_config(params.get("config_path", CONFIG_SENTINEL_DEFAULT))
 

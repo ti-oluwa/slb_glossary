@@ -11,7 +11,7 @@ from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, session_options
 from slb_glossary.cli.source_options import (
     get_loaded_config,
-    local_db_option,
+    database_option,
     open_configured_db,
     resolve_lookup,
     resolve_source,
@@ -36,7 +36,7 @@ def _validate_terms(
 @click.command("compare")
 @click.argument("terms", nargs=-1, callback=_validate_terms)
 @source_options
-@local_db_option
+@database_option
 @click.option(
     "--show-related/--hide-related",
     "show_related",
@@ -61,7 +61,7 @@ def compare(
     """
     Look up TERMS (two or more) and print their definitions side by side for comparison.
 
-    Same --local/--live/--intelligent source selection as `define`. Terms
+    Same --local/--live/--auto source selection as `define`. Terms
     not found by the resolved source(s) are skipped, with a note printed
     to stderr.
 

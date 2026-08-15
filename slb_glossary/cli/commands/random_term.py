@@ -11,7 +11,7 @@ from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, session_options
 from slb_glossary.cli.source_options import (
     get_loaded_config,
-    local_db_option,
+    database_option,
     open_configured_db,
     resolve_lookup,
     resolve_source,
@@ -40,7 +40,7 @@ __all__ = ["random_term"]
     help="Number of random terms to pick (each picked independently; duplicates are possible).",
 )
 @source_options
-@local_db_option
+@database_option
 @click.option(
     "--show-related/--hide-related",
     "show_related",
@@ -64,8 +64,8 @@ def random_term(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
     Print one or more randomly chosen glossary terms.
 
     Handy for "term of the day"-style exploration. Same
-    --local/--live/--intelligent source selection as `define`; with
-    --live (or --intelligent falling back to it), a random detail page is
+    --local/--live/--auto source selection as `define`; with
+    --live (or --auto falling back to it), a random detail page is
     sampled since the live site has no dedicated "random" endpoint.
 
     \b

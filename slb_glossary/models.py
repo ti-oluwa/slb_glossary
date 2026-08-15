@@ -16,7 +16,7 @@ __all__ = [
     "Language",
     "RelatedTerm",
     "SearchResult",
-    "SearchSession",
+    "Session",
 ]
 
 
@@ -76,12 +76,12 @@ class SearchResult(typing.NamedTuple):
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class SearchSession:
+class Session:
     """
     An open, ready-to-query session against the SLB glossary.
 
-    Obtain one with `slb_glossary.browser.open_session`, `search_session`,
-    or `SearchSession.from_config`, then pass it to the search functions in
+    Obtain one with `slb_glossary.browser.open_session`, `session`,
+    or `Session.from_config`, then pass it to the search functions in
     `slb_glossary.engine`.
 
     A session is single-page and not safe to use concurrently from multiple
@@ -137,12 +137,12 @@ class SearchSession:
     @classmethod
     async def from_config(
         cls, config: "Config | str | pathlib.Path", **overrides: typing.Any
-    ) -> "SearchSession":
+    ) -> "Session":
         """
-        Open a `SearchSession` using a `Config`, or a path to a config file.
+        Open a `Session` using a `Config`, or a path to a config file.
 
         ```python
-        session = await SearchSession.from_config("~/.config/slb-glossary/config.toml")
+        session = await Session.from_config("~/.config/slb-glossary/config.toml")
         ```
 
         :param config: A `slb_glossary.config.Config`, or a path to a JSON/
@@ -150,9 +150,9 @@ class SearchSession:
         :param overrides: Keyword arguments forwarded to
             `slb_glossary.browser.open_session`, overriding whatever
             `config` specifies (e.g. `headless=False` for a one-off debug run).
-        :return: An open `SearchSession`. Close it with
+        :return: An open `Session`. Close it with
             `slb_glossary.browser.close_session`, or prefer
-            `slb_glossary.browser.search_session_from_config` for automatic
+            `slb_glossary.browser.session_from_config` for automatic
             cleanup via `async with`.
         """
         from slb_glossary.browser import open_session

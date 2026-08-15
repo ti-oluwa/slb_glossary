@@ -15,7 +15,7 @@ class Database:
     """
     An open connection to the local search database.
 
-    Obtain one with `slb_glossary.local.open_db`/`local_db`.
+    Obtain one with `slb_glossary.local.open_db`/`database`.
     """
 
     connection: aiosqlite.Connection

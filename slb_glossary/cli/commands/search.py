@@ -11,7 +11,7 @@ from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, session_options
 from slb_glossary.cli.source_options import (
     get_loaded_config,
-    local_db_option,
+    database_option,
     open_configured_db,
     resolve_source,
     resolve_stream,
@@ -107,7 +107,7 @@ def _validate_query(
     "instead of requiring an exact (case-insensitive) match.",
 )
 @source_options
-@local_db_option
+@database_option
 @config_option
 @session_options
 @output_options
@@ -128,7 +128,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     number of terms looked up, not the number of definitions returned.
 
     Reads from the local database, the live glossary, or both, depending on
-    --local/--live/--intelligent (--intelligent is the default): with a
+    --local/--live/--auto (--auto is the default): with a
     local database available, cached results are used first and the live
     site is only visited if the local database has nothing for QUERY.
 

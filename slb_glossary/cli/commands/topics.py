@@ -5,14 +5,14 @@ import typing
 import click
 
 from slb_glossary import query as glossary_query
-from slb_glossary.browser import search_session
+from slb_glossary.browser import session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
 from slb_glossary.cli.source_options import (
     get_loaded_config,
-    local_db_option,
+    database_option,
     open_configured_db,
     resolve_source,
     resolve_stream,
@@ -59,7 +59,7 @@ async def iter_topic_records(
 
 @topics.command("list")
 @source_options
-@local_db_option
+@database_option
 @config_option
 @session_options
 @output_options
@@ -76,7 +76,7 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
     List every topic (discipline) the glossary is organized under, with term counts.
 
     Reads from the local database, the live glossary, or both, depending on
-    --local/--live/--intelligent (--intelligent is the default): with a
+    --local/--live/--auto (--auto is the default): with a
     local database available, its topics are listed first (only the topics
     actually cached so far) and the live site is only visited if the local
     database has none.
@@ -161,7 +161,7 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
         return
 
     async def _run() -> int:
-        async with search_session(**resolve_session_kwargs(ctx, params)) as session:
+        async with session(**resolve_session_kwargs(ctx, params)) as session:
             session = await refresh_topics(session)
             return await output_results(
                 iter_topic_records(session.topics),

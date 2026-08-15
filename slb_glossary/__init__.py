@@ -25,8 +25,8 @@ from .browser import (
     close_session,
     open_session,
     open_session_from_config,
-    search_session,
-    search_session_from_config,
+    session,
+    session_from_config,
 )
 from .config import Config
 from .errors import (
@@ -38,7 +38,7 @@ from .errors import (
     ParsingError,
     QueryError,
 )
-from .models import Language, SearchResult, SearchSession
+from .models import Language, SearchResult, Session
 from .retries import BackoffType, RetryPolicy
 from .topics import get_topic_match, refresh_topics
 from .utils import async_print_results, print_results
@@ -56,9 +56,9 @@ __all__ = [
     "open_session",
     "open_session_from_config",
     "close_session",
-    "search_session",
-    "search_session_from_config",
-    "SearchSession",
+    "session",
+    "session_from_config",
+    "Session",
     "Config",
     "Language",
     "SearchResult",

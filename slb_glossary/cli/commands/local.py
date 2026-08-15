@@ -11,7 +11,7 @@ from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option
-from slb_glossary.cli.source_options import get_loaded_config, local_db_option, resolve_db_path
+from slb_glossary.cli.source_options import get_loaded_config, database_option, resolve_db_path
 from slb_glossary.local.models import Metadata
 
 __all__ = ["local"]
@@ -23,7 +23,7 @@ def local() -> None:
     Inspect, search, and maintain the local search database directly.
 
     Every command here talks only to the local database - never the live
-    site - regardless of any --local/--live/--intelligent flag elsewhere.
+    site - regardless of any --local/--live/--auto flag elsewhere.
     `local sync`/`local update` are the exception (and the only ones here
     that go live): they're the same commands as top-level `sync`/`update`,
     grouped here too for discoverability.
@@ -31,7 +31,7 @@ def local() -> None:
 
 
 @local.command("path")
-@local_db_option
+@database_option
 @config_option
 @cli_command
 def show_path(**params: typing.Any) -> None:
@@ -46,7 +46,7 @@ def show_path(**params: typing.Any) -> None:
     async def _run() -> tuple[typing.Any, typing.Any]:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
-        async with local_pkg.local_db(db_path) as db:
+        async with local_pkg.database(db_path) as db:
             return db.db_path, db.metadata_path
 
     db_path, metadata_path = run_async(_run())
@@ -55,7 +55,7 @@ def show_path(**params: typing.Any) -> None:
 
 
 @local.command("stats")
-@local_db_option
+@database_option
 @config_option
 @click.option(
     "--json",
@@ -77,7 +77,7 @@ def stats(**params: typing.Any) -> None:
     async def _run() -> tuple[int, dict[str, int], Metadata]:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
-        async with local_pkg.local_db(db_path) as db:
+        async with local_pkg.database(db_path) as db:
             total = await local_pkg.count(db)
             topics = await local_pkg.get_topics(db)
             metadata = Metadata.load(db.metadata_path)
@@ -137,7 +137,7 @@ def stats(**params: typing.Any) -> None:
     show_default=True,
     help="Maximum number of results. Use 0 for unlimited.",
 )
-@local_db_option
+@database_option
 @config_option
 @output_options
 @cli_command
@@ -159,7 +159,7 @@ def local_search(query: str, **params: typing.Any) -> None:
     async def _run() -> int:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
-        async with local_pkg.local_db(db_path) as db:
+        async with local_pkg.database(db_path) as db:
             results = local_pkg.search(
                 db, query, topic=params["topic"], limit=limit, fuzzy=params["fuzzy"]
             )
@@ -178,7 +178,7 @@ def local_search(query: str, **params: typing.Any) -> None:
 
 @local.command("get")
 @click.argument("term_or_url", default="")
-@local_db_option
+@database_option
 @config_option
 @output_options
 @cli_command
@@ -196,7 +196,7 @@ def local_get(term_or_url: str, **params: typing.Any) -> None:
     async def _run() -> int:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
-        async with local_pkg.local_db(db_path) as db:
+        async with local_pkg.database(db_path) as db:
             result = await local_pkg.get_term(db, term_or_url)
             if result is None:
                 return 0
@@ -218,7 +218,7 @@ def local_get(term_or_url: str, **params: typing.Any) -> None:
 
 
 @local.command("flush")
-@local_db_option
+@database_option
 @config_option
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Don't ask for confirmation.")
 @cli_command
@@ -236,7 +236,7 @@ def flush(**params: typing.Any) -> None:
     async def _run() -> None:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
-        async with local_pkg.local_db(db_path) as db:
+        async with local_pkg.database(db_path) as db:
             await local_pkg.flush(db)
 
     run_async(_run())
@@ -244,7 +244,7 @@ def flush(**params: typing.Any) -> None:
 
 
 @local.command("reset")
-@local_db_option
+@database_option
 @config_option
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Don't ask for confirmation.")
 @cli_command
@@ -258,13 +258,13 @@ def reset(**params: typing.Any) -> None:
     """
     if not params["assume_yes"]:
         click.confirm(
-            "Delete every term AND reset sync history in the local database?", abort=True
+            "Delete every term and reset sync history in the local database?", abort=True
         )
 
     async def _run() -> None:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
-        async with local_pkg.local_db(db_path) as db:
+        async with local_pkg.database(db_path) as db:
             await local_pkg.reset(db)
 
     run_async(_run())
@@ -272,7 +272,7 @@ def reset(**params: typing.Any) -> None:
 
 
 # `sync`/`update` are the same commands registered at the CLI root, added
-# here too under `local` for discoverability - both go live, unlike
+# here too under `local` for discoverability. Both go live, unlike
 # everything else in this group.
 local.add_command(sync_command, name="sync")
 local.add_command(update_command, name="update")

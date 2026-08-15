@@ -11,7 +11,7 @@ from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, session_options
 from slb_glossary.cli.source_options import (
     get_loaded_config,
-    local_db_option,
+    database_option,
     open_configured_db,
     resolve_lookup,
     resolve_source,
@@ -52,7 +52,7 @@ def _validate_term(ctx: click.Context, param: click.Parameter, value: str) -> st
 @click.command("related")
 @click.argument("term", default="", callback=_validate_term)
 @source_options
-@local_db_option
+@database_option
 @config_option
 @session_options
 @output_options
@@ -68,7 +68,7 @@ def related(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) 
     """
     List the terms TERM's definition links to under "related terms".
 
-    Same --local/--live/--intelligent source selection as `define`.
+    Same --local/--live/--auto source selection as `define`.
 
     \b
     Examples:

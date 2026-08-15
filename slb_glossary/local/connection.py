@@ -13,7 +13,7 @@ from slb_glossary.paths import default_db_path, default_metadata_path
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["open_db", "close_db", "local_db"]
+__all__ = ["open_db", "close_db", "database"]
 
 
 def _resolve_metadata_path(
@@ -43,7 +43,7 @@ async def open_db(
         left at its default, or `<path stem>.metadata.json` next to a
         custom `path`.
     :return: An open `Database`. Close it with `close_db`, or use
-        `local_db` instead of calling this function directly.
+        `database` instead of calling this function directly.
     :raises DatabaseError: If the installed SQLite build lacks FTS5.
     """
     resolved_db_path = pathlib.Path(path) if path is not None else default_db_path()
@@ -83,7 +83,7 @@ async def close_db(db: Database) -> None:
 
 
 @contextlib.asynccontextmanager
-async def local_db(
+async def database(
     path: str | pathlib.Path | None = None,
     *,
     metadata_path: str | pathlib.Path | None = None,
@@ -92,7 +92,7 @@ async def local_db(
     Open a `Database` for the duration of an `async with` block.
 
     ```python
-    async with local_db(...) as db:
+    async with database(...) as db:
         async for result in search(db, "porosity"):
             print(result)
     ```

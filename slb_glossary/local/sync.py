@@ -1,5 +1,5 @@
 """
-Sync the local database from a live `SearchSession`.
+Sync the local database from a live `Session`.
 
 Call one of these functions as often (or as rarely) as fits your own use of the glossary; see the
 responsible-use note on `sync_all` in particular.
@@ -15,7 +15,7 @@ from slb_glossary.live import search as live_search
 from slb_glossary.local.api import count as count_terms
 from slb_glossary.local.api import get_topics, upsert_results
 from slb_glossary.local.models import Database, Metadata
-from slb_glossary.models import SearchSession
+from slb_glossary.models import Session
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ async def _record_sync(db: Database, *, terms_written: int, language: str) -> Sy
     )
 
 
-async def sync_topics(db: Database, session: SearchSession) -> SyncSummary:
+async def sync_topics(db: Database, session: Session) -> SyncSummary:
     """
     Refresh the local database's recorded topic list from `session`, without fetching terms.
 
@@ -74,7 +74,7 @@ async def sync_topics(db: Database, session: SearchSession) -> SyncSummary:
     additional requests to the glossary site.
 
     :param db: The local database to update.
-    :param session: An open `SearchSession` to read topic counts from.
+    :param session: An open `Session` to read topic counts from.
     :return: A summary of the sync (`terms_written` is always `0`).
     """
     return await _record_sync(db, terms_written=0, language=session.language.value)
@@ -82,7 +82,7 @@ async def sync_topics(db: Database, session: SearchSession) -> SyncSummary:
 
 async def sync_query(
     db: Database,
-    session: SearchSession,
+    session: Session,
     query: str,
     *,
     topic: str | None = None,
@@ -97,7 +97,7 @@ async def sync_query(
     actually look up, without pulling the whole glossary.
 
     :param db: The local database to write to.
-    :param session: An open `SearchSession` to fetch from.
+    :param session: An open `Session` to fetch from.
     :param query: Free-text query, as for `slb_glossary.engine.search`.
     :param topic: Restrict the fetch to this topic, or several
         comma-separated topics.
@@ -121,7 +121,7 @@ async def sync_query(
 
 async def sync_topic(
     db: Database,
-    session: SearchSession,
+    session: Session,
     topic: str,
     *,
     limit: int | None = None,
@@ -131,7 +131,7 @@ async def sync_topic(
     Fetch every term filed under `topic` from the live glossary and store them locally.
 
     :param db: The local database to write to.
-    :param session: An open `SearchSession` to fetch from.
+    :param session: An open `Session` to fetch from.
     :param topic: Topic name, or several comma-separated topic names.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches.
@@ -144,7 +144,7 @@ async def sync_topic(
 
 async def sync_letter(
     db: Database,
-    session: SearchSession,
+    session: Session,
     start_letter: str,
     *,
     topic: str | None = None,
@@ -159,7 +159,7 @@ async def sync_letter(
     over several separate, spaced-out runs.
 
     :param db: The local database to write to.
-    :param session: An open `SearchSession` to fetch from.
+    :param session: An open `Session` to fetch from.
     :param start_letter: The starting letter to restrict the fetch to.
     :param topic: Also restrict the fetch to this topic, or several
         comma-separated topics.
@@ -175,7 +175,7 @@ async def sync_letter(
     return await _record_sync(db, terms_written=written, language=session.language.value)
 
 
-async def sync_all(db: Database, session: SearchSession, *, concurrency: int = 1) -> SyncSummary:
+async def sync_all(db: Database, session: Session, *, concurrency: int = 1) -> SyncSummary:
     """
     Fetch the entire glossary from the live site and store it locally.
 
@@ -190,7 +190,7 @@ async def sync_all(db: Database, session: SearchSession, *, concurrency: int = 1
     mirroring the whole site.
 
     :param db: The local database to write to.
-    :param session: An open `SearchSession` to fetch from.
+    :param session: An open `Session` to fetch from.
     :param concurrency: Concurrent term-page fetches, per topic.
     :return: A summary of the sync.
     """

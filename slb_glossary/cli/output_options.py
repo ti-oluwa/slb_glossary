@@ -109,9 +109,9 @@ async def output_results(
         `format`) resolves to a file format with no registered writer.
     :raises slb_glossary.store.WriterError: If writing to a save path fails.
     """
-    async with contextlib.aclosing(results) as results:
+    async with contextlib.aclosing(results) as results:  # type: ignore[arg-type]
         return await _collect_and_output(
-            results,
+            results,  # type: ignore[arg-type]
             save_paths=save_paths,
             format=format,
             quiet=quiet,

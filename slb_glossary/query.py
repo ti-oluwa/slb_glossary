@@ -12,7 +12,7 @@ Everything here picks between (or combines) the two based on a `Source`.
 ```python
 import slb_glossary as slb
 
-async with slb.local_db() as db, slb.search_session() as session:
+async with slb.database() as db, slb.session() as session:
     # Local first; only opens a live page if the local DB has nothing.
     # Whatever came back live is written to `db` so the next call is local-only.
     async for result in slb.query.search(
@@ -29,15 +29,16 @@ in what order) is controlled by `source`:
   Requires `db`.
 * `Source.LIVE` - the live glossary only. Never touches the local database
   (not even to read it). Requires `session`.
-* `Source.INTELLIGENT` (the default when both `db` and `session` are given)
+* `Source.AUTO` (the default when both `db` and `session` are given)
   - try `db` first; only fall back to `session` if the local database has
   nothing for the query. Pass `persist=True` to write whatever came back
   live into `db`, so a repeat lookup is served locally next time.
 
-When only one of `db`/`session` is given, `Source.INTELLIGENT` simply
+When only one of `db`/`session` is given, `Source.AUTO` simply
 behaves like whichever of `Source.LOCAL`/`Source.LIVE` that one supports.
 """
 
+from collections.abc import Iterable
 import dataclasses
 import enum
 import logging
@@ -49,7 +50,7 @@ from slb_glossary import live
 from slb_glossary.errors import QueryError
 from slb_glossary.local import api as local_api
 from slb_glossary.local.models import Database
-from slb_glossary.models import RelatedTerm, SearchResult, SearchSession
+from slb_glossary.models import RelatedTerm, SearchResult, Session
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ class Source(enum.Enum):
     LIVE = "live"
     """The live glossary only. Never touches the local database. Requires `session`."""
 
-    INTELLIGENT = "intelligent"
+    AUTO = "auto"
     """Local first, live as a fallback when the local database has nothing.
     See the module docstring for the full behavior."""
 
@@ -99,22 +100,22 @@ class TermLookup(typing.Generic[T]):
     (only ever `True` for a live result fetched with `persist=True`)."""
 
 
-def _require(db: Database | None, session: SearchSession | None, source: Source) -> None:
+def _require(db: Database | None, session: Session | None, source: Source) -> None:
     """Validate that `db`/`session` actually support the requested `source`."""
     if db is None and session is None:
         raise QueryError(
-            "slb_glossary.query needs at least one of `db` or `session` to query anything."
+            "`slb_glossary.query` needs at least one of `db` or `session` to query anything."
         )
     if source is Source.LOCAL and db is None:
-        raise QueryError("`source=Source.LOCAL` requires `db` (a local_db()/open_db() Database).")
+        raise QueryError("`source=Source.LOCAL` requires `db` (a database()/open_db() Database).")
     if source is Source.LIVE and session is None:
-        raise QueryError("`source=Source.LIVE` requires `session` (an open SearchSession).")
+        raise QueryError("`source=Source.LIVE` requires `session` (an open Session).")
 
 
-def _resolve_source(db: Database | None, session: SearchSession | None, source: Source) -> Source:
-    """Narrow `Source.INTELLIGENT` to a starting concrete source given what's available."""
+def _resolve_source(db: Database | None, session: Session | None, source: Source) -> Source:
+    """Narrow `Source.AUTO` to a starting concrete source given what's available."""
     _require(db, session, source)
-    if source is not Source.INTELLIGENT:
+    if source is not Source.AUTO:
         return source
     return Source.LOCAL if db is not None else Source.LIVE
 
@@ -135,8 +136,8 @@ async def search(
     query: str,
     *,
     db: Database | None = None,
-    session: SearchSession | None = None,
-    source: Source = Source.INTELLIGENT,
+    session: Session | None = None,
+    source: Source = Source.AUTO,
     topic: str | None = None,
     start_letter: str | None = None,
     limit: int | None = 3,
@@ -147,7 +148,7 @@ async def search(
     """
     Search for `query`, reading from `db`/`session` according to `source`.
 
-    With `source=Source.INTELLIGENT` (the default when both `db` and
+    With `source=Source.AUTO` (the default when both `db` and
     `session` are given), the local database is searched first; the live
     glossary is only queried if that search comes back empty. Note that
     `start_letter` filtering against the local database is best-effort:
@@ -156,9 +157,9 @@ async def search(
 
     :param query: Free-text query.
     :param db: An open local `Database`. Required for `Source.LOCAL`, and
-        used as the primary source (and/or cache target) for `Source.INTELLIGENT`.
-    :param session: An open live `SearchSession`. Required for `Source.LIVE`,
-        and used as the fallback (and/or live source) for `Source.INTELLIGENT`.
+        used as the primary source (and/or cache target) for `Source.AUTO`.
+    :param session: An open live `Session`. Required for `Source.LIVE`,
+        and used as the fallback (and/or live source) for `Source.AUTO`.
     :param source: Which source(s) to read from. See the module docstring.
     :param topic: Restrict results to this topic, or several comma-separated topics.
     :param start_letter: Restrict results to terms starting with this letter.
@@ -168,7 +169,7 @@ async def search(
     :param persist: If `True`, and a live fetch happens, write its results
         into `db` (if given) so the next matching call can be served locally.
     :param fuzzy: If `True`, any local-database read (a `Source.LOCAL` read,
-        or `Source.INTELLIGENT`'s local-first attempt) tolerates minor
+        or `Source.AUTO`'s local-first attempt) tolerates minor
         misspellings/partial names in `topic` - see
         `slb_glossary.local.fuzzy_match_topics`. Live reads already
         fuzzy-match topics unconditionally, so this has no effect on them.
@@ -177,14 +178,13 @@ async def search(
         or the requested `source` needs one that wasn't given.
     """
     resolved = _resolve_source(db, session, source)
-
     if resolved is Source.LOCAL:
         assert db is not None
         async for result in local_api.search(db, query, topic=topic, limit=limit, fuzzy=fuzzy):
             yield result
         return
 
-    if resolved is Source.LIVE or source is not Source.INTELLIGENT:
+    if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         results: list[SearchResult] = []
         async for result in live.search(
@@ -200,7 +200,7 @@ async def search(
         await _maybe_persist(db, results, persist=persist, language=session.language.value)
         return
 
-    # source is Source.INTELLIGENT, resolved started as LOCAL: try it, then fall back.
+    # source is Source.AUTO, resolved started as LOCAL: try it, then fall back.
     assert db is not None
     local_results = [
         result
@@ -245,8 +245,8 @@ async def get_terms_on(
     topic: str,
     *,
     db: Database | None = None,
-    session: SearchSession | None = None,
-    source: Source = Source.INTELLIGENT,
+    session: Session | None = None,
+    source: Source = Source.AUTO,
     limit: int | None = None,
     concurrency: int = 1,
     persist: bool = False,
@@ -255,11 +255,11 @@ async def get_terms_on(
     """
     Yield every term filed under `topic`, reading from `db`/`session` according to `source`.
 
-    Same local-first, live-fallback behavior as `search` for `Source.INTELLIGENT`.
+    Same local-first, live-fallback behavior as `search` for `Source.AUTO`.
 
     :param topic: Topic name, or several comma-separated topic names.
     :param db: An open local `Database`.
-    :param session: An open live `SearchSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param limit: Maximum number of terms to yield. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches, only relevant when a
@@ -274,14 +274,13 @@ async def get_terms_on(
         or the requested `source` needs one that wasn't given.
     """
     resolved = _resolve_source(db, session, source)
-
     if resolved is Source.LOCAL:
         assert db is not None
         async for result in local_api.get_terms_on(db, topic, limit=limit, fuzzy=fuzzy):
             yield result
         return
 
-    if resolved is Source.LIVE or source is not Source.INTELLIGENT:
+    if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         results: list[SearchResult] = []
         async for result in live.get_terms_on(
@@ -318,8 +317,8 @@ async def get_terms_on(
 async def get_terms_urls(
     *,
     db: Database | None = None,
-    session: SearchSession | None = None,
-    source: Source = Source.INTELLIGENT,
+    session: Session | None = None,
+    source: Source = Source.AUTO,
     query: str | None = None,
     topic: str | None = None,
     start_letter: str | None = None,
@@ -331,10 +330,10 @@ async def get_terms_urls(
 
     Lighter-weight than `search`/`get_terms_on`: only the URLs themselves
     are returned, no definitions are fetched or parsed. Same local-first,
-    live-fallback behavior as `search` for `Source.INTELLIGENT`.
+    live-fallback behavior as `search` for `Source.AUTO`.
 
     :param db: An open local `Database`.
-    :param session: An open live `SearchSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param query: Restrict to a free-text query match.
     :param topic: Restrict to this topic, or several comma-separated topics.
@@ -349,7 +348,6 @@ async def get_terms_urls(
         or the requested `source` needs one that wasn't given.
     """
     resolved = _resolve_source(db, session, source)
-
     if resolved is Source.LOCAL:
         assert db is not None
         async for url in local_api.get_terms_urls(
@@ -358,7 +356,7 @@ async def get_terms_urls(
             yield url
         return
 
-    if resolved is Source.LIVE or source is not Source.INTELLIGENT:
+    if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         async for url in live.get_terms_urls(
             session, query=query, topic=topic, start_letter=start_letter, limit=limit
@@ -366,7 +364,7 @@ async def get_terms_urls(
             yield url
         return
 
-    # source is Source.INTELLIGENT, resolved started as LOCAL: try it, then fall back.
+    # source is Source.AUTO, resolved started as LOCAL: try it, then fall back.
     assert db is not None
     local_urls = [
         url
@@ -398,8 +396,8 @@ async def get_terms_urls(
 async def get_topics(
     *,
     db: Database | None = None,
-    session: SearchSession | None = None,
-    source: Source = Source.INTELLIGENT,
+    session: Session | None = None,
+    source: Source = Source.AUTO,
 ) -> dict[str, int]:
     """
     Return `{topic: term_count}`, reading from `db`/`session` according to `source`.
@@ -411,8 +409,8 @@ async def get_topics(
     :param db: An open local `Database`. Its topic counts only reflect
         terms that have actually been cached locally, which may be a
         subset of the live glossary's full topic list.
-    :param session: An open live `SearchSession`.
-    :param source: Which source(s) to read from. `Source.INTELLIGENT`
+    :param session: An open live `Session`.
+    :param source: Which source(s) to read from. `Source.AUTO`
         prefers the local database when it has at least one topic, falling
         back to `session.topics` otherwise. See the module docstring.
     :return: Topic name to term count.
@@ -420,12 +418,11 @@ async def get_topics(
         or the requested `source` needs one that wasn't given.
     """
     resolved = _resolve_source(db, session, source)
-
     if resolved is Source.LOCAL:
         assert db is not None
         return await local_api.get_topics(db)
 
-    if resolved is Source.LIVE or source is not Source.INTELLIGENT:
+    if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         return dict(session.topics)
 
@@ -443,8 +440,8 @@ async def get_term(
     term_or_url: str,
     *,
     db: Database | None = None,
-    session: SearchSession | None = None,
-    source: Source = Source.INTELLIGENT,
+    session: Session | None = None,
+    source: Source = Source.AUTO,
     persist: bool = False,
 ) -> TermLookup[SearchResult | None]:
     """
@@ -453,7 +450,7 @@ async def get_term(
     :param term_or_url: An exact (case-insensitive) term name, or a
         glossary term detail-page URL.
     :param db: An open local `Database`.
-    :param session: An open live `SearchSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, and a live fetch happens, cache its result into `db`.
     :return: A `TermLookup` wrapping the found `SearchResult` (or `None` if
@@ -463,13 +460,12 @@ async def get_term(
         or the requested `source` needs one that wasn't given.
     """
     resolved = _resolve_source(db, session, source)
-
     if resolved is Source.LOCAL:
         assert db is not None
         result = await local_api.get_term(db, term_or_url)
         return TermLookup(value=result, source=Source.LOCAL, persisted=False)
 
-    if resolved is Source.LIVE or source is not Source.INTELLIGENT:
+    if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         result = await _fetch_live_term(session, term_or_url)
         persisted = await _maybe_persist(
@@ -495,7 +491,7 @@ async def get_term(
     return TermLookup(value=live_result, source=Source.LIVE, persisted=persisted)
 
 
-async def _fetch_live_term(session: SearchSession, term_or_url: str) -> SearchResult | None:
+async def _fetch_live_term(session: Session, term_or_url: str) -> SearchResult | None:
     """Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched."""
     if term_or_url.startswith(("http://", "https://")):
         async for result in live.get_results_from_url(session, term_or_url):
@@ -516,8 +512,8 @@ async def related_terms(
     term_or_url: str,
     *,
     db: Database | None = None,
-    session: SearchSession | None = None,
-    source: Source = Source.INTELLIGENT,
+    session: Session | None = None,
+    source: Source = Source.AUTO,
     persist: bool = False,
 ) -> TermLookup[tuple[RelatedTerm, ...]]:
     """
@@ -529,7 +525,7 @@ async def related_terms(
     :param term_or_url: An exact (case-insensitive) term name, or a
         glossary term detail-page URL.
     :param db: An open local `Database`.
-    :param session: An open live `SearchSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, and a live fetch happens, cache the looked-up
         term's own result into `db`.
@@ -546,8 +542,8 @@ async def related_terms(
 async def get_random_term(
     *,
     db: Database | None = None,
-    session: SearchSession | None = None,
-    source: Source = Source.INTELLIGENT,
+    session: Session | None = None,
+    source: Source = Source.AUTO,
     topic: str | None = None,
     persist: bool = False,
     fuzzy: bool = False,
@@ -555,15 +551,15 @@ async def get_random_term(
     """
     Return one randomly chosen term, optionally restricted to a topic.
 
-    For `Source.LIVE` (and `Source.INTELLIGENT` falling back to it), there's
+    For `Source.LIVE` (and `Source.AUTO` falling back to it), there's
     no "random" endpoint on the live site to call, so this samples one term
     detail-page URL from a random starting letter (or, if `topic` is given,
     from that topic) and fetches it.
 
     :param db: An open local `Database`.
-    :param session: An open live `SearchSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
-        `Source.INTELLIGENT` here means "pick locally if the local database
+        `Source.AUTO` here means "pick locally if the local database
         has anything (matching `topic`, if given), otherwise pick live" -
         not "try local, then live" the way the streaming functions do,
         since a local miss on one random draw says nothing about whether
@@ -580,13 +576,12 @@ async def get_random_term(
         or the requested `source` needs one that wasn't given.
     """
     resolved = _resolve_source(db, session, source)
-
     if resolved is Source.LOCAL:
         assert db is not None
         result = await local_api.get_random_term(db, topic=topic, fuzzy=fuzzy)
         return TermLookup(value=result, source=Source.LOCAL, persisted=False)
 
-    if resolved is Source.LIVE or source is not Source.INTELLIGENT:
+    if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         result = await _fetch_live_get_random_term(session, topic=topic)
         persisted = await _maybe_persist(
@@ -594,7 +589,7 @@ async def get_random_term(
         )
         return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
 
-    # INTELLIGENT: prefer a local pick when the local database actually has
+    # AUTO: prefer a local pick when the local database actually has
     # something to pick from; only go live when it doesn't.
     assert db is not None
     local_result = await local_api.get_random_term(db, topic=topic, fuzzy=fuzzy)
@@ -614,8 +609,17 @@ async def get_random_term(
 LETTERS = list(string.ascii_lowercase)
 
 
+def random_letters(n: int | None = None) -> list[str]:
+    """Return a shuffled list of letters a-z, optionally truncated to `n` letters."""
+    shuffled = LETTERS[:]
+    random.shuffle(shuffled)
+    if n is not None:
+        shuffled = shuffled[:n]
+    return shuffled
+
+
 async def _fetch_live_get_random_term(
-    session: SearchSession, *, topic: str | None, sample_size: int = 25
+    session: Session, *, topic: str | None, sample_size: int = 25
 ) -> SearchResult | None:
     """Sample up to `sample_size` live term URLs (by topic, or a random letter) and fetch one."""
     urls: list[str] = []
@@ -626,8 +630,7 @@ async def _fetch_live_get_random_term(
         # No topic given: shuffle through starting letters until one yields
         # results, since a purely random letter (e.g. an uncommon one) may
         # have no terms at all.
-        random.shuffle(LETTERS)
-        for letter in LETTERS:
+        for letter in random_letters():
             url_iter = live.get_terms_urls(session, start_letter=letter, limit=sample_size)
             urls = [url async for url in url_iter]
             if urls:
@@ -646,8 +649,8 @@ async def compare(
     terms: typing.Sequence[str],
     *,
     db: Database | None = None,
-    session: SearchSession | None = None,
-    source: Source = Source.INTELLIGENT,
+    session: Session | None = None,
+    source: Source = Source.AUTO,
     persist: bool = False,
 ) -> dict[str, TermLookup[SearchResult | None]]:
     """
@@ -655,7 +658,7 @@ async def compare(
 
     :param terms: Term names (or detail-page URLs) to look up. Order is preserved.
     :param db: An open local `Database`.
-    :param session: An open live `SearchSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, cache any live fetches into `db`.
     :return: `{term_or_url: TermLookup}`, in the order `terms` was given.

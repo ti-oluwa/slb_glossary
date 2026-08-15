@@ -11,7 +11,7 @@ from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, session_options
 from slb_glossary.cli.source_options import (
     get_loaded_config,
-    local_db_option,
+    database_option,
     open_configured_db,
     resolve_lookup,
     resolve_source,
@@ -33,7 +33,7 @@ def _validate_term(ctx: click.Context, param: click.Parameter, value: str) -> st
 @click.command("define")
 @click.argument("term", default="", callback=_validate_term)
 @source_options
-@local_db_option
+@database_option
 @click.option(
     "--show-related/--hide-related",
     "show_related",
@@ -64,7 +64,7 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
     Look up TERM (an exact term name, or a term detail-page URL) and print its definition.
 
     Reads from the local database, the live glossary, or both, depending on
-    --local/--live/--intelligent (--intelligent is the default): with a
+    --local/--live/--auto (--auto is the default): with a
     local database available, the local copy is used first and the live
     site is only visited if TERM isn't cached yet.
 

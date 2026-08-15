@@ -17,7 +17,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
     - [Library](#library)
     - [Command line](#command-line)
   - [Core concepts](#core-concepts)
-    - [`SearchSession`: one session, many searches](#searchsession-one-session-many-searches)
+    - [`Session`: one session, many searches](#searchsession-one-session-many-searches)
     - [Retries and backoff](#retries-and-backoff)
     - [`SearchResult`](#searchresult)
     - [Live search: `slb_glossary.live`](#live-search-slb_glossarylive)
@@ -32,7 +32,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
   - [Saving results to a file: `slb_glossary.store`](#saving-results-to-a-file-slb_glossarystore)
   - [Command-line interface](#command-line-interface)
     - [Command reference](#command-reference)
-    - [Choosing a source: `--local` / `--live` / `--intelligent`](#choosing-a-source---local----live----intelligent)
+    - [Choosing a source: `--local` / `--live` / `--auto`](#choosing-a-source---local----live----auto)
     - [Saving and formatting output](#saving-and-formatting-output)
     - [The interactive TUI](#the-interactive-tui)
   - [Logging](#logging)
@@ -51,7 +51,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
 - **An optional local cache.** `slb_glossary.local` keeps a SQLite (FTS5) copy of terms you've already looked up, complete with fuzzy topic matching and an optional bring-your-own-embedding vector store, so repeat lookups don't need the browser at all.
 - **One API for local, live, or both.** `slb_glossary.query` reads local-first and falls back to the live site only when needed, optionally caching whatever it fetches live for next time - or pin it to `local`-only or `live`-only when you know which you want.
 - **File-based configuration.** Session, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
-- **Functions, not classes.** There's no `Glossary` object to subclass or configure. Open a session, get a plain `SearchSession` value back, and pass it to whichever function you need.
+- **Functions, not classes.** There's no `Glossary` object to subclass or configure. Open a session, get a plain `Session` value back, and pass it to whichever function you need.
 - **A full-featured CLI.** Every capability above - search, local caching, config, sync - is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
 - **A decoupled `store` package.** Saving results to CSV/JSON/TXT/XLSX lives in its own package that only depends on ["things shaped like" a `SearchResult`](#saving-results-to-a-file-slb_glossarystore), not on the glossary or browser code at all.
 - **Configurable retries.** Flaky page loads are retried with a pluggable backoff policy - constant, linear, exponential or logarithmic.
@@ -137,7 +137,7 @@ import slb_glossary as slb
 
 
 async def main() -> None:
-    async with slb.search_session() as session:
+    async with slb.session() as session:
         async for result in slb.live.search(session, "porosity"):
             print(result.term, "-", result.definition)
 
@@ -154,7 +154,7 @@ from slb_glossary import query
 
 
 async def main() -> None:
-    async with slb.local.local_db() as db, slb.search_session() as session:
+    async with slb.local.database() as db, slb.session() as session:
         # Local first; only opens a live page if the local DB has nothing.
         # persist=True writes whatever came back live into `db`.
         async for result in query.search("water saturation", db=db, session=session, persist=True):
@@ -182,9 +182,9 @@ See [Command-line interface](#command-line-interface) for the full command refer
 
 ## Core concepts
 
-### `SearchSession`: one session, many searches
+### `Session`: one session, many searches
 
-`slb_glossary` has no `Glossary` class. Instead, `open_session` (or the `search_session` context manager) launches a browser and loads the glossary's topic list once, returning a `SearchSession` - a plain dataclass holding the live browser session and that metadata. Every live search function takes this session as its first argument.
+`slb_glossary` has no `Glossary` class. Instead, `open_session` (or the `session` context manager) launches a browser and loads the glossary's topic list once, returning a `Session` - a plain dataclass holding the live browser session and that metadata. Every live search function takes this session as its first argument.
 
 ```python
 session = await slb.open_session(language=slb.Language.ENGLISH)
@@ -194,10 +194,10 @@ finally:
     await slb.close_session(session)
 ```
 
-Prefer `search_session` for anything but long-lived services; it guarantees the browser is closed even if your code raises:
+Prefer `session` for anything but long-lived services; it guarantees the browser is closed even if your code raises:
 
 ```python
-async with slb.search_session(headless=True) as session:
+async with slb.session(headless=True) as session:
     ...
 ```
 
@@ -224,7 +224,7 @@ async with slb.search_session(headless=True) as session:
 You can also open a session straight from a [`Config`](#configuration-slb_glossaryconfig):
 
 ```python
-async with slb.search_session_from_config("~/.config/slb-glossary/config.toml") as session:
+async with slb.session_from_config("~/.config/slb-glossary/config.toml") as session:
     ...
 ```
 
@@ -236,7 +236,7 @@ Page loads that briefly render before the glossary's JavaScript widget finishes 
 from slb_glossary import RetryPolicy
 
 policy = RetryPolicy.exponential(base_delay=0.5, attempts=5, max_delay=8.0)
-async with slb.search_session(retry=policy) as session:
+async with slb.session(retry=policy) as session:
     ...
 ```
 
@@ -306,10 +306,10 @@ slb.get_topic_match(session.topics, "drill")
 > [!NOTE]
 > The data stored locally is still SLB's - see [Attribution and disclaimer](#attribution-and-disclaimer). Enabling this module means keeping a local copy of glossary content on your own machine; you're solely responsible for that copy's lifecycle (how long you keep it, how often you refresh it, and deleting it when you're done) in compliance with SLB's terms of use.
 
-Open a database with `local_db` (an `async with` context manager) or `open_db`/`close_db` directly:
+Open a database with `database` (an `async with` context manager) or `open_db`/`close_db` directly:
 
 ```python
-async with slb.local.local_db() as db:
+async with slb.local.database() as db:
     ...
 ```
 
@@ -317,7 +317,7 @@ With no path given, it opens at the OS-appropriate user data directory (see `slb
 
 ### Filling the local database
 
-Sync functions in `slb_glossary.local.sync` pull from a live `SearchSession` into a `Database`, from cheapest to most expensive:
+Sync functions in `slb_glossary.local.sync` pull from a live `Session` into a `Database`, from cheapest to most expensive:
 
 ```python
 from slb_glossary import local
@@ -403,7 +403,7 @@ This is a brute-force scan, fine for a glossary-sized dataset but not built for 
 ```python
 from slb_glossary import query
 
-async with slb.local.local_db() as db, slb.search_session() as session:
+async with slb.local.database() as db, slb.session() as session:
     async for result in query.search("water saturation", db=db, session=session, persist=True):
         print(result.term, "-", result.definition)
 ```
@@ -414,9 +414,9 @@ At least one of `db` or `session` must be given to every function here - there's
 | --------------- | ------------------------------------------------------------------------------------------------ |
 | `LOCAL`          | The local database only. Never touches the network. Requires `db`.                              |
 | `LIVE`           | The live glossary only. Never touches the local database. Requires `session`.                   |
-| `INTELLIGENT`    | (Default when both `db` and `session` are given.) Try `db` first; only fall back to `session` if the local database has nothing. Pass `persist=True` to cache whatever came back live. |
+| `AUTO`    | (Default when both `db` and `session` are given.) Try `db` first; only fall back to `session` if the local database has nothing. Pass `persist=True` to cache whatever came back live. |
 
-When only one of `db`/`session` is given, `INTELLIGENT` simply behaves like whichever of `LOCAL`/`LIVE` that one supports. The available functions are `search`, `get_terms_on`, `get_term`, `related_terms`, `random_term`, and `compare` (look up several terms at once); each accepts a `fuzzy=True` flag that, for any local read, tolerates minor misspellings/partial names in `topic` (see [Fuzzy topic matching](#fuzzy-topic-matching) - live reads already fuzzy-match topics unconditionally).
+When only one of `db`/`session` is given, `AUTO` simply behaves like whichever of `LOCAL`/`LIVE` that one supports. The available functions are `search`, `get_terms_on`, `get_term`, `related_terms`, `random_term`, and `compare` (look up several terms at once); each accepts a `fuzzy=True` flag that, for any local read, tolerates minor misspellings/partial names in `topic` (see [Fuzzy topic matching](#fuzzy-topic-matching) - live reads already fuzzy-match topics unconditionally).
 
 `get_term`, `related_terms`, and `random_term` return a `TermLookup(value, source, persisted)`, so callers can tell where a result actually came from and whether it was written back to `db`.
 
@@ -428,7 +428,7 @@ When only one of `db`/`session` is given, `INTELLIGENT` simply behaves like whic
 from slb_glossary import Config
 
 config = Config.load()  # default path if it exists, else built-in defaults
-async with slb.search_session_from_config(config) as session:
+async with slb.session_from_config(config) as session:
     ...
 ```
 
@@ -508,7 +508,7 @@ Run `slb --help`, or `--help` after any subcommand, for the full set of options 
 | `topics refresh`     | Live only                          | Reload the topic list directly from the site.                                                    |
 | `urls list`          | Live only                          | List term detail-page URLs matching a query/topic/letter.                                        |
 | `urls fetch`         | Live only                          | Fetch every definition on one term detail-page URL.                                               |
-| `define`             | Local, live, or intelligent        | Look up a single term's definition. See [Choosing a source](#choosing-a-source---local---live---intelligent). |
+| `define`             | Local, live, or intelligent        | Look up a single term's definition. See [Choosing a source](#choosing-a-source---local---live---auto). |
 | `related`            | Local, live, or intelligent        | List a term's "related terms" links.                                                             |
 | `compare`            | Local, live, or intelligent        | Look up several terms side by side.                                                               |
 | `random`             | Local, live, or intelligent        | Print one or more randomly chosen terms.                                                          |
@@ -523,20 +523,20 @@ Run `slb --help`, or `--help` after any subcommand, for the full set of options 
 | `config`             | -                                  | Interactive wizard for the config file (see [Configuration](#configuration-slb_glossaryconfig)). |
 | `install`            | -                                  | Install/list/remove/update the browser engines patchright launches.                              |
 
-`search`, `terms`, `topics`, and `urls` are the direct, live-only equivalents of `slb_glossary.live`'s functions - they take the full set of session-configuring flags (`--language`, `--browser-type`, `--headless`, retry options, and so on; see `session_options` in the library) but no `--local`/`--live`/`--intelligent`, since there's no local database in the picture for them by design. `local search`/`local get` are their local-only counterparts, reading only the cached copy. `define`/`related`/`compare`/`random` sit in between: they're built on `slb_glossary.query`, so they support both.
+`search`, `terms`, `topics`, and `urls` are the direct, live-only equivalents of `slb_glossary.live`'s functions - they take the full set of session-configuring flags (`--language`, `--browser-type`, `--headless`, retry options, and so on; see `session_options` in the library) but no `--local`/`--live`/`--auto`, since there's no local database in the picture for them by design. `local search`/`local get` are their local-only counterparts, reading only the cached copy. `define`/`related`/`compare`/`random` sit in between: they're built on `slb_glossary.query`, so they support both.
 
-### Choosing a source: `--local` / `--live` / `--intelligent`
+### Choosing a source: `--local` / `--live` / `--auto`
 
 `define`, `related`, `compare`, and `random` all accept:
 
 ```bash
 slb define porosity --local           # local database only, error if disabled/missing
 slb define porosity --live --cache    # live site only; --cache saves the result locally
-slb define porosity --intelligent     # local first, live as a fallback (the default)
+slb define porosity --auto     # local first, live as a fallback (the default)
 slb define porosity --source live     # equivalent, spelled out
 ```
 
-`--db-path PATH` overrides the local database file for that run (see `local path`/`Config.local`). With `--intelligent` (the default), a local hit never launches a browser at all.
+`--db-path PATH` overrides the local database file for that run (see `local path`/`Config.local`). With `--auto` (the default), a local hit never launches a browser at all.
 
 ### Saving and formatting output
 
@@ -576,9 +576,9 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
 - Image, font and media requests are blocked at the network layer by default (`block=True`) - the glossary is a JavaScript app, so scripts and stylesheets are always loaded, but nothing else needs to be.
 - Page data (topic lists, result links, definition text) is read with single `evaluate`-style JavaScript calls rather than one round-trip per DOM element.
 - Because live search is lazy, `async for result in live.search(session, "x"): break` after the first result does the minimum work needed to produce it.
-- Reuse one `SearchSession` for every live search you need instead of opening a new one per query - most of the cost of a session is the one-time browser launch and topic fetch.
-- A `SearchSession` drives a single browser page and isn't safe to share across concurrent coroutines. For parallel searches, open one session per concurrent task, or use a function's `concurrency` argument to open extra pages on the same session.
-- A local-database read never launches a browser; `slb_glossary.query`'s `Source.INTELLIGENT` (the CLI's `--intelligent`, the default) takes advantage of this by trying the local database first.
+- Reuse one `Session` for every live search you need instead of opening a new one per query - most of the cost of a session is the one-time browser launch and topic fetch.
+- A `Session` drives a single browser page and isn't safe to share across concurrent coroutines. For parallel searches, open one session per concurrent task, or use a function's `concurrency` argument to open extra pages on the same session.
+- A local-database read never launches a browser; `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) takes advantage of this by trying the local database first.
 
 ## Exceptions
 

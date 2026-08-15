@@ -131,10 +131,10 @@ class SessionConfig:
 
     def to_session_kwargs(self) -> dict[str, typing.Any]:
         """
-        Build keyword arguments for `slb_glossary.browser.open_session`/`search_session`.
+        Build keyword arguments for `slb_glossary.browser.open_session`/`session`.
 
         :return: A kwargs dict ready to splat into `open_session` or
-            `search_session`.
+            `session`.
         """
         block: bool | frozenset[str]
         if self.block_resources:
@@ -357,11 +357,11 @@ def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format: 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class Config:
     """
-    Top-level, file-loadable configuration for a `SearchSession` and local database.
+    Top-level, file-loadable configuration for a `Session` and local database.
 
     ```python
     config = Config.load()  # default path if it exists, else built-in defaults
-    async with SearchSession.from_config(config) as session:
+    async with Session.from_config(config) as session:
         ...
     ```
     """
@@ -446,7 +446,7 @@ class Config:
         _write_config_file(self.to_dict(), path, resolved_format)
 
     def to_session_kwargs(self) -> dict[str, typing.Any]:
-        """Build keyword arguments for `open_session`/`search_session` from `self.session`."""
+        """Build keyword arguments for `open_session`/`session` from `self.session`."""
         return self.session.to_session_kwargs()
 
     def get(self, key: str) -> typing.Any:

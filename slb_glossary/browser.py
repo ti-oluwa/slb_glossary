@@ -12,7 +12,7 @@ from playwright_stealth import Stealth
 
 from slb_glossary.config import Config
 from slb_glossary.errors import BrowserError, NetworkError
-from slb_glossary.models import Language, SearchSession
+from slb_glossary.models import Language, Session
 from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
 from slb_glossary.topics import fetch_topics
 from slb_glossary.urls import get_glossary_base_url
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "close_session",
-    "search_session",
-    "search_session_from_config",
+    "session",
+    "session_from_config",
     "open_session",
     "open_session_from_config",
     "ResourceType",
@@ -268,7 +268,7 @@ async def open_session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
-) -> SearchSession:
+) -> Session:
     """
     Launch a (stealth) browser session and load the glossary's topics and size.
 
@@ -311,9 +311,9 @@ async def open_session(
         Values passed here are merged with the library defaults.
     :param use_stealth: Whether to apply Playwright stealth patches to the
         browser context. Defaults to `True`.
-    :return: An open `SearchSession` ready to pass to `slb_glossary.search`
+    :return: An open `Session` ready to pass to `slb_glossary.search`
         functions. Close it with `close_session` when done, or use
-        `search_session` instead of calling this function directly.
+        `session` instead of calling this function directly.
     :raises NetworkError: If the glossary site could not be reached.
     :raises BrowserError: If the browser failed to launch for any other
         reason, including an unsupported `browser_type`.
@@ -365,7 +365,7 @@ async def open_session(
         except Exception as exc:
             raise NetworkError(f"Could not reach the glossary at {base_url}") from exc
 
-        session = SearchSession(
+        session = Session(
             playwright=playwright,
             browser=browser,
             context=context,
@@ -395,11 +395,11 @@ async def open_session(
 
 async def open_session_from_config(
     config: Config | str | pathlib.Path, **overrides: typing.Any
-) -> SearchSession:
+) -> Session:
     """
-    Open a `SearchSession` using a `Config`, or a path to a config file.
+    Open a `Session` using a `Config`, or a path to a config file.
 
-    Equivalent to `SearchSession.from_config`; provided here as well so
+    Equivalent to `Session.from_config`; provided here as well so
     `slb_glossary.browser` stays a complete, self-contained entry point for
     opening sessions without needing an import from `slb_glossary.models`.
 
@@ -407,8 +407,8 @@ async def open_session_from_config(
         TOML/YAML file `Config.from_file` can load.
     :param overrides: Keyword arguments forwarded to `open_session`,
         overriding whatever `config` specifies.
-    :return: An open `SearchSession`. Close it with `close_session`, or
-        prefer `search_session_from_config` for automatic cleanup.
+    :return: An open `Session`. Close it with `close_session`, or
+        prefer `session_from_config` for automatic cleanup.
     """
     resolved_config = config if isinstance(config, Config) else Config.from_file(config)
     kwargs = resolved_config.to_session_kwargs()
@@ -416,7 +416,7 @@ async def open_session_from_config(
     return await open_session(**kwargs)
 
 
-async def close_session(session: SearchSession) -> None:
+async def close_session(session: Session) -> None:
     """
     Close every resource opened for `session`.
 
@@ -434,7 +434,7 @@ async def close_session(session: SearchSession) -> None:
 
 
 @contextlib.asynccontextmanager
-async def search_session(
+async def session(
     *,
     language: Language = Language.ENGLISH,
     browser_type: BrowserType | str = BrowserType.CHROMIUM,
@@ -451,12 +451,12 @@ async def search_session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
-) -> typing.AsyncIterator[SearchSession]:
+) -> typing.AsyncIterator[Session]:
     """
-    Open a `SearchSession` for the duration of an `async with` block.
+    Open a `Session` for the duration of an `async with` block.
 
     ```python
-    async with search_session(...) as session:
+    async with session(...) as session:
         async for result in search(session, "porosity"):
             print(result)
     ```
@@ -516,14 +516,14 @@ async def search_session(
 
 
 @contextlib.asynccontextmanager
-async def search_session_from_config(
+async def session_from_config(
     config: Config | str | pathlib.Path, **overrides: typing.Any
-) -> typing.AsyncIterator[SearchSession]:
+) -> typing.AsyncIterator[Session]:
     """
-    Open a `SearchSession` from a `Config` (or config file path) for an `async with` block.
+    Open a `Session` from a `Config` (or config file path) for an `async with` block.
 
     ```python
-    async with search_session_from_config("config.toml") as session:
+    async with session_from_config("config.toml") as session:
         async for result in search(session, "porosity"):
             print(result)
     ```

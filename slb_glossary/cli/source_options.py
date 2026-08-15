@@ -1,5 +1,5 @@
 """
-Shared `--local`/`--live`/`--intelligent` options for commands built on `slb_glossary.query`.
+Shared `--local`/`--live`/`--auto` options for commands built on `slb_glossary.query`.
 
 Also handles resolving *where* the local database lives for those
 commands (`--db-path`, or the `Database` section of the loaded `Config`),
@@ -13,22 +13,22 @@ import typing
 
 import click
 
-from slb_glossary.browser import search_session
+from slb_glossary.browser import session
 from slb_glossary.cli.session_options import (
     load_named_config,
     resolve_session_kwargs,
 )
 from slb_glossary.config import Config
-from slb_glossary.local.connection import local_db
+from slb_glossary.local.connection import database
 from slb_glossary.local.models import Database
-from slb_glossary.models import SearchSession
+from slb_glossary.models import Session
 from slb_glossary.paths import get_data_dir
 from slb_glossary.query import Source, TermLookup
 
 __all__ = [
     "source_options",
     "resolve_source",
-    "local_db_option",
+    "database_option",
     "resolve_db_path",
     "local_storage_enabled",
     "open_configured_db",
@@ -44,7 +44,7 @@ F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
 
 def source_options(func: F) -> F:
     """
-    Attach `--source`, its `--local`/`--live`/`--intelligent` shorthands, and `--cache` to a command.
+    Attach `--source`, its `--local`/`--live`/`--auto` shorthands, and `--cache` to a command.
 
     Pair with `resolve_source` to turn the parsed flags into one `Source`.
 
@@ -62,7 +62,7 @@ def source_options(func: F) -> F:
         ),
     )(func)
     func = click.option(
-        "--intelligent",
+        "--auto",
         "source_intelligent",
         is_flag=True,
         help="Shorthand for --source intelligent (the default): local first, live as a fallback.",
@@ -84,17 +84,17 @@ def source_options(func: F) -> F:
         "source",
         type=click.Choice([s.value for s in Source], case_sensitive=False),
         default=None,
-        help="Where to read from. Same choices as --local/--live/--intelligent, spelled out.",
+        help="Where to read from. Same choices as --local/--live/--auto, spelled out.",
     )(func)
     return func
 
 
 def resolve_source(params: typing.Mapping[str, typing.Any]) -> Source:
     """
-    Resolve `--source`/`--local`/`--live`/`--intelligent` to one `Source`.
+    Resolve `--source`/`--local`/`--live`/`--auto` to one `Source`.
 
     :param params: The command's parsed parameters, as attached by `source_options`.
-    :return: The resolved `Source`. `Source.INTELLIGENT` if nothing was given.
+    :return: The resolved `Source`. `Source.AUTO` if nothing was given.
     :raises click.UsageError: If more than one of the flags/`--source` was given.
     """
     chosen: list[Source] = []
@@ -103,17 +103,17 @@ def resolve_source(params: typing.Mapping[str, typing.Any]) -> Source:
     if params.get("source_live"):
         chosen.append(Source.LIVE)
     if params.get("source_intelligent"):
-        chosen.append(Source.INTELLIGENT)
+        chosen.append(Source.AUTO)
     if params.get("source"):
         chosen.append(Source(str(params["source"]).lower()))
 
     unique = list(dict.fromkeys(chosen))
     if len(unique) > 1:
-        raise click.UsageError("Give at most one of --source/--local/--live/--intelligent.")
-    return unique[0] if unique else Source.INTELLIGENT
+        raise click.UsageError("Give at most one of --source/--local/--live/--auto.")
+    return unique[0] if unique else Source.AUTO
 
 
-def local_db_option(func: F) -> F:
+def database_option(func: F) -> F:
     """
     Attach `--db-path` to a command that may open the local search database.
 
@@ -177,18 +177,18 @@ async def open_configured_db(
     if not local_storage_enabled(config, db_path_override=db_path_override):
         yield None
         return
-    async with local_db(resolve_db_path(config, db_path_override)) as db:
+    async with database(resolve_db_path(config, db_path_override)) as db:
         yield db
 
 
 @contextlib.asynccontextmanager
 async def live_session(
     ctx: click.Context, params: typing.Mapping[str, typing.Any]
-) -> typing.AsyncIterator[SearchSession]:
+) -> typing.AsyncIterator[Session]:
     """
-    Open a live `SearchSession` for the duration of an `async with` block.
+    Open a live `Session` for the duration of an `async with` block.
 
-    A thin wrapper around `slb_glossary.browser.search_session` using this
+    A thin wrapper around `slb_glossary.browser.session` using this
     run's resolved `--config`/session flags - kept here so query commands
     have one obvious way to open the browser only once they've actually
     decided they need it (e.g. after a local-only pass came back empty).
@@ -196,9 +196,9 @@ async def live_session(
     :param ctx: The current click context.
     :param params: The command's parsed parameters, including everything
         `slb_glossary.cli.session_options.session_options`/`config_option` attach.
-    :yield: An open `SearchSession`.
+    :yield: An open `Session`.
     """
-    async with search_session(**resolve_session_kwargs(ctx, params)) as session:
+    async with session(**resolve_session_kwargs(ctx, params)) as session:
         yield session
 
 
@@ -217,12 +217,12 @@ async def resolve_lookup(
     *,
     source: Source,
     local_call: typing.Callable[[Database], typing.Awaitable[TermLookup[T]]],
-    live_call: typing.Callable[[SearchSession], typing.Awaitable[TermLookup[T]]],
+    live_call: typing.Callable[[Session], typing.Awaitable[TermLookup[T]]],
 ) -> TermLookup[T]:
     """
     Run a single-value `slb_glossary.query` lookup, opening a live session only if actually needed.
 
-    For `Source.INTELLIGENT`, `local_call` is tried first (no browser
+    For `Source.AUTO`, `local_call` is tried first (no browser
     launched); a live session is opened via `live_call` only if that came
     back empty (`TermLookup.value` falsy).
 
@@ -234,7 +234,7 @@ async def resolve_lookup(
     :param local_call: Awaitable-returning callable given `db`, e.g.
         `lambda db: query.get_term(term, db=db, source=Source.LOCAL)`.
     :param live_call: Awaitable-returning callable given an opened
-        `SearchSession`, e.g. `lambda s: query.get_term(term, db=db,
+        `Session`, e.g. `lambda s: query.get_term(term, db=db,
         session=s, source=Source.LIVE, persist=cache_results)`.
     :return: The resolved `TermLookup`.
     :raises click.UsageError: If `source` is `Source.LOCAL` but `db` is `None`.
@@ -252,7 +252,7 @@ async def resolve_lookup(
         async with live_session(ctx, params) as session:
             return await live_call(session)
 
-    # Source.INTELLIGENT: a local hit never opens a browser.
+    # Source.AUTO: a local hit never opens a browser.
     if db is not None:
         local_result = await local_call(db)
         if local_result.value:
@@ -269,7 +269,7 @@ async def resolve_stream(
     *,
     source: Source,
     local_call: typing.Callable[[Database], typing.AsyncIterator[T]],
-    live_call: typing.Callable[[SearchSession], typing.AsyncIterator[T]],
+    live_call: typing.Callable[[Session], typing.AsyncIterator[T]],
 ) -> typing.AsyncIterator[T]:
     """
     Stream a `slb_glossary.query`-style lookup, opening a live session only if actually needed.
@@ -278,7 +278,7 @@ async def resolve_stream(
     `slb_glossary.query` function that yields several results (`search`,
     `get_terms_on`, `get_terms_urls`) rather than a single `TermLookup`.
 
-    For `Source.INTELLIGENT`, `local_call` is fully drained first (no
+    For `Source.AUTO`, `local_call` is fully drained first (no
     browser launched); a live session is opened via `live_call` only if
     that came back with nothing at all.
 
@@ -290,7 +290,7 @@ async def resolve_stream(
     :param local_call: Async-generator-returning callable given `db`, e.g.
         `lambda db: query.search(term, db=db, source=Source.LOCAL)`.
     :param live_call: Async-generator-returning callable given an opened
-        `SearchSession`, e.g. `lambda s: query.search(term, db=db,
+        `Session`, e.g. `lambda s: query.search(term, db=db,
         session=s, source=Source.LIVE, persist=cache_results)`.
     :yield: Whatever `local_call`/`live_call` yield.
     :raises click.UsageError: If `source` is `Source.LOCAL` but `db` is `None`.
@@ -318,7 +318,7 @@ async def resolve_stream(
                 yield item  # noqa: ASYNC119
         return
 
-    # Source.INTELLIGENT: a local hit never opens a browser.
+    # Source.AUTO: a local hit never opens a browser.
     if db is not None:
         local_items = [item async for item in local_call(db)]
         if local_items:

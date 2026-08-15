@@ -3,7 +3,7 @@ Local search database: a SQLite (FTS5) cache of glossary terms, plus an
 optional custom embedding vector store, so repeat lookups don't
 have to keep re-visiting the live site.
 
-Open one with `open_db`/`local_db`, fill it from a live `SearchSession`
+Open one with `open_db`/`database`, fill it from a live `Session`
 (`sync_topics`/`sync_query`/`sync_topic`/`sync_all`) or from your own
 CSV/JSON/XLSX file (`slb_glossary.local.loaders.load_file`), then query
 it with `search`/`get_terms_on`/`get_term`/`get_terms_urls`/`iter_topics`
@@ -41,7 +41,7 @@ from slb_glossary.local.api import (
     search,
     upsert_results,
 )
-from slb_glossary.local.connection import close_db, local_db, open_db
+from slb_glossary.local.connection import close_db, database, open_db
 from slb_glossary.local.loaders import load_file
 from slb_glossary.local.maintenance import flush, reset
 from slb_glossary.local.models import Database, Metadata
@@ -61,7 +61,7 @@ __all__ = [
     "DatabaseError",
     "open_db",
     "close_db",
-    "local_db",
+    "database",
     "upsert_results",
     "search",
     "get_terms_on",

@@ -5,11 +5,11 @@ import typing
 import click
 
 from slb_glossary import local
-from slb_glossary.browser import search_session
+from slb_glossary.browser import session
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.cli.session_options import config_option, resolve_session_kwargs, session_options
-from slb_glossary.cli.source_options import get_loaded_config, local_db_option, resolve_db_path
+from slb_glossary.cli.source_options import get_loaded_config, database_option, resolve_db_path
 from slb_glossary.cli.sync_options import (
     print_sync_summary,
     run_configured_sync,
@@ -24,7 +24,7 @@ __all__ = ["update"]
 
 @click.command("update")
 @sync_filter_options
-@local_db_option
+@database_option
 @config_option
 @session_options
 @click.option(
@@ -66,8 +66,8 @@ def update(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
     db_path = resolve_db_path(config, params["db_path"])
 
     async def _run() -> SyncSummary:
-        async with local.local_db(db_path) as db:
-            async with search_session(**resolve_session_kwargs(ctx, params)) as session:
+        async with local.database(db_path) as db:
+            async with session(**resolve_session_kwargs(ctx, params)) as session:
                 return await run_configured_sync(db, session, params)
 
     summary = run_async(_run())
