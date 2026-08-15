@@ -164,7 +164,6 @@ async def _collect_and_output(
     collected: list[RecordLike] = []
     count = 0
     was_collected = False
-    records = None
 
     if not quiet:
 
@@ -176,11 +175,11 @@ async def _collect_and_output(
                 count += 1
                 yield record
 
-        records = _async_gen()
+        iter_records = _async_gen()
         if json_output:
             output = []
             output_count = 0
-            async for record in records:
+            async for record in iter_records:
                 output.append(record)
                 output_count += 1
                 if print_limit and output_count >= print_limit:
@@ -208,7 +207,7 @@ async def _collect_and_output(
             )
         else:
             printed_count = await async_print_results(
-                records,
+                iter_records,
                 title=title,
                 limit=print_limit,
                 show_url=show_url,
@@ -226,13 +225,12 @@ async def _collect_and_output(
         # we must collect the targets again fully.
         if was_collected and not print_limit:
             targets = collected
+        elif was_collected:
+            # We collect the remaining records + already collected ones
+            targets = collected + [record async for record in results]
         else:
-            if records is not None:
-                # We collect the remaining record + already collected ones
-                targets = collected + [record async for record in records]
-            else:
-                targets = [record async for record in results]
-            count = len(targets)  # Make to update count
+            targets = [record async for record in results]
+        count = len(targets)  # Make to update count
 
         for path in save_paths:
             await store.save(targets, path, format=format)
