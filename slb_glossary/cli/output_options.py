@@ -164,6 +164,7 @@ async def _collect_and_output(
     collected: list[RecordLike] = []
     count = 0
     was_collected = False
+    records = None
 
     if not quiet:
 
@@ -226,7 +227,11 @@ async def _collect_and_output(
         if was_collected and not print_limit:
             targets = collected
         else:
-            targets = [record async for record in results]
+            if records is not None:
+                # We collect the remaining record + already collected ones
+                targets = collected + [record async for record in records]
+            else:
+                targets = [record async for record in results]
             count = len(targets)  # Make to update count
 
         for path in save_paths:
