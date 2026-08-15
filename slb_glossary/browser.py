@@ -4,6 +4,7 @@ import contextlib
 import enum
 import logging
 import pathlib
+import time
 import typing
 from urllib.parse import urlsplit
 
@@ -11,7 +12,8 @@ from patchright.async_api import Browser, Playwright, Route, async_playwright
 from playwright_stealth import Stealth
 
 from slb_glossary.config import Config
-from slb_glossary.errors import BrowserError, NetworkError
+from slb_glossary.errors import BrowserError, LoggingError, NetworkError
+from slb_glossary.logging import LogSink, configure_logging, resolve_sink
 from slb_glossary.models import BrowserSession, Language
 from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
 from slb_glossary.topics import fetch_topics
@@ -206,6 +208,27 @@ def _build_blocker(
     return _handle_route
 
 
+def _apply_log_sink(log_sink: "LogSink | type[LogSink] | str | pathlib.Path | None") -> None:
+    """
+    Resolve and install `log_sink` as the destination for `slb_glossary`'s logging.
+
+    A no-op when `log_sink` is `None`, leaving whatever logging setup
+    (`logging.basicConfig`, or an earlier `configure_logging` call) already
+    in place untouched.
+
+    :param log_sink: See `open_session`'s `log_sink` parameter.
+    :raises LoggingError: If `log_sink` could not be resolved to a usable sink.
+    """
+    if log_sink is None:
+        return
+    try:
+        resolved = resolve_sink(log_sink)
+    except Exception as exc:
+        raise LoggingError(f"Could not set up log sink {log_sink!r}: {exc}") from exc
+    configure_logging(sinks=resolved)
+    logger.debug("Session logging routed to %r", resolved)
+
+
 async def _launch_browser(
     playwright: Playwright,
     browser_type: BrowserType | str,
@@ -251,7 +274,10 @@ async def _launch_browser(
         )
 
     logger.debug("Launching %s (headless=%s) %s", browser_type, headless, launch_kwargs)
-    return await launcher.launch(**launch_kwargs)
+    launch_started_at = time.monotonic()
+    launched = await launcher.launch(**launch_kwargs)
+    logger.debug("Launched %s in %.3fs", browser_type, time.monotonic() - launch_started_at)
+    return launched
 
 
 async def open_session(
@@ -271,6 +297,7 @@ async def open_session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
+    log_sink: "LogSink | type[LogSink] | str | pathlib.Path | None" = None,
 ) -> BrowserSession:
     """
     Launch a (stealth) browser session and load the glossary's topics and size.
@@ -314,19 +341,33 @@ async def open_session(
         Values passed here are merged with the library defaults.
     :param use_stealth: Whether to apply Playwright stealth patches to the
         browser context. Defaults to `True`.
+    :param log_sink: Where to route `slb_glossary`'s logging for the
+        lifetime of this process - a `slb_glossary.logging.LogSink`
+        instance/class, a file path, `"stderr"`/`"stdout"`, or a
+        `"module:ClassName"` import path resolved via
+        `slb_glossary.logging.resolve_sink`. Handy for bug reports: point
+        this at a file so a failing session's full log trail is captured
+        somewhere retrievable. `None` (the default) leaves whatever
+        logging setup is already in place untouched. Applies process-wide
+        (every `slb_glossary` logger), not just to this session, since
+        Python's `logging` module has no per-object log routing.
     :return: An open `BrowserSession` ready to pass to `slb_glossary.search`
         functions. Close it with `close_session` when done, or use
         `session` instead of calling this function directly.
     :raises NetworkError: If the glossary site could not be reached.
     :raises BrowserError: If the browser failed to launch for any other
         reason, including an unsupported `browser_type`.
+    :raises LoggingError: If `log_sink` was given but could not be resolved/set up.
     """
+    _apply_log_sink(log_sink)
+
     if browser_type not in BrowserType:
         raise BrowserError(
             f"Unsupported `browser_type` {browser_type!r}. "
             f"Supported types: {', '.join(BrowserType.__members__)}."
         )
 
+    session_started_at = time.monotonic()
     logger.info("Opening a %r glossary search session over %s", language.value, browser_type)
     playwright = await async_playwright().start()
     try:
@@ -344,7 +385,9 @@ async def open_session(
         context = await browser.new_context(**context_kwargs)
 
         if use_stealth:
+            stealth_started_at = time.monotonic()
             await Stealth().apply_stealth_async(context)  # type: ignore[arg-type]
+            logger.debug("Applied stealth patches in %.3fs", time.monotonic() - stealth_started_at)
 
         page = await context.new_page()
         page.set_default_timeout(timeout)
@@ -358,6 +401,7 @@ async def open_session(
             logger.debug("Blocking resource types: %s", ", ".join(sorted(blocked_resources)))
 
         base_url = get_glossary_base_url(language)
+        topics_started_at = time.monotonic()
         try:
             topics, size = await fetch_topics(
                 page,
@@ -367,6 +411,9 @@ async def open_session(
             )
         except Exception as exc:
             raise NetworkError(f"Could not reach the glossary at {base_url}") from exc
+        logger.debug(
+            "Loaded topics/size for %s in %.3fs", base_url, time.monotonic() - topics_started_at
+        )
 
         session = BrowserSession(
             playwright=playwright,
@@ -384,14 +431,25 @@ async def open_session(
             settle_timeout=settle_timeout,
             poll_interval=poll_interval,
         )
-        logger.info("Glossary search session ready: %d topics, %d terms", len(topics), size)
+        logger.info(
+            "Glossary search session ready in %.3fs: %d topics, %d terms",
+            time.monotonic() - session_started_at,
+            len(topics),
+            size,
+        )
         return session
     except NetworkError:
-        logger.exception("Could not reach the glossary at startup")
+        logger.exception(
+            "Could not reach the glossary at startup (after %.3fs)",
+            time.monotonic() - session_started_at,
+        )
         await playwright.stop()
         raise
     except Exception as exc:
-        logger.exception("Failed to launch the glossary browser session")
+        logger.exception(
+            "Failed to launch the glossary browser session (after %.3fs)",
+            time.monotonic() - session_started_at,
+        )
         await playwright.stop()
         raise BrowserError("Failed to launch the glossary browser session") from exc
 
@@ -427,6 +485,7 @@ async def close_session(session: BrowserSession) -> None:
 
     :param session: The session to close.
     """
+    closed_started_at = time.monotonic()
     logger.info("Closing glossary search session")
     with contextlib.suppress(Exception):
         await session.context.close()
@@ -434,6 +493,7 @@ async def close_session(session: BrowserSession) -> None:
         await session.browser.close()
     with contextlib.suppress(Exception):
         await session.playwright.stop()
+    logger.debug("Session closed in %.3fs", time.monotonic() - closed_started_at)
 
 
 @contextlib.asynccontextmanager
@@ -454,6 +514,7 @@ async def session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
+    log_sink: "LogSink | type[LogSink] | str | pathlib.Path | None" = None,
 ) -> typing.AsyncIterator[BrowserSession]:
     """
     Open a `BrowserSession` for the duration of an `async with` block.
@@ -491,6 +552,8 @@ async def session(
         Values passed here are merged with the library defaults.
     :param use_stealth: Whether to apply Playwright stealth patches to the
         browser context. Defaults to `True`.
+    :param log_sink: Where to route `slb_glossary`'s logging for this
+        process. See `open_session`'s `log_sink` parameter.
 
     Arguments are the same as `open_session`. The session is always
     closed on exit, including when the block raises.
@@ -511,6 +574,7 @@ async def session(
         launch_kwargs=launch_kwargs,
         context_kwargs=context_kwargs,
         use_stealth=use_stealth,
+        log_sink=log_sink,
     )
     try:
         yield session
