@@ -1,5 +1,6 @@
 """Shared, fully-configurable click options for opening a glossary `BrowserSession`."""
 
+import logging
 import typing
 
 import click
@@ -8,6 +9,8 @@ from slb_glossary.browser import BrowserType, ResourceType
 from slb_glossary.config import Config
 from slb_glossary.models import Language
 from slb_glossary.retries import BackoffType
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "session_options",
@@ -42,6 +45,12 @@ SESSION_PARAM_TO_CONFIG_KEY: dict[str, str] = {
     "retry_factor": "session.retry.factor",
     "retry_max_delay": "session.retry.max_delay",
     "retry_jitter": "session.retry.jitter",
+    # Both map to the same config key: whichever was actually typed on the
+    # command line wins (see `resolve_session_kwargs`), and since
+    # `--log-sink` is processed after `--log-to` below, a custom
+    # `--log-sink` given alongside `--log-to` takes priority.
+    "log_to": "session.log_sink",
+    "log_sink": "session.log_sink",
 }
 """Maps each `session_options` destination to the dotted `Config` key
 (see `Config.get`/`Config.set`) it overrides in `resolve_session_kwargs`."""
@@ -200,6 +209,31 @@ def session_options(func: F) -> F:
             help="Apply Playwright stealth patches to the browser context.",
         ),
         click.option(
+            "--log-to",
+            "log_to",
+            default=None,
+            metavar="PATH|stderr|stdout",
+            help=(
+                "Where to route slb_glossary's logging for this run: a file "
+                "path to append log lines to (handy for bug reports), or "
+                "'stderr'/'stdout' for the console. Defaults to whatever "
+                "logging is already configured (console, via "
+                "logging.basicConfig)."
+            ),
+        ),
+        click.option(
+            "--log-sink",
+            "log_sink",
+            default=None,
+            metavar="module:ClassName",
+            help=(
+                "Import path of a custom slb_glossary.logging.LogSink class "
+                "(or instance) to route logging to instead of a built-in "
+                "sink, e.g. 'myapp.logging:BugReportSink'. Takes priority "
+                "over --log-to if both are given."
+            ),
+        ),
+        click.option(
             "--retry-attempts",
             type=int,
             default=3,
@@ -324,4 +358,7 @@ def resolve_session_kwargs(
                 continue
         resolved.set(config_key, value)
 
-    return resolved.to_session_kwargs()
+    kwargs = resolved.to_session_kwargs()
+    if kwargs.get("log_sink"):
+        logger.debug("Resolved session log sink: %r", kwargs["log_sink"])
+    return kwargs
