@@ -6,12 +6,20 @@ import typing
 
 import click
 
-from slb_glossary.errors import BrowserError, NetworkError, ParsingError
+from slb_glossary.errors import (
+    BrowserError,
+    ConfigError,
+    DatabaseError,
+    LoggingError,
+    NetworkError,
+    ParsingError,
+    QueryError,
+)
 
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["cli_command"]
+__all__ = ["cli_command", "EXIT_CODES"]
 
 
 P = typing.ParamSpec("P")
@@ -22,10 +30,29 @@ EXIT_CODES: dict[type[BaseException], int] = {
     NetworkError: 2,
     BrowserError: 3,
     ParsingError: 4,
+    ConfigError: 5,
+    DatabaseError: 6,
+    QueryError: 7,
+    LoggingError: 8,
 }
 """
 Maps a known library exception type to the process exit code it should
-produce, so scripts calling this CLI can distinguish failure causes.
+produce, so scripts calling this CLI can distinguish failure causes:
+
+* `1` - an unrecognized/unexpected error (not one of this package's own
+  exception types).
+* `2` - `NetworkError`: the glossary site (or another required resource)
+  could not be reached.
+* `3` - `BrowserError`: the browser automation layer failed outside of a
+  network issue (e.g. failed to launch, unsupported browser type).
+* `4` - `ParsingError`: a glossary page did not contain the markup a
+  parser expected.
+* `5` - `ConfigError`: a `--config` file or a config key was invalid.
+* `6` - `DatabaseError`: the local search database could not be opened,
+  queried, or written to.
+* `7` - `QueryError`: a `slb_glossary.query` lookup could not be satisfied
+  with the source(s) it was given.
+* `8` - `LoggingError`: a `--log-to`/`--log-sink` target could not be set up.
 """
 
 
