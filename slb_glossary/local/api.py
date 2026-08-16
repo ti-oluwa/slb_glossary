@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "upsert_results",
+    "upsert_results_incrementally",
     "search",
     "get_terms_on",
     "get_term",
@@ -25,6 +26,9 @@ __all__ = [
     "fuzzy_match_topics",
     "count",
 ]
+
+DEFAULT_UPSERT_BATCH_SIZE = 20
+"""Default `batch_size` for `upsert_results_incrementally`."""
 
 
 def _dump_related(related: tuple[RelatedTerm, ...] | None) -> str | None:
@@ -86,6 +90,12 @@ async def upsert_results(
 
     A result with no `url` is skipped, since `url` is the local database's
     primary key and there's nothing stable to upsert it against.
+
+    This writes everything in `results` in one go, only once `results` is
+    fully consumed. For a live-fetched, potentially long-running stream,
+    prefer `upsert_results_incrementally` instead, which writes in batches
+    as results arrive rather than holding them all in memory and risking
+    losing everything if the fetch is interrupted before this is called.
 
     :param db: The local database to write to.
     :param results: Results to store - a plain or async iterable of
@@ -155,6 +165,132 @@ async def upsert_results(
         source,
     )
     return len(rows)
+
+
+def _as_async_iterator(
+    results: typing.Iterable[SearchResult] | typing.AsyncIterable[SearchResult],
+) -> typing.AsyncIterator[SearchResult]:
+    """Normalize a sync or async iterable of results into an async iterator."""
+
+    async def _wrap_sync(sync_results: typing.Iterable[SearchResult]) -> typing.AsyncIterator[SearchResult]:
+        for result in sync_results:
+            yield result
+
+    if isinstance(results, typing.AsyncIterable):
+        return results.__aiter__()
+    return _wrap_sync(results)
+
+
+async def upsert_results_incrementally(
+    db: Database,
+    results: typing.Iterable[SearchResult] | typing.AsyncIterable[SearchResult],
+    *,
+    language: str = "en",
+    source: str = "glossary",
+    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    persist_on_error: bool = True,
+    stats: dict[str, int] | None = None,
+) -> typing.AsyncIterator[SearchResult]:
+    """
+    Wrap `results`, upserting into `db` in batches as they arrive, instead of all at once.
+
+    `upsert_results` only writes once its entire input has been consumed,
+    which means the whole stream sits in memory until then, and a stream
+    that dies partway through (a browser crash, a network blip, the
+    process getting killed) loses everything already fetched, since
+    nothing was ever written. This writes to `db` every `batch_size`
+    results instead - and again with whatever's left over once `results`
+    ends, including when it ends via an exception, if `persist_on_error`
+    is `True` - so progress is saved as it happens rather than all at once
+    at the very end.
+
+    Used by both `slb_glossary.query`'s `search`/`get_terms_on` (which
+    pass results straight through to their own caller) and
+    `slb_glossary.local.sync`'s `sync_*` functions (which just drain this
+    for its side effects and read the final count back via `stats`).
+
+    :param db: The local database to write to.
+    :param results: The result stream to wrap. A plain or async iterable.
+    :param language: Glossary language edition these results were fetched
+        in. Passed straight through to `upsert_results`.
+    :param source: Provenance tag stored alongside each row. Passed
+        straight through to `upsert_results`.
+    :param batch_size: Number of results to buffer before writing an
+        incremental batch. Smaller values save progress more often at the
+        cost of more (smaller) database writes; larger values write less
+        often but risk losing more unsaved results if something goes wrong
+        before the next flush.
+    :param persist_on_error: If `True` (the default), flush whatever's
+        currently buffered when `results` raises, before letting the
+        exception propagate - so an interrupted fetch still saves the
+        progress it made. If `False`, an exception discards the current,
+        not-yet-flushed buffer (results already flushed in earlier batches
+        are unaffected either way).
+    :param stats: If given, populated in place with `"written"` (total
+        rows written) and `"batches"` (number of upsert calls made) once
+        this generator is exhausted (normally or via error) - since an
+        async generator can't hand back a return value the way a plain
+        function can. Callers that only want the final count and don't
+        need each result passed through (e.g. `slb_glossary.local.sync`)
+        can drain this with `async for _ in ...: pass` and then read `stats`.
+    :yield: Every item from `results`, unchanged.
+    :raises ValueError: If `batch_size` is less than 1.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+
+    buffer: list[SearchResult] = []
+    total_written = 0
+    batches_written = 0
+    error: BaseException | None = None
+
+    async def _flush() -> None:
+        nonlocal buffer, total_written, batches_written
+        if not buffer:
+            return
+        pending, buffer = buffer, []
+        written = await upsert_results(db, pending, language=language, source=source)
+        total_written += written
+        batches_written += 1
+        logger.debug(
+            "Persisted batch #%d: %d row(s) (%d total so far)",
+            batches_written,
+            written,
+            total_written,
+        )
+
+    try:
+        async for result in _as_async_iterator(results):
+            buffer.append(result)
+            yield result
+            if len(buffer) >= batch_size:
+                await _flush()
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        if buffer and (error is None or persist_on_error):
+            try:
+                await _flush()
+            except Exception:
+                logger.warning("Failed to persist the final batch of results", exc_info=True)
+        elif buffer:
+            logger.debug(
+                "Discarding %d unpersisted result(s) after an error (persist_on_error=False)",
+                len(buffer),
+            )
+        if total_written:
+            level = logging.WARNING if error is not None else logging.INFO
+            logger.log(
+                level,
+                "Persisted %d row(s) to the local database across %d batch(es)%s",
+                total_written,
+                batches_written,
+                " (interrupted)" if error is not None else "",
+            )
+        if stats is not None:
+            stats["written"] = total_written
+            stats["batches"] = batches_written
 
 
 def _to_fts_query(query: str) -> str:
