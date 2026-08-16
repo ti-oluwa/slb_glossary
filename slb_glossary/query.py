@@ -84,8 +84,10 @@ class Source(enum.Enum):
     """The live glossary only. Never touches the local database. Requires `session`."""
 
     AUTO = "auto"
-    """Local first, live as a fallback when the local database has nothing.
-    See the module docstring for the full behavior."""
+    """
+    Local first, live as a fallback when the local database has nothing.
+    See the module docstring for the full behavior.
+    """
 
 
 T = typing.TypeVar("T")
@@ -106,7 +108,7 @@ class TermLookup(typing.Generic[T]):
     (only ever `True` for a live result fetched with `persist=True`)."""
 
 
-def _require(db: Database | None, session: BrowserSession | None, source: Source) -> None:
+def _validate_source(db: Database | None, session: BrowserSession | None, source: Source) -> None:
     """Validate that `db`/`session` actually support the requested `source`."""
     if db is None and session is None:
         raise QueryError(
@@ -122,7 +124,7 @@ def _require(db: Database | None, session: BrowserSession | None, source: Source
 
 def _resolve_source(db: Database | None, session: BrowserSession | None, source: Source) -> Source:
     """Narrow `Source.AUTO` to a starting concrete source given what's available."""
-    _require(db, session, source)
+    _validate_source(db, session, source)
     if source is not Source.AUTO:
         return source
     return Source.LOCAL if db is not None else Source.LIVE
@@ -183,7 +185,7 @@ def _persist_incrementally(
         before the next flush. Defaults to `DEFAULT_PERSIST_BATCH_SIZE`.
     :param persist_on_error: If `True` (the default), flush whatever's
         currently buffered when `results` raises, before letting the
-        exception propagate - so an interrupted fetch still saves the
+        exception propagate, so an interrupted fetch still saves the
         progress it made. If `False`, an exception discards the current,
         not-yet-flushed buffer (results already flushed in earlier batches
         are unaffected either way).
@@ -241,7 +243,7 @@ async def search(
     :param persist: If `True`, and a live fetch happens, write its results
         into `db` (if given) so the next matching call can be served
         locally. Written incrementally as results arrive - see
-        `slb_glossary.local.upsert_results_incrementally` - not all at
+        `slb_glossary.local.upsert_results_incrementally`, and not all at
         once at the end.
     :param persist_batch_size: Number of live results to buffer before each
         incremental write to `db`. Only relevant when `persist=True` and a
@@ -864,7 +866,7 @@ async def compare(
     if not terms:
         raise QueryError("`compare()` needs at least one term to look up.")
 
-    _require(db, session, source)
+    _validate_source(db, session, source)
     started_at = time.monotonic()
     results: dict[str, TermLookup[SearchResult | None]] = {}
     for term in terms:

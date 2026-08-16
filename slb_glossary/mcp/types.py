@@ -34,7 +34,7 @@ class NamedComponent:
 @dataclasses.dataclass(slots=True, kw_only=True)
 class ToolRunContext:
     """
-    Everything a tool call's hooks (see `slb_glossary.mcp.config.HooksConfig`) get to see.
+    Everything a tool call's hooks (see `slb_glossary.mcp.config.Hooks`) get to see.
 
     Built fresh per call by `slb_glossary.mcp.middleware.MCPMiddleware`
     and passed to `before_tool`/`after_tool`/`on_error` hooks, and also

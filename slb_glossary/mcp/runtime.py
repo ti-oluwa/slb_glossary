@@ -169,7 +169,7 @@ class Runtime(NamedComponent):
 
         Honors `SessionMode`. For `PER_CALL`, a fresh session is opened for
         the duration of the `async with` block and closed on exit (bounded
-        by `SessionAccessConfig.max_concurrent` via a semaphore); for
+        by `SessionAccess.max_concurrent` via a semaphore); for
         `EAGER`/`LAZY`, the shared session is reused (and lazily opened on
         first use, for `LAZY`).
 

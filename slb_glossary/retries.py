@@ -158,6 +158,8 @@ async def retry(
                     total_delay,
                 )
                 return result
+        except (SystemExit, KeyboardInterrupt, asyncio.CancelledError):
+            raise
         except BaseException as exc:
             err = exc
             logger.debug(

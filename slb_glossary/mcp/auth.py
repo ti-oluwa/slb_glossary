@@ -8,7 +8,7 @@ reaches a tool). `AuthBackend` here resolves each tool call into a
 `Principal` that the server's middleware, rate limiter, and hooks key off
 of as a different, but complementary layer.
 
-See `slb_glossary.mcp.config.AuthConfig` for how the two combine, and
+See `slb_glossary.mcp.config.Auth` for how the two combine, and
 `slb_glossary.mcp.api.MCPApp` for where each is wired in.
 
 ```python
@@ -58,7 +58,7 @@ class Principal(typing.NamedTuple):
 
 
 ANONYMOUS = Principal(id="anonymous")
-"""The `Principal` used for calls with no token, when `AuthConfig.required` is `False`."""
+"""The `Principal` used for calls with no token, when `Auth.required` is `False`."""
 
 
 class AuthRequest(typing.NamedTuple):
@@ -91,7 +91,7 @@ class AuthBackend(typing.Protocol):
     """
     Protocol for resolving an `AuthRequest` into a `Principal`.
 
-    Pass an instance to `slb_glossary.mcp.config.AuthConfig.backend`.
+    Pass an instance to `slb_glossary.mcp.config.Auth.backend`.
     """
 
     async def authenticate(self, request: AuthRequest) -> Principal | None:
@@ -101,7 +101,7 @@ class AuthBackend(typing.Protocol):
         :param request: The token, headers, and call metadata to authenticate from.
         :return: The resolved `Principal`, or `None` if `request` doesn't
             resolve to anyone. A `None` return is treated as
-            "unauthenticated" and rejected if `AuthConfig.required` is `True`,
+            "unauthenticated" and rejected if `Auth.required` is `True`,
             otherwise falls back to `ANONYMOUS`.
         """
         ...

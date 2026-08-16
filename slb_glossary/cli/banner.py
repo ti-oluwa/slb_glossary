@@ -12,4 +12,3 @@ BANNER = r"""
 
        S L B   G L O S S A R Y
 """.strip("\n")
-

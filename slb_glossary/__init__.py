@@ -24,11 +24,11 @@ from .errors import (
     BrowserError,
     ConfigError,
     DatabaseError,
-    SLBGlossaryError,
     LoggingError,
     NetworkError,
     ParsingError,
     QueryError,
+    SLBGlossaryError,
     UnsupportedFormatError,
     WriterError,
 )

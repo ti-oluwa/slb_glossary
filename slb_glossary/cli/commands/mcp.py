@@ -182,13 +182,13 @@ def serve(
 
     from slb_glossary.mcp.auth import StaticTokenAuth, import_backend
     from slb_glossary.mcp.config import (
-        AuthConfig,
-        LocalAccessConfig,
+        Auth,
+        LocalAccess,
         MCPConfig,
-        RateLimitConfig,
-        SessionAccessConfig,
-        SourcePolicyConfig,
-        TimeoutConfig,
+        RateLimit,
+        SessionAccess,
+        SourcePolicy,
+        Timeout,
         resolve_tools,
     )
 
@@ -197,33 +197,33 @@ def serve(
 
     glossary_config = Config.load(config_path) if config_path is not None else Config()
 
-    session = SessionAccessConfig(enabled=not no_live, browser=glossary_config.session)
-    local = LocalAccessConfig(
+    session = SessionAccess(enabled=not no_live, browser=glossary_config.session)
+    local = LocalAccess(
         enabled=not no_local, allow_write=allow_write, database=glossary_config.local
     )
     allowed_sources = frozenset(Source(value) for value in source) or None
-    source_policy = SourcePolicyConfig(allowed=allowed_sources)
+    source_policy = SourcePolicy(allowed=allowed_sources)
 
-    auth_config = AuthConfig()
+    auth_config = Auth()
     if auth_tokens:
         token_map: dict[str, str] = {}
         for entry in auth_tokens:
             token, _, principal_id = entry.partition(":")
             token_map[token] = principal_id or token
-        auth_config = AuthConfig(backend=StaticTokenAuth(token_map), required=True)
+        auth_config = Auth(backend=StaticTokenAuth(token_map), required=True)
     elif auth_backend_path:
-        auth_config = AuthConfig(backend=import_backend(auth_backend_path), required=True)
+        auth_config = Auth(backend=import_backend(auth_backend_path), required=True)
 
-    rate_limit = RateLimitConfig()
+    rate_limit = RateLimit()
     if limit is not None:
-        rate_limit = RateLimitConfig(enabled=True, limit=limit)
+        rate_limit = RateLimit(enabled=True, limit=limit)
 
     config = MCPConfig(
         session=session,
         local=local,
         source_policy=source_policy,
         tools=resolve_tools(tools.split(",")),
-        timeouts=TimeoutConfig(global_=timeout or None),
+        timeouts=Timeout(global_=timeout or None),
         auth=auth_config,
         rate_limit=rate_limit,
         logging=dataclasses.replace(MCPConfig.default().logging, level=log_level),

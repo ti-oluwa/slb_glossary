@@ -16,15 +16,20 @@ import dataclasses
 import datetime
 import logging
 import time
+import typing
 
 from slb_glossary.live.api import get_results_from_urls, get_terms_urls
 from slb_glossary.live.api import get_terms_on as fetch_terms_on
 from slb_glossary.live.api import search as live_search
 from slb_glossary.live.browser import BrowserSession
-from slb_glossary.local.api import DEFAULT_UPSERT_BATCH_SIZE
+from slb_glossary.local.api import (
+    DEFAULT_UPSERT_BATCH_SIZE,
+    get_topics,
+    upsert_results_incrementally,
+)
 from slb_glossary.local.api import count as count_terms
-from slb_glossary.local.api import get_topics, upsert_results_incrementally
 from slb_glossary.local.models import Database, Metadata
+from slb_glossary.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +98,15 @@ async def _record_sync(
 
 async def _drain_and_upsert(
     db: Database,
-    results,
+    results: typing.AsyncIterable[SearchResult],
     *,
     language: str,
     batch_size: int,
     persist_on_error: bool,
 ) -> tuple[int, bool]:
     """
-    Drain a live result stream through `upsert_results_incrementally`, returning `(written, interrupted)`.
+    Drain a live result stream through `upsert_results_incrementally`,
+    returning `(written, interrupted)`.
 
     :return: The total rows written, and whether `results` raised partway
         through (in which case, if `persist_on_error` was `True`, whatever
@@ -119,7 +125,7 @@ async def _drain_and_upsert(
             pass
     except BaseException:
         interrupted = True
-        # upsert_results_incrementally already flushed (if persist_on_error)
+        # `upsert_results_incrementally` already flushed (if `persist_on_error`)
         # and logged before this propagated; still populated `stats` via
         # its `finally`, so re-raise only after recording what was saved.
         written = stats.get("written", 0)
@@ -195,7 +201,10 @@ async def sync_query(
         concurrency=concurrency,
     )
     written, interrupted = await _drain_and_upsert(
-        db, results, language=session.language.value, batch_size=batch_size,
+        db,
+        results,
+        language=session.language.value,
+        batch_size=batch_size,
         persist_on_error=persist_on_error,
     )
     summary = await _record_sync(
@@ -240,7 +249,10 @@ async def sync_topic(
     logger.info("Syncing topic %r to the local database", topic)
     results = fetch_terms_on(session, topic, limit=limit, concurrency=concurrency)
     written, interrupted = await _drain_and_upsert(
-        db, results, language=session.language.value, batch_size=batch_size,
+        db,
+        results,
+        language=session.language.value,
+        batch_size=batch_size,
         persist_on_error=persist_on_error,
     )
     summary = await _record_sync(
@@ -295,7 +307,10 @@ async def sync_letter(
         session, urls, topic=topic, concurrency=concurrency, first_only=True
     )
     written, interrupted = await _drain_and_upsert(
-        db, results, language=session.language.value, batch_size=batch_size,
+        db,
+        results,
+        language=session.language.value,
+        batch_size=batch_size,
         persist_on_error=persist_on_error,
     )
     summary = await _record_sync(
@@ -333,7 +348,7 @@ async def sync_all(
 
     Each topic is upserted incrementally as its terms are fetched (see
     `batch_size`), and if a topic's fetch fails partway through, whatever
-    was already fetched for it - and for every topic completed before it -
+    was already fetched for it, and for every topic completed before it
     is kept: only the failing topic's own in-progress batch is affected by
     `persist_on_error`, and the exception still propagates once that's
     handled, ending the sync at that point rather than skipping ahead to
@@ -361,7 +376,10 @@ async def sync_all(
             topic_started_at = time.monotonic()
             results = fetch_terms_on(session, topic_name, concurrency=concurrency)
             written, _ = await _drain_and_upsert(
-                db, results, language=session.language.value, batch_size=batch_size,
+                db,
+                results,
+                language=session.language.value,
+                batch_size=batch_size,
                 persist_on_error=persist_on_error,
             )
             total_written += written

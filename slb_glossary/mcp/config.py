@@ -3,11 +3,11 @@ Configuration for `slb_glossary.mcp`'s MCP application (`slb_glossary.mcp.api.MC
 
 ```python
 import dataclasses
-from slb_glossary.mcp.config import MCPConfig, LocalAccessConfig
+from slb_glossary.mcp.config import MCPConfig, LocalAccess
 
 config = dataclasses.replace(
     MCPConfig.default(),
-    local=LocalAccessConfig(enabled=True, allow_write=True),
+    local=LocalAccess(enabled=True, allow_write=True),
 )
 ```
 
@@ -41,15 +41,15 @@ __all__ = [
     "Tool",
     "SessionMode",
     "RateLimitScope",
-    "SessionAccessConfig",
-    "LocalAccessConfig",
-    "SourcePolicyConfig",
-    "TimeoutConfig",
-    "AuthConfig",
-    "RateLimitConfig",
-    "HooksConfig",
-    "MCPLoggingConfig",
-    "StreamingConfig",
+    "SessionAccess",
+    "LocalAccess",
+    "SourcePolicy",
+    "Timeout",
+    "Auth",
+    "RateLimit",
+    "Hooks",
+    "MCPLogging",
+    "Streaming",
     "ServerInfo",
     "MCPConfig",
     "resolve_tools",
@@ -95,7 +95,7 @@ class Tool(enum.Flag):
     """
     `glossary_sync` - fetch from the live glossary and write into the local
     database. This is the only tool that writes anything, and is only ever 
-    registered when both this flag *and* `LocalAccessConfig.allow_write` are set.
+    registered when both this flag *and* `LocalAccess.allow_write` are set.
     
     See `MCPConfig.resolved_tools`.
     """
@@ -177,7 +177,7 @@ class SessionMode(enum.Enum):
 
 
 class RateLimitScope(enum.Enum):
-    """What key a `RateLimitConfig.limiter` is consulted under."""
+    """What key a `RateLimit.limiter` is consulted under."""
 
     GLOBAL = "global"
     """One shared bucket for the whole server, across every client and tool."""
@@ -193,13 +193,13 @@ class RateLimitScope(enum.Enum):
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class SessionAccessConfig:
+class SessionAccess:
     """Controls if/how/when the MCP application may open a live `BrowserSession`."""
 
     enabled: bool = True
     """Whether `Source.LIVE` (and `Source.AUTO` falling back to it) is
     available at all. `False` makes this a local-only server regardless of
-    `SourcePolicyConfig`."""
+    `SourcePolicy`."""
 
     mode: SessionMode = SessionMode.LAZY
     """When the shared session is opened. See `SessionMode`."""
@@ -225,13 +225,13 @@ class SessionAccessConfig:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class LocalAccessConfig:
+class LocalAccess:
     """Controls if/how the MCP application may read and write the local database."""
 
     enabled: bool = True
     """
     Whether `Source.LOCAL` (and `Source.AUTO` preferring it) is available
-    at all. `False` makes this a live-only server regardless of `SourcePolicyConfig`.
+    at all. `False` makes this a live-only server regardless of `SourcePolicy`.
     """
 
     allow_write: bool = False
@@ -253,15 +253,15 @@ class LocalAccessConfig:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class SourcePolicyConfig:
+class SourcePolicy:
     """Controls which `slb_glossary.query.Source` values callers may request."""
 
     allowed: frozenset[Source] | None = None
     """
     The set of `Source` values a tool call's `source` argument may
     resolve to. `None` (the default) is computed automatically by
-    `MCPConfig` post initialization from `SessionAccessConfig.enabled`/
-    `LocalAccessConfig.enabled`. 
+    `MCPConfig` post initialization from `SessionAccess.enabled`/
+    `LocalAccess.enabled`. 
     
     This defines every source this server actually has access to. 
     Set explicitly to narrow further (e.g. to `{Source.LOCAL}`
@@ -276,13 +276,13 @@ class SourcePolicyConfig:
     """
     Whether tool schemas even include a `source` argument. `False` hides
     it entirely from callers/LLMs; every call then uses `default` (still
-    narrowed by `allowed`, `SessionAccessConfig.enabled`, and
-    `LocalAccessConfig.enabled`).
+    narrowed by `allowed`, `SessionAccess.enabled`, and
+    `LocalAccess.enabled`).
     """
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class TimeoutConfig:
+class Timeout:
     """Per-call execution time caps, enforced by FastMCP's own tool `timeout=`."""
 
     global_: float | None = 60.0
@@ -307,7 +307,7 @@ class TimeoutConfig:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class AuthConfig:
+class Auth:
     """Controls authentication/authorization for tool calls."""
 
     backend: AuthBackend | None = None
@@ -341,7 +341,7 @@ class AuthConfig:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class RateLimitConfig:
+class RateLimit:
     """Controls optional per-tool/per-client request-rate limiting."""
 
     enabled: bool = False
@@ -370,7 +370,7 @@ class RateLimitConfig:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class HooksConfig:
+class Hooks:
     """Caller-supplied hooks run around every tool call and around the server's lifecycle."""
 
     before_tool: tuple[BeforeToolHook, ...] = ()
@@ -402,7 +402,7 @@ class HooksConfig:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class MCPLoggingConfig:
+class MCPLogging:
     """
     Controls where/how `slb_glossary`'s logging is routed for this server process.
 
@@ -459,7 +459,7 @@ class MCPLoggingConfig:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class StreamingConfig:
+class Streaming:
     """Controls the optional `stream` argument tools that can stream expose."""
 
     default: bool = False
@@ -506,10 +506,10 @@ class MCPConfig:
     Top-level, fully composable configuration for `slb_glossary.mcp.api.MCPApp`.
 
     ```python
-    from slb_glossary.mcp.config import MCPConfig, LocalAccessConfig, Tool
+    from slb_glossary.mcp.config import MCPConfig, LocalAccess, Tool
 
     config = MCPConfig(
-        local=LocalAccessConfig(allow_write=True),
+        local=LocalAccess(allow_write=True),
         tools=Tool.ALL,
     )
     ```
@@ -525,13 +525,13 @@ class MCPConfig:
     server: ServerInfo = dataclasses.field(default_factory=ServerInfo)
     """Server identity metadata."""
 
-    session: SessionAccessConfig = dataclasses.field(default_factory=SessionAccessConfig)
+    session: SessionAccess = dataclasses.field(default_factory=SessionAccess)
     """Live `BrowserSession` access."""
 
-    local: LocalAccessConfig = dataclasses.field(default_factory=LocalAccessConfig)
+    local: LocalAccess = dataclasses.field(default_factory=LocalAccess)
     """Local database access."""
 
-    source_policy: SourcePolicyConfig = dataclasses.field(default_factory=SourcePolicyConfig)
+    source_policy: SourcePolicy = dataclasses.field(default_factory=SourcePolicy)
     """Which `Source` values tool calls may resolve to."""
 
     tools: Tool = Tool.READ_ONLY
@@ -540,22 +540,22 @@ class MCPConfig:
     `resolved_tools` for how this interacts with `local.allow_write`.
     """
 
-    timeouts: TimeoutConfig = dataclasses.field(default_factory=TimeoutConfig)
+    timeouts: Timeout = dataclasses.field(default_factory=Timeout)
     """Per-call execution time caps."""
 
-    auth: AuthConfig = dataclasses.field(default_factory=AuthConfig)
+    auth: Auth = dataclasses.field(default_factory=Auth)
     """Authentication/authorization."""
 
-    rate_limit: RateLimitConfig = dataclasses.field(default_factory=RateLimitConfig)
+    rate_limit: RateLimit = dataclasses.field(default_factory=RateLimit)
     """Per-tool/per-client request-rate limiting."""
 
-    hooks: HooksConfig = dataclasses.field(default_factory=HooksConfig)
+    hooks: Hooks = dataclasses.field(default_factory=Hooks)
     """Caller-supplied lifecycle and per-call hooks."""
 
-    logging: MCPLoggingConfig = dataclasses.field(default_factory=MCPLoggingConfig)
+    logging: MCPLogging = dataclasses.field(default_factory=MCPLogging)
     """Logging routing for this server process."""
 
-    streaming: StreamingConfig = dataclasses.field(default_factory=StreamingConfig)
+    streaming: Streaming = dataclasses.field(default_factory=Streaming)
     """Progress-reporting behavior for tools that support it."""
 
     def __post_init__(self) -> None:

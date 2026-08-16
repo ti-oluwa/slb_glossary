@@ -172,7 +172,9 @@ def _as_async_iterator(
 ) -> typing.AsyncIterator[SearchResult]:
     """Normalize a sync or async iterable of results into an async iterator."""
 
-    async def _wrap_sync(sync_results: typing.Iterable[SearchResult]) -> typing.AsyncIterator[SearchResult]:
+    async def _wrap_sync(
+        sync_results: typing.Iterable[SearchResult],
+    ) -> typing.AsyncIterator[SearchResult]:
         for result in sync_results:
             yield result
 
@@ -199,15 +201,10 @@ async def upsert_results_incrementally(
     that dies partway through (a browser crash, a network blip, the
     process getting killed) loses everything already fetched, since
     nothing was ever written. This writes to `db` every `batch_size`
-    results instead - and again with whatever's left over once `results`
+    results instead, and again with whatever's left over once `results`
     ends, including when it ends via an exception, if `persist_on_error`
-    is `True` - so progress is saved as it happens rather than all at once
+    is `True`. Hence, progress is saved as it happens rather than all at once
     at the very end.
-
-    Used by both `slb_glossary.query`'s `search`/`get_terms_on` (which
-    pass results straight through to their own caller) and
-    `slb_glossary.local.sync`'s `sync_*` functions (which just drain this
-    for its side effects and read the final count back via `stats`).
 
     :param db: The local database to write to.
     :param results: The result stream to wrap. A plain or async iterable.
@@ -222,7 +219,7 @@ async def upsert_results_incrementally(
         before the next flush.
     :param persist_on_error: If `True` (the default), flush whatever's
         currently buffered when `results` raises, before letting the
-        exception propagate - so an interrupted fetch still saves the
+        exception propagate, so an interrupted fetch still saves the
         progress it made. If `False`, an exception discards the current,
         not-yet-flushed buffer (results already flushed in earlier batches
         are unaffected either way).

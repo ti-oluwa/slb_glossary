@@ -60,7 +60,6 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
 - **Mostly a functional API.** There's no `Glossary` object to construct, subclass, or configure. Open a session, get back a plain `BrowserSession` value, and pass it to whichever function you need - most of what you'll call is a free function, not a method on some stateful object.
 - **A full-featured CLI.** Every capability above - search, local caching, config, sync - is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
 - **An MCP server for LLM agents.** `slb_glossary.mcp` exposes the same search/lookup functions as MCP tools, via `slb mcp serve` or `slb_glossary.mcp.MCPApp` - with granular config for sources, local write access, auth, rate limiting, timeouts, and hooks. See [MCP server](#mcp-server-slb_glossarymcp).
-- **A `store` package that stands on its own.** Saving results to CSV/JSON/TXT/XLSX lives in a separate package that only cares about ["things shaped like" a `SearchResult`](#saving-results-to-a-file-slb_glossarystore) - it has no idea the glossary or a browser even exists, so you can reuse it to save any of your own record types too.
 - **Configurable retries.** Flaky page loads are retried with a pluggable backoff policy - constant, linear, exponential or logarithmic.
 - **Reasonably complete on the API front.** Nearly everything the CLI can do, the library can do too - search, caching, config, sync, saving to a file - so you're not stuck shelling out just to get at a feature.
 
@@ -511,11 +510,11 @@ Both do the same thing: build an MCP server from an `MCPConfig` and serve it. `M
 
 ```python
 import dataclasses
-from slb_glossary.mcp import MCPConfig, LocalAccessConfig, Tool
+from slb_glossary.mcp import MCPConfig, LocalAccess, Tool
 
 config = dataclasses.replace(
     MCPConfig.default(),
-    local=LocalAccessConfig(allow_write=True),
+    local=LocalAccess(allow_write=True),
     tools=Tool.ALL,
 )
 ```
@@ -537,7 +536,7 @@ config = dataclasses.replace(
 Local writes are **off by default**: with `local.allow_write=False`, every read tool's `persist` argument is silently ignored, and the write-capable `glossary_sync` tool is never registered even if it's in `tools` - see `MCPConfig.resolved_tools`. Turning it on is a deliberate, single flag:
 
 ```python
-config = MCPConfig(local=LocalAccessConfig(allow_write=True), tools=Tool.ALL)
+config = MCPConfig(local=LocalAccess(allow_write=True), tools=Tool.ALL)
 ```
 
 ### The tools it exposes
@@ -566,29 +565,31 @@ Two independent auth layers, doing different jobs:
 - **`auth.backend`** - an `AuthBackend` you implement (one `async def authenticate(self, request: AuthRequest) -> Principal | None` method), resolving each call into a `Principal` this server's own middleware uses for rate-limit keys, hooks, and call logging. `AuthRequest` carries the parsed bearer token, every request header, and the tool name/arguments, so a backend can key off more than a bare token if it needs to.
 
 ```python
-from slb_glossary.mcp import AuthConfig, StaticTokenAuth, Principal
+from slb_glossary.mcp import Auth, StaticTokenAuth, Principal
 
 auth = StaticTokenAuth({"sk-alice-...": Principal(id="alice", scopes=frozenset({"write"}))})
-config = MCPConfig(auth=AuthConfig(backend=auth, required=True))
+config = MCPConfig(auth=Auth(backend=auth, required=True))
 ```
 
 Rate limiting is a `RateLimiter` protocol (one `async def hit(self, key: str) -> float` method, returning milliseconds to wait, `0` if allowed) - `SlidingWindowRateLimiter` is the built-in, in-memory, single-process implementation; swap in your own for anything distributed:
 
 ```python
-from slb_glossary.mcp import RateLimitConfig
+from slb_glossary.mcp import RateLimit
 
-config = MCPConfig(rate_limit=RateLimitConfig(enabled=True, limit=60, window=60.0))
+config = MCPConfig(rate_limit=RateLimit(enabled=True, limit=60, window=60.0))
 ```
 
 Hooks run around every call and around server startup/shutdown, given a `ToolRunContext` (tool name, resolved `Principal`, arguments, resolved `Source`):
 
 ```python
-from slb_glossary.mcp import HooksConfig, ToolRunContext
+from slb_glossary.mcp import Hooks, ToolRunContext
+
 
 async def audit(run: ToolRunContext) -> None:
     print(f"{run.principal.id} called {run.tool_name}")
 
-config = MCPConfig(hooks=HooksConfig(before_tool=(audit,)))
+
+config = MCPConfig(hooks=Hooks(before_tool=(audit,)))
 ```
 
 ### From the command line
@@ -610,9 +611,9 @@ For anything `slb mcp serve`'s flags don't cover - custom hooks, a hand-built `A
 
 ```python
 # app/main.py
-from slb_glossary.mcp import MCPApp, MCPConfig, LocalAccessConfig
+from slb_glossary.mcp import MCPApp, MCPConfig, LocalAccess
 
-app = MCPApp(MCPConfig(local=LocalAccessConfig(allow_write=True)))
+app = MCPApp(MCPConfig(local=LocalAccess(allow_write=True)))
 ```
 
 ```bash
@@ -752,7 +753,7 @@ Contributions are welcome. Please fork the repository and submit a pull request.
 
 All rights to the data and content on the SLB Energy Glossary website are owned by SLB. This project is not affiliated with or endorsed by SLB, and does not claim ownership of glossary entries or their text.
 
-**Not for commercial use. This package is intended for educational and research purposes only.**
+**Not for commercial use. This package is intended for educational, instructional and research purposes only.**
 
 Anything cached locally by `slb_glossary.local` (or the default config file's local-database settings) is still SLB's content - enabling local storage means keeping a copy on your own machine, and you're solely responsible for that copy's retention, refresh, and deletion in compliance with SLB's terms of use.
 

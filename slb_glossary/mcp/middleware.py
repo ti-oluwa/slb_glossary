@@ -177,7 +177,7 @@ class MCPMiddleware(Middleware):
             # before this middleware can run whenever rate_limit.enabled is True;
             # reaching this branch means that wiring was bypassed somehow.
             logger.warning(
-                "RateLimitConfig.enabled is True but no limiter was resolved; "
+                "RateLimit.enabled is True but no limiter was resolved; "
                 "skipping rate limiting for this call."
             )
             return

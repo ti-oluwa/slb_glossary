@@ -107,7 +107,7 @@ class MCPApp(NamedComponent):
         return server
 
     def _resolve_default_rate_limiter(self) -> None:
-        """Fill in `RateLimitConfig.limiter` with a default in-memory limiter if left unset."""
+        """Fill in `RateLimit.limiter` with a default in-memory limiter if left unset."""
         rate_limit = self.config.rate_limit
         if rate_limit.enabled and rate_limit.limiter is None:
             limiter = SlidingWindowRateLimiter(limit=rate_limit.limit, window=rate_limit.window)
@@ -144,7 +144,7 @@ class MCPApp(NamedComponent):
     async def start(self) -> None:
         """
         Perform startup-time resource work (open the local DB, eagerly open a
-        live session if configured) and run `HooksConfig.on_startup` hooks.
+        live session if configured) and run `Hooks.on_startup` hooks.
 
         Idempotent: safe to call before `run_async`, which also calls this.
         """
@@ -155,7 +155,7 @@ class MCPApp(NamedComponent):
         logger.info("[%s] MCPApp started", self.name)
 
     async def aclose(self) -> None:
-        """Tear down every resource opened by `start()` and run `HooksConfig.on_shutdown` hooks."""
+        """Tear down every resource opened by `start()` and run `Hooks.on_shutdown` hooks."""
         await self.runtime.aclose()
         for hook in self.config.hooks.on_shutdown:
             await hook()

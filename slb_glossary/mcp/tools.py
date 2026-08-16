@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from slb_glossary import query as query_api
 from slb_glossary.local import sync as sync_api
-from slb_glossary.mcp.config import MCPConfig, StreamingConfig, Tool
+from slb_glossary.mcp.config import MCPConfig, Streaming, Tool
 from slb_glossary.mcp.errors import MCPError
 from slb_glossary.mcp.runtime import Runtime
 from slb_glossary.models import SearchResult
@@ -292,7 +292,7 @@ class SyncArgs:
     Arguments for `glossary_sync` - the one tool that writes to the local database.
 
     Only ever registered when this server was explicitly configured with
-    both `Tool.SYNC` and `LocalAccessConfig.allow_write=True`.
+    both `Tool.SYNC` and `LocalAccess.allow_write=True`.
     """
 
     mode: typing.Literal["query", "topic", "letter", "all"]
@@ -335,7 +335,7 @@ def get_effective_persist(requested: bool, config: MCPConfig) -> bool:
 
 
 def get_effective_stream(requested: bool, config: MCPConfig) -> bool:
-    streaming: StreamingConfig = config.streaming
+    streaming: Streaming = config.streaming
     if not streaming.allow_override:
         return streaming.default
     return requested
