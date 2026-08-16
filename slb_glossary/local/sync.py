@@ -128,7 +128,10 @@ async def sync_query(
     written = await upsert_results(db, results, language=session.language.value)
     summary = await _record_sync(db, terms_written=written, language=session.language.value)
     logger.info(
-        "Synced query %r: %d term(s) written in %.3fs", query, written, time.monotonic() - started_at
+        "Synced query %r: %d term(s) written in %.3fs",
+        query,
+        written,
+        time.monotonic() - started_at,
     )
     return summary
 
@@ -157,7 +160,10 @@ async def sync_topic(
     written = await upsert_results(db, results, language=session.language.value)
     summary = await _record_sync(db, terms_written=written, language=session.language.value)
     logger.info(
-        "Synced topic %r: %d term(s) written in %.3fs", topic, written, time.monotonic() - started_at
+        "Synced topic %r: %d term(s) written in %.3fs",
+        topic,
+        written,
+        time.monotonic() - started_at,
     )
     return summary
 

@@ -1,14 +1,14 @@
 """
-The main entry point of `slb_glossary.mcp`: `Application`, which turns an
+The main entry point of `slb_glossary.mcp`. Holds `MCPApp`, which turns an
 `MCPConfig` into a ready-to-serve `fastmcp.FastMCP` server for the SLB
 Energy Glossary.
 
 ```python
 import asyncio
 
-from slb_glossary.mcp import Application, MCPConfig
+from slb_glossary.mcp import MCPApp, MCPConfig
 
-app = Application(MCPConfig.default())
+app = MCPApp(MCPConfig.default())
 asyncio.run(app.run_async())  # stdio by default
 ```
 
@@ -18,13 +18,6 @@ mount it inside a larger ASGI app, or drive it from `fastmcp`'s own CLI):
 ```python
 server = app.to_server()
 ```
-
-`Application` itself stays a thin, mostly stateless wrapper: config
-validation lives in `MCPConfig`, resource lifecycle lives in
-`slb_glossary.mcp.runtime.Runtime`, tool bodies live in
-`slb_glossary.mcp.tools`, and cross-cutting concerns (auth, rate limiting,
-hooks, logging) live in `slb_glossary.mcp.middleware`. This module's only
-job is wiring those together onto a `FastMCP` instance.
 """
 
 import asyncio
@@ -39,7 +32,7 @@ from fastmcp import Context, FastMCP
 from slb_glossary import __version__
 from slb_glossary.logging import DEFAULT_LOG_FORMAT, configure_logging, resolve_sink
 from slb_glossary.mcp.config import MCPConfig
-from slb_glossary.mcp.middleware import GlossaryMiddleware
+from slb_glossary.mcp.middleware import MCPMiddleware
 from slb_glossary.mcp.ratelimit import SlidingWindowRateLimiter
 from slb_glossary.mcp.runtime import Runtime
 from slb_glossary.mcp.tools import DEFAULT_INSTRUCTIONS, ToolSpec, build_tool_specs
@@ -52,23 +45,25 @@ else:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["Application"]
+__all__ = ["MCPApp"]
 
 
-class Application(NamedComponent):
+class MCPApp(NamedComponent):
     """
     A configured, buildable MCP server for the SLB Energy Glossary.
 
-    Construction (`Application(config)`) is cheap and does no I/O; the
+    Construction (`MCPApp(config)`) is cheap and does no I/O; the
     underlying `FastMCP` server and its tools are assembled lazily on first
-    `to_server()`/`run()`/`run_async()` call. Resource startup (opening the
-    local database, eagerly opening a live session if configured) happens
-    in `run_async`/`run`, or explicitly via `start()` for callers embedding
-    the server in their own event loop / lifespan management.
+    `to_server()`/`run()`/`run_async()` call.
+
+    Resource startup happens in `run_async`/`run`, or explicitly via `start()`
+    for callers embedding the server in their own event loop / lifespan management.
     """
 
     def __init__(self, config: MCPConfig | None = None) -> None:
         """
+        Initialize the MCP application.
+
         :param config: The server's `MCPConfig`. Defaults to `MCPConfig.default()`.
         """
         self.config = config if config is not None else MCPConfig.default()
@@ -78,7 +73,7 @@ class Application(NamedComponent):
 
     @classmethod
     def from_config(cls, config: MCPConfig) -> Self:
-        """Build an `Application` from `config`. Equivalent to `Application(config)`."""
+        """Build an `MCPApp` from `config`. Equivalent to `MCPApp(config)`."""
         return cls(config)
 
     def to_server(self) -> FastMCP:
@@ -87,8 +82,8 @@ class Application(NamedComponent):
 
         Idempotent: repeated calls return the same instance. Building
         registers every tool `self.config.resolved_tools()` selects and
-        attaches `slb_glossary.mcp.middleware.GlossaryMiddleware`, but does
-        **not** open any database/session - that happens in `start()`.
+        attaches `slb_glossary.mcp.middleware.MCPMiddleware`, but does
+        not open any resources yet (database/session). That happens in `start()`.
         """
         if self._server is not None:
             return self._server
@@ -101,7 +96,7 @@ class Application(NamedComponent):
             instructions=self.config.server.instructions or DEFAULT_INSTRUCTIONS,
             auth=self.config.auth.provider,
         )
-        server.add_middleware(GlossaryMiddleware(self.config))
+        server.add_middleware(MCPMiddleware(self.config))
 
         for spec in build_tool_specs(self.config):
             self._register_tool(server, spec)
@@ -113,16 +108,14 @@ class Application(NamedComponent):
         """Fill in `RateLimitConfig.limiter` with a default in-memory limiter if left unset."""
         rate_limit = self.config.rate_limit
         if rate_limit.enabled and rate_limit.limiter is None:
-            limiter = SlidingWindowRateLimiter(
-                rate_limit.requests_per_minute, rate_limit.window_seconds
-            )
+            limiter = SlidingWindowRateLimiter(limit=rate_limit.limit, window=rate_limit.window)
             self.config = dataclasses.replace(
                 self.config, rate_limit=dataclasses.replace(rate_limit, limiter=limiter)
             )
             self.runtime.config = self.config
 
     def _register_tool(self, server: FastMCP, spec: ToolSpec) -> None:
-        """Wrap `spec.handler` into a FastMCP tool function and register it on `server`."""
+        """Wrap `spec.handler` into a `fastmcp` tool function and register it on `server`."""
         args_type = spec.args_type
         timeout = self.config.timeouts.for_tool(spec.name)
         annotations = {"readOnlyHint": not spec.writes, "destructiveHint": spec.writes}
@@ -137,7 +130,6 @@ class Application(NamedComponent):
 
         _tool.__name__ = spec.name
         _tool.__doc__ = spec.description
-
         server.tool(
             _tool,
             name=spec.name,
@@ -152,29 +144,24 @@ class Application(NamedComponent):
         Perform startup-time resource work (open the local DB, eagerly open a
         live session if configured) and run `HooksConfig.on_startup` hooks.
 
-        Idempotent - safe to call before `run_async`, which also calls this.
+        Idempotent: safe to call before `run_async`, which also calls this.
         """
         self._configure_logging()
         await self.runtime.start()
         for hook in self.config.hooks.on_startup:
             await hook()
-        logger.info("[%s] Application started", self.name)
+        logger.info("[%s] MCPApp started", self.name)
 
     async def aclose(self) -> None:
         """Tear down every resource opened by `start()` and run `HooksConfig.on_shutdown` hooks."""
         await self.runtime.aclose()
         for hook in self.config.hooks.on_shutdown:
             await hook()
-        logger.info("[%s] Application closed", self.name)
+        logger.info("[%s] MCPApp closed", self.name)
 
     def _configure_logging(self) -> None:
         """
         Apply `MCPConfig.logging` via `slb_glossary.logging.configure_logging`.
-
-        `configure_logging` itself only accepts already-built `LogSink`
-        instances (not specs like `"stderr"` or a dotted import path), so
-        every entry in `logging.sinks` is resolved through
-        `slb_glossary.logging.resolve_sink` first.
         """
         logging_config = self.config.logging
         if logging_config.sinks is None and logging_config.level is None:
@@ -186,7 +173,7 @@ class Application(NamedComponent):
         elif isinstance(spec, (list, tuple, set, frozenset)):
             resolved_sinks = [resolve_sink(item) for item in spec]
         else:
-            resolved_sinks = [resolve_sink(spec)]
+            resolved_sinks = [resolve_sink(spec)]  # type: ignore[arg-type]
 
         configure_logging(
             sinks=resolved_sinks,
@@ -213,7 +200,6 @@ class Application(NamedComponent):
         """
         Synchronous convenience wrapper around `run_async`, for simple entry points.
 
-        :param transport_kwargs: Forwarded to `fastmcp.FastMCP.run_async` -
-            see `run_async`.
+        :param transport_kwargs: Forwarded to `fastmcp.FastMCP.run_async` - see `run_async`.
         """
         asyncio.run(self.run_async(**transport_kwargs))

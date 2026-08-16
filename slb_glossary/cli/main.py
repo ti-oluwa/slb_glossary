@@ -37,7 +37,7 @@ def _configure_logging(level_name: str) -> None:
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
     default="WARNING",
     show_default=True,
-    help="Verbosity of the applications's own logging output.",
+    help="Verbosity of the MCPApps's own logging output.",
 )
 @click.option(
     "--tui",

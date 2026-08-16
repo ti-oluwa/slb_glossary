@@ -1,20 +1,4 @@
-"""
-Tool definitions for `slb_glossary.mcp`'s MCP server.
-
-Each tool's arguments are a frozen, `slots=True` dataclass (FastMCP/pydantic
-infer a JSON schema straight from the type hints and docstrings), and every
-tool returns plain `dict`s built from `slb_glossary.models.SearchResult`/
-`RelatedTerm`'s own `NamedTuple._asdict()` - so the same structures used
-throughout the rest of `slb_glossary` define the MCP schema too, rather than
-this module inventing a parallel set of shapes.
-
-This module is functional, not a class of methods: `build_tool_specs`
-returns a plain list of `ToolSpec`s (name, description, tags, argument
-type, and an async callable), which `slb_glossary.mcp.api.Application`
-registers onto a `fastmcp.FastMCP` instance. Nothing here imports
-`fastmcp` directly, so these functions stay independently testable/callable
-without an MCP server running at all.
-"""
+"""Tool definitions for `slb_glossary.mcp`'s MCP application/server."""
 
 import dataclasses
 import time
@@ -46,10 +30,13 @@ __all__ = [
 ]
 
 ProgressReporter = Callable[[int, int | None], Awaitable[None]]
-"""`async def report(count: int, total: int | None) -> None` - a thin
-callback tools use to report incremental progress, so this module doesn't
+"""`
+async def report(count: int, total: int | None) -> None`. 
+
+A thin callback tools use to report incremental progress, so this module doesn't
 need to import FastMCP's `Context` to stream. `slb_glossary.mcp.api` adapts
-a real `Context.report_progress` into this shape when wiring tools up."""
+a real `Context.report_progress` into this shape when wiring tools up.
+"""
 
 
 DEFAULT_INSTRUCTIONS = """\
@@ -79,7 +66,7 @@ it at "auto" unless you specifically need one or the other.
 """
 
 
-def _term_lookup_to_dict(lookup: TermLookup[SearchResult | None]) -> dict[str, typing.Any]:
+def term_lookup_to_dict(lookup: TermLookup[SearchResult | None]) -> dict[str, typing.Any]:
     return {
         "value": lookup.value.asdict() if lookup.value is not None else None,
         "source": lookup.source.value,
@@ -87,7 +74,7 @@ def _term_lookup_to_dict(lookup: TermLookup[SearchResult | None]) -> dict[str, t
     }
 
 
-def _related_lookup_to_dict(lookup: TermLookup[tuple[typing.Any, ...]]) -> dict[str, typing.Any]:
+def related_lookup_to_dict(lookup: TermLookup[tuple[typing.Any, ...]]) -> dict[str, typing.Any]:
     return {
         "value": [related._asdict() for related in lookup.value],
         "source": lookup.source.value,
@@ -113,9 +100,11 @@ class ToolSpec:
     """Categorization tags (e.g. `{"read", "search"}`) forwarded to FastMCP."""
 
     writes: bool
-    """Whether this tool can write to the local database. Only ever `True`
+    """
+    Whether this tool can write to the local database. Only ever `True`
     for the sync tool - drives extra logging/auditing in
-    `slb_glossary.mcp.middleware`."""
+    `slb_glossary.mcp.middleware`.
+    """
 
     supports_source: bool
     """Whether `args_type` has a `source` field at all."""
@@ -124,15 +113,12 @@ class ToolSpec:
     """Whether this tool accepts a `stream` argument and reports progress."""
 
     handler: Callable[..., Awaitable[typing.Any]]
-    """`async def handler(args, runtime, config, *, report_progress) -> dict`.
+    """
+    `async def handler(args, runtime, config, *, report_progress) -> dict`.
+
     Return type is `Any` here since it's whatever JSON-serializable `dict`
-    shape that particular handler produces - there's no one shared result
-    type to name across every tool."""
-
-
-# --------------------------------------------------------------------------
-# Argument schemas
-# --------------------------------------------------------------------------
+    shape that particular handler produces.
+    """
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -155,16 +141,20 @@ class SearchArgs:
     """Maximum number of results to return. `None` for unlimited (use with care)."""
 
     persist: bool = False
-    """If a live fetch happens, cache its results locally for next time.
+    """
+    If a live fetch happens, cache its results locally for next time.
     Ignored (never persists) unless the server was configured with local
-    write access enabled."""
+    write access enabled.
+    """
 
     fuzzy: bool = False
     """Tolerate minor misspellings/partial names in `topic` for local reads."""
 
     stream: bool = False
-    """Report incremental MCP progress notifications as results are found.
-    Ignored if this server's streaming default disallows overriding."""
+    """
+    Report incremental MCP progress notifications as results are found.
+    Ignored if this server's streaming default disallows overriding.
+    """
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -178,8 +168,10 @@ class GetTermArgs:
     """Where to look up the term: `"auto"`, `"local"`, or `"live"`."""
 
     persist: bool = False
-    """If a live fetch happens, cache its result locally. Ignored unless
-    the server has local write access enabled."""
+    """
+    If a live fetch happens, cache its result locally. Ignored unless
+    the server has local write access enabled.
+    """
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -187,8 +179,10 @@ class TermsOnArgs:
     """Arguments for `glossary_get_terms_on`."""
 
     topic: str
-    """Topic name, or several comma-separated topic names. Call
-    `glossary_get_topics` first if you're unsure of the exact name."""
+    """
+    Topic name, or several comma-separated topic names. Call
+    `glossary_get_topics` first if you're unsure of the exact name.
+    """
 
     source: Source = Source.AUTO
     """Where to read from: `"auto"`, `"local"`, or `"live"`."""
@@ -200,8 +194,10 @@ class TermsOnArgs:
     """Maximum number of terms to return. `None` for unlimited (use with care)."""
 
     persist: bool = False
-    """If a live fetch happens, cache its results locally. Ignored unless
-    the server has local write access enabled."""
+    """
+    If a live fetch happens, cache its results locally. Ignored unless
+    the server has local write access enabled.
+    """
 
     fuzzy: bool = False
     """Tolerate minor misspellings/partial names in `topic` for local reads."""
@@ -289,9 +285,11 @@ class SyncArgs:
     """
 
     mode: typing.Literal["query", "topic", "letter", "all"]
-    """What to sync: a single free-text `"query"`, everything under one
+    """
+    What to sync: a single free-text `"query"`, everything under one
     `"topic"`, everything starting with one `"letter"`, or `"all"` (the
-    entire glossary - heavy, use sparingly)."""
+    entire glossary - heavy, use sparingly).
+    """
 
     value: str | None = None
     """The query/topic/letter to sync. Required for every `mode` except `"all"`."""
@@ -303,12 +301,7 @@ class SyncArgs:
     """Concurrent term-page fetches while syncing."""
 
 
-# --------------------------------------------------------------------------
-# Handlers
-# --------------------------------------------------------------------------
-
-
-def _resolve_source(requested: Source, config: MCPConfig) -> Source:
+def resolve_source(requested: Source, config: MCPConfig) -> Source:
     """Narrow `requested` against `config.source_policy`, raising if it's not allowed."""
     policy = config.source_policy
     source = requested if policy.expose_choice else policy.default
@@ -319,16 +312,18 @@ def _resolve_source(requested: Source, config: MCPConfig) -> Source:
     )
     if source not in allowed:
         choices = ", ".join(sorted(item.value for item in allowed))
-        raise MCPError(f"source={source.value!r} isn't permitted by this server's policy. Allowed: {choices}.")
+        raise MCPError(
+            f"source={source.value!r} isn't permitted by this server's policy. Allowed: {choices}."
+        )
     return source
 
 
-def _effective_persist(requested: bool, config: MCPConfig) -> bool:
+def get_effective_persist(requested: bool, config: MCPConfig) -> bool:
     """`persist` only ever takes effect when the server was configured to allow writes."""
     return requested and config.local.allow_write
 
 
-def _effective_stream(requested: bool, config: MCPConfig) -> bool:
+def get_effective_stream(requested: bool, config: MCPConfig) -> bool:
     streaming: StreamingConfig = config.streaming
     if not streaming.allow_override:
         return streaming.default
@@ -342,8 +337,8 @@ async def _handle_search(
     *,
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
-    source = _resolve_source(args.source, config)
-    stream = _effective_stream(args.stream, config)
+    source = resolve_source(args.source, config)
+    stream = get_effective_stream(args.stream, config)
     started_at = time.monotonic()
     async with runtime.acquire(source) as (db, session):
         results: list[dict[str, typing.Any]] = []
@@ -355,7 +350,7 @@ async def _handle_search(
             topic=args.topic,
             start_letter=args.start_letter,
             limit=args.limit,
-            persist=_effective_persist(args.persist, config),
+            persist=get_effective_persist(args.persist, config),
             fuzzy=args.fuzzy,
         ):
             results.append(result.asdict())
@@ -376,16 +371,16 @@ async def _handle_get_term(
     *,
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
-    source = _resolve_source(args.source, config)
+    source = resolve_source(args.source, config)
     async with runtime.acquire(source) as (db, session):
         lookup = await query_api.get_term(
             args.term_or_url,
             db=db,
             session=session,
             source=source,
-            persist=_effective_persist(args.persist, config),
+            persist=get_effective_persist(args.persist, config),
         )
-    return _term_lookup_to_dict(lookup)
+    return term_lookup_to_dict(lookup)
 
 
 async def _handle_terms_on(
@@ -395,8 +390,8 @@ async def _handle_terms_on(
     *,
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
-    source = _resolve_source(args.source, config)
-    stream = _effective_stream(args.stream, config)
+    source = resolve_source(args.source, config)
+    stream = get_effective_stream(args.stream, config)
     started_at = time.monotonic()
     async with runtime.acquire(source) as (db, session):
         results: list[dict[str, typing.Any]] = []
@@ -407,7 +402,7 @@ async def _handle_terms_on(
             source=source,
             start_letter=args.start_letter,
             limit=args.limit,
-            persist=_effective_persist(args.persist, config),
+            persist=get_effective_persist(args.persist, config),
             fuzzy=args.fuzzy,
         ):
             results.append(result.asdict())
@@ -428,7 +423,7 @@ async def _handle_terms_urls(
     *,
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
-    source = _resolve_source(args.source, config)
+    source = resolve_source(args.source, config)
     async with runtime.acquire(source) as (db, session):
         urls = [
             url
@@ -453,7 +448,7 @@ async def _handle_topics(
     *,
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
-    source = _resolve_source(args.source, config)
+    source = resolve_source(args.source, config)
     async with runtime.acquire(source) as (db, session):
         topics = await query_api.get_topics(db=db, session=session, source=source)
     return {"topics": topics, "count": len(topics), "source": source.value}
@@ -466,16 +461,16 @@ async def _handle_related_terms(
     *,
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
-    source = _resolve_source(args.source, config)
+    source = resolve_source(args.source, config)
     async with runtime.acquire(source) as (db, session):
         lookup = await query_api.related_terms(
             args.term_or_url,
             db=db,
             session=session,
             source=source,
-            persist=_effective_persist(args.persist, config),
+            persist=get_effective_persist(args.persist, config),
         )
-    return _related_lookup_to_dict(lookup)
+    return related_lookup_to_dict(lookup)
 
 
 async def _handle_random_term(
@@ -485,17 +480,17 @@ async def _handle_random_term(
     *,
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
-    source = _resolve_source(args.source, config)
+    source = resolve_source(args.source, config)
     async with runtime.acquire(source) as (db, session):
         lookup = await query_api.get_random_term(
             db=db,
             session=session,
             source=source,
             topic=args.topic,
-            persist=_effective_persist(args.persist, config),
+            persist=get_effective_persist(args.persist, config),
             fuzzy=args.fuzzy,
         )
-    return _term_lookup_to_dict(lookup)
+    return term_lookup_to_dict(lookup)
 
 
 async def _handle_compare(
@@ -505,16 +500,16 @@ async def _handle_compare(
     *,
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
-    source = _resolve_source(args.source, config)
+    source = resolve_source(args.source, config)
     async with runtime.acquire(source) as (db, session):
         lookups = await query_api.compare(
             args.terms,
             db=db,
             session=session,
             source=source,
-            persist=_effective_persist(args.persist, config),
+            persist=get_effective_persist(args.persist, config),
         )
-    return {term: _term_lookup_to_dict(lookup) for term, lookup in lookups.items()}
+    return {term: term_lookup_to_dict(lookup) for term, lookup in lookups.items()}
 
 
 async def _handle_sync(
@@ -557,11 +552,6 @@ async def _handle_sync(
             summary = await sync_api.sync_all(db, session, concurrency=args.concurrency)
 
     return dataclasses.asdict(summary)
-
-
-# --------------------------------------------------------------------------
-# Registration
-# --------------------------------------------------------------------------
 
 
 def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:

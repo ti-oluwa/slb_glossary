@@ -139,7 +139,9 @@ async def upsert_results(
         logger.debug("Skipped %d result(s) with no url during upsert", skipped)
 
     if not rows:
-        logger.debug("upsert_results: nothing to write (0 rows in %.3fs)", time.monotonic() - started_at)
+        logger.debug(
+            "upsert_results: nothing to write (0 rows in %.3fs)", time.monotonic() - started_at
+        )
         return 0
 
     await db.connection.executemany(UPSERT_STATEMENT, rows)

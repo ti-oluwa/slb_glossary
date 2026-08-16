@@ -2,17 +2,19 @@
 MCP (Model Context Protocol) server for the SLB Energy Glossary.
 
 Exposes `slb_glossary.query`'s search/lookup functions as MCP tools an LLM
-agent can call directly, backed by [FastMCP](https://gofastmcp.com). Fully
-configurable through `MCPConfig` - which sources are reachable, whether
+agent can call directly, backed by [FastMCP](https://gofastmcp.com).
+
+The MCP application is fully configurable through `MCPConfig`.
+You can configure which sources are reachable, whether
 local writes are allowed, which tools are built, timeouts, auth, rate
 limiting, hooks, logging, and streaming - see `slb_glossary.mcp.config`.
 
 ```python
 import asyncio
 
-from slb_glossary.mcp import Application, MCPConfig
+from slb_glossary.mcp import MCPApp, MCPConfig
 
-app = Application(MCPConfig.default())
+app = MCPApp(MCPConfig.default())
 asyncio.run(app.run_async())
 ```
 
@@ -21,7 +23,7 @@ Or from the command line: `slb mcp serve` (see `slb_glossary.cli.commands.mcp`).
 Requires the `mcp` extra: `pip install slb-glossary[mcp]`.
 """
 
-from slb_glossary.mcp.api import Application
+from slb_glossary.mcp.api import MCPApp
 from slb_glossary.mcp.auth import (
     ANONYMOUS,
     AuthBackend,
@@ -39,7 +41,7 @@ from slb_glossary.mcp.config import (
     MCPLoggingConfig,
     RateLimitConfig,
     RateLimitScope,
-    ServerInfoConfig,
+    ServerInfo,
     SessionAccessConfig,
     SessionMode,
     SourcePolicyConfig,
@@ -66,9 +68,9 @@ from slb_glossary.mcp.types import (
 )
 
 __all__ = [
-    "Application",
+    "MCPApp",
     "MCPConfig",
-    "ServerInfoConfig",
+    "ServerInfo",
     "SessionAccessConfig",
     "SessionMode",
     "LocalAccessConfig",

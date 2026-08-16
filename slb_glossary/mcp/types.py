@@ -1,16 +1,4 @@
-"""
-Small types shared across `slb_glossary.mcp` that would otherwise create an
-import cycle: `slb_glossary.mcp.config.HooksConfig`'s hook signatures need
-`ToolRunContext`, but `ToolRunContext` naturally belongs next to
-`slb_glossary.mcp.runtime.Runtime`, which itself imports `MCPConfig` from
-`slb_glossary.mcp.config`. Living here, both sides can import the real type
-instead of falling back to `typing.Any`.
-
-`NamedComponent` is unrelated to that cycle - it's just a small mixin so
-`Application` and `Runtime` share one `name` (taken from
-`MCPConfig.server.name`) for logging and task naming, rather than each
-hardcoding its own.
-"""
+"""Types shared across `slb_glossary.mcp`"""
 
 import dataclasses
 import time
@@ -33,16 +21,10 @@ __all__ = [
 class NamedComponent:
     """
     Mixin giving a component a human-readable `name` for use in logs, task names, and `repr`.
-
-    `slb_glossary.mcp.api.Application` and `slb_glossary.mcp.runtime.Runtime`
-    both inherit this and are constructed with the same
-    `MCPConfig.server.name`, so log lines and background-task names from
-    either one are identifiable as belonging to the same server instance
-    without each hardcoding its own prefix.
     """
 
     def __init__(self, name: str) -> None:
-        """:param name: Human-readable name for this component - typically `MCPConfig.server.name`."""
+        """:param name: Human-readable name for this component."""
         self.name = name
 
     def __repr__(self) -> str:
@@ -54,11 +36,12 @@ class ToolRunContext:
     """
     Everything a tool call's hooks (see `slb_glossary.mcp.config.HooksConfig`) get to see.
 
-    Built fresh per call by `slb_glossary.mcp.middleware.GlossaryMiddleware`
+    Built fresh per call by `slb_glossary.mcp.middleware.MCPMiddleware`
     and passed to `before_tool`/`after_tool`/`on_error` hooks, and also
     stashed in the FastMCP `Context` state (see
-    `GlossaryMiddleware.on_call_tool`) so tool bodies can read it too.
-    Read-only in practice - hooks are meant to observe/veto (by raising),
+    `MCPMiddleware.on_call_tool`) so tool bodies can read it too.
+
+    Read-only in practice. Hooks are meant to observe/veto (by raising),
     not mutate call state.
     """
 
@@ -80,18 +63,26 @@ class ToolRunContext:
 
 
 BeforeToolHook = Callable[[ToolRunContext], Awaitable[None]]
-"""`async def hook(run: ToolRunContext) -> None`, called just before a tool's
-body executes. Raise to abort the call (surfaced to the caller as a tool error)."""
+"""
+`async def hook(run: ToolRunContext) -> None`.
+
+Called just before a tool's body executes. Raise to abort the 
+call (surfaced to the caller as a tool error)
+."""
 
 AfterToolHook = Callable[[ToolRunContext, typing.Any], Awaitable[None]]
-"""`async def hook(run: ToolRunContext, result: Any) -> None`, called after a
-tool's body returns successfully, with its result. `result` is typed `Any`
-because it's whatever JSON-serializable value the tool produced -
-there's no one shared result type across tools to name here."""
+"""
+`async def hook(run: ToolRunContext, result: Any) -> None`. 
+Called after a tool's body returns successfully, with its result. 
+
+`result` is typed `Any` because it's whatever JSON-serializable value the tool produced.
+"""
 
 ToolErrorHook = Callable[[ToolRunContext, BaseException], Awaitable[None]]
-"""`async def hook(run: ToolRunContext, error: BaseException) -> None`,
-called when a tool's body raises. The error still propagates afterward."""
+"""
+`async def hook(run: ToolRunContext, error: BaseException) -> None`.
+Called when a tool's body raises. The error still propagates afterward.
+"""
 
 LifecycleHook = Callable[[], Awaitable[None]]
-"""`async def hook() -> None`, called once on server startup/shutdown."""
+"""`async def hook() -> None`. Called once on server startup/shutdown."""

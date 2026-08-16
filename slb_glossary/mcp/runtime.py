@@ -1,14 +1,4 @@
-"""
-Resource lifecycle management for `slb_glossary.mcp`'s MCP server.
-
-`Runtime` owns the (at most one, shared) local `Database` connection and
-live `BrowserSession` a server built from an `MCPConfig` uses, opening and
-closing them according to `LocalAccessConfig`/`SessionAccessConfig`, and
-hands each tool call a `db`/`session` pair through `Runtime.acquire`. This
-is the one place `slb_glossary.mcp` talks to `slb_glossary.local`/
-`slb_glossary.live` directly - every tool function in `slb_glossary.mcp.tools`
-goes through it rather than opening resources itself.
-"""
+"""Resource lifecycle management for `slb_glossary.mcp`'s MCP application."""
 
 import asyncio
 import contextlib
@@ -31,7 +21,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["Runtime"]
 
 
-def _db_path(database_config: DatabaseConfig) -> str | None:
+def get_db_path(database_config: DatabaseConfig) -> str | None:
     """Extract the configured local database path, or `None` for the OS default."""
     if not database_config.data_dir:
         return None
@@ -40,13 +30,8 @@ def _db_path(database_config: DatabaseConfig) -> str | None:
 
 class Runtime(NamedComponent):
     """
-    Owns the shared `Database`/`BrowserSession` resources for one running MCP server.
-
-    One `Runtime` per `slb_glossary.mcp.api.Application` - constructed with
-    the same `name` (`MCPConfig.server.name`) so log lines from either one
-    are identifiable as belonging to the same server instance. Not safe to
-    share across `Application` instances since it tracks its own resource
-    lifecycle state.
+    Owns and manages the shared resources (`Database`/`BrowserSession`) for
+    one running MCP application.
     """
 
     def __init__(self, config: MCPConfig) -> None:
@@ -119,8 +104,8 @@ class Runtime(NamedComponent):
         """
         Return the shared local `Database`, opening it on first use.
 
-        Unlike `acquire`, this doesn't route through `Source` resolution -
-        it's for callers (like the `glossary_sync` tool) that always need a
+        Unlike `acquire`, this doesn't route through `Source` resolution.
+        Meant for callers (like the `glossary_sync` tool) that always need a
         writable local database regardless of which `Source` a call
         otherwise resolves to.
 
@@ -133,7 +118,7 @@ class Runtime(NamedComponent):
     async def _open_db(self) -> Database:
         async with self._db_lock:
             if self._db is None:
-                self._db = await open_db(_db_path(self.config.local.database))
+                self._db = await open_db(get_db_path(self.config.local.database))
             return self._db
 
     async def _open_session(self) -> BrowserSession:
@@ -145,15 +130,15 @@ class Runtime(NamedComponent):
             return self._session
 
     async def _reap_idle_session(self) -> None:
-        """Background task: close the shared session after it's sat idle past `idle_timeout`."""
+        """Background task. Closes the shared session after it's sat idle past `idle_timeout`."""
         idle_timeout = self.config.session.idle_timeout
         assert idle_timeout is not None, (
-            f"[{self.name}] _reap_idle_session started with idle_timeout=None; "
-            f"Runtime.start() should never have scheduled this task in that case."
+            f"[{self.name}] `_reap_idle_session` started with idle_timeout=None; "
+            f"`{type(self).__name__}.start()` should never have scheduled this task in that case."
         )
         assert self.config.session.mode is not SessionMode.PER_CALL, (
-            f"[{self.name}] _reap_idle_session started under SessionMode.PER_CALL, which never "
-            f"maintains a shared session for it to reap; Runtime.start() should never have "
+            f"[{self.name}] `_reap_idle_session` started under SessionMode.PER_CALL, which never "
+            f"maintains a shared session for it to reap; `{type(self).__name__}.start()` should never have "
             f"scheduled this task in that case."
         )
         try:
@@ -176,11 +161,13 @@ class Runtime(NamedComponent):
             raise
 
     @contextlib.asynccontextmanager
-    async def acquire(self, source: Source) -> AsyncIterator[tuple[Database | None, BrowserSession | None]]:
+    async def acquire(
+        self, source: Source
+    ) -> AsyncIterator[tuple[Database | None, BrowserSession | None]]:
         """
         Yield the `(db, session)` pair a tool call needs to satisfy `source`.
 
-        Honors `SessionMode`: for `PER_CALL`, a fresh session is opened for
+        Honors `SessionMode`. For `PER_CALL`, a fresh session is opened for
         the duration of the `async with` block and closed on exit (bounded
         by `SessionAccessConfig.max_concurrent` via a semaphore); for
         `EAGER`/`LAZY`, the shared session is reused (and lazily opened on

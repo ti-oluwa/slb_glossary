@@ -1,12 +1,7 @@
 """
-FastMCP middleware for `slb_glossary.mcp`: authentication, rate limiting,
-call hooks, and call logging - everything that wraps *every* tool call
+`FastMCP` middleware for `slb_glossary.mcp`. Incorporates authentication, rate limiting,
+call hooks, and call logging. Basically everything that wraps *every* tool call
 regardless of which tool it is.
-
-Per-tool concerns (timeouts, argument validation, resolving `db`/`session`)
-live on the tool registration itself (`slb_glossary.mcp.api`) and in
-`slb_glossary.mcp.tools`, since FastMCP's own `@mcp.tool(timeout=...)`
-already covers timeouts without needing middleware for it.
 """
 
 import logging
@@ -16,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.tools.base import ToolResult
 
 from slb_glossary.mcp.auth import ANONYMOUS, AuthRequest, Principal
 from slb_glossary.mcp.config import MCPConfig, RateLimitScope
@@ -25,10 +21,10 @@ from slb_glossary.query import Source
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["GlossaryMiddleware"]
+__all__ = ["MCPMiddleware"]
 
 
-def _current_http_headers() -> dict[str, str]:
+def get_current_http_headers() -> dict[str, str]:
     """
     Best-effort read of the current HTTP request's headers, lower-cased keys.
 
@@ -42,7 +38,7 @@ def _current_http_headers() -> dict[str, str]:
     return {key.lower(): value for key, value in headers.items()}
 
 
-def _bearer_token(headers: dict[str, str]) -> str | None:
+def get_bearer_token(headers: dict[str, str]) -> str | None:
     """Parse a `Authorization: Bearer <token>` header out of `headers`, if present."""
     authorization = headers.get("authorization")
     if not authorization:
@@ -53,7 +49,7 @@ def _bearer_token(headers: dict[str, str]) -> str | None:
     return token
 
 
-def _rate_limit_key(scope: RateLimitScope, principal: Principal, tool_name: str) -> str:
+def get_rate_limit_key(scope: RateLimitScope, principal: Principal, tool_name: str) -> str:
     if scope is RateLimitScope.GLOBAL:
         return "global"
     if scope is RateLimitScope.CLIENT:
@@ -64,7 +60,7 @@ def _rate_limit_key(scope: RateLimitScope, principal: Principal, tool_name: str)
     return f"{principal.id}:{tool_name}"
 
 
-def _source_from_arguments(arguments: dict) -> Source | None:
+def get_source_from_arguments(arguments: dict) -> Source | None:
     """Best-effort parse of a `source` MCP argument into a `Source`, for `ToolRunContext`."""
     raw = arguments.get("source")
     if raw is None:
@@ -75,14 +71,15 @@ def _source_from_arguments(arguments: dict) -> Source | None:
         return None
 
 
-class GlossaryMiddleware(Middleware):
+class MCPMiddleware(Middleware):
     """
     Single middleware wiring up auth, rate limiting, hooks, and call logging.
 
-    One instance is added per `slb_glossary.mcp.api.Application`; it reads
-    everything it needs from the `MCPConfig` it's built with, so behavior
-    is entirely config-driven rather than requiring several middleware
-    instances to be composed by hand.
+    One instance is added per `slb_glossary.mcp.api.MCPApp`.
+
+    It reads everything it needs from the `MCPConfig` it's built with, so behavior
+    is entirely config-driven rather than requiring several middleware instances
+    to be composed by hand.
     """
 
     def __init__(self, config: MCPConfig) -> None:
@@ -91,21 +88,20 @@ class GlossaryMiddleware(Middleware):
     async def on_call_tool(
         self,
         context: MiddlewareContext,
-        call_next: Callable[[MiddlewareContext], Awaitable[object]],
-    ) -> object:
+        call_next: Callable[[MiddlewareContext], Awaitable[ToolResult]],
+    ) -> ToolResult:
         tool_name: str = getattr(context.message, "name", "<unknown>")
         arguments: dict = dict(getattr(context.message, "arguments", None) or {})
 
-        principal = await self._authenticate(tool_name, arguments)
-
+        principal = await self.authenticate(tool_name, arguments)
         if self.config.rate_limit.enabled:
-            await self._enforce_rate_limit(principal, tool_name)
+            await self.enforce_rate_limit(principal, tool_name)
 
         run_context = ToolRunContext(
             tool_name=tool_name,
             principal=principal,
             arguments=arguments,
-            source=_source_from_arguments(arguments),
+            source=get_source_from_arguments(arguments),
         )
         if context.fastmcp_context is not None:
             # The full ToolRunContext is a superset of just the principal (it
@@ -152,14 +148,14 @@ class GlossaryMiddleware(Middleware):
             )
         return result
 
-    async def _authenticate(self, tool_name: str, arguments: dict) -> Principal:
+    async def authenticate(self, tool_name: str, arguments: dict) -> Principal:
         auth_config = self.config.auth
         if auth_config.backend is None:
             return ANONYMOUS
 
-        headers = _current_http_headers()
+        headers = get_current_http_headers()
         request = AuthRequest(
-            token=_bearer_token(headers),
+            token=get_bearer_token(headers),
             headers=headers,
             tool_name=tool_name,
             arguments=arguments,
@@ -168,13 +164,16 @@ class GlossaryMiddleware(Middleware):
         if principal is not None:
             return principal
         if auth_config.required:
-            raise ToolError(str(AuthenticationError("Authentication required, or the provided credentials are invalid.")))
+            exc = AuthenticationError(
+                "Authentication required, or the provided credentials are invalid."
+            )
+            raise ToolError(exc) from exc
         return ANONYMOUS
 
-    async def _enforce_rate_limit(self, principal: Principal, tool_name: str) -> None:
+    async def enforce_rate_limit(self, principal: Principal, tool_name: str) -> None:
         limiter = self.config.rate_limit.limiter
         if limiter is None:
-            # slb_glossary.mcp.api.Application always resolves a default limiter
+            # slb_glossary.mcp.api.MCPApp always resolves a default limiter
             # before this middleware can run whenever rate_limit.enabled is True;
             # reaching this branch means that wiring was bypassed somehow.
             logger.warning(
@@ -182,7 +181,8 @@ class GlossaryMiddleware(Middleware):
                 "skipping rate limiting for this call."
             )
             return
-        key = _rate_limit_key(self.config.rate_limit.scope, principal, tool_name)
+        key = get_rate_limit_key(self.config.rate_limit.scope, principal, tool_name)
         wait_ms = await limiter.hit(key)
         if wait_ms > 0:
-            raise ToolError(str(RateLimitExceededError(key, wait_ms=wait_ms)))
+            exc = RateLimitExceededError(key, wait_ms=wait_ms)
+            raise ToolError(exc) from exc

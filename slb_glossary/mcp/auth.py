@@ -6,9 +6,10 @@ This is deliberately independent of FastMCP's own OAuth-flavored
 *transport* (e.g. rejecting an unauthenticated HTTP request before it ever
 reaches a tool). `AuthBackend` here resolves each tool call into a
 `Principal` that the server's middleware, rate limiter, and hooks key off
-of - a different, complementary layer. See `slb_glossary.mcp.config.AuthConfig`
-for how the two combine, and `slb_glossary.mcp.api.Application` for where
-each is wired in.
+of as a different, but complementary layer.
+
+See `slb_glossary.mcp.config.AuthConfig` for how the two combine, and
+`slb_glossary.mcp.api.MCPApp` for where each is wired in.
 
 ```python
 from slb_glossary.mcp.auth import Principal, StaticTokenAuth
@@ -18,14 +19,6 @@ auth = StaticTokenAuth({
     "sk-bot-...": "readonly-bot",  # bare string is shorthand for Principal(id=...)
 })
 ```
-
-Backends with their own constructor arguments (a database pool, an
-external identity-provider client, etc.) can be imported by dotted path
-with `import_backend` and instantiated with no arguments - handy for
-`--auth-backend module:ClassName`-style CLI flags. A backend that needs
-constructor arguments doesn't fit that no-args convention; build the
-`slb_glossary.mcp.config.MCPConfig`/`slb_glossary.mcp.api.Application`
-yourself in Python instead of going through the CLI in that case.
 """
 
 import importlib
@@ -48,19 +41,20 @@ class Principal(typing.NamedTuple):
     """An authenticated (or anonymous) caller identity."""
 
     id: str
-    """Stable identifier for this caller - used as the rate-limit key
-    (see `slb_glossary.mcp.config.RateLimitScope`) and passed to hooks."""
+    """Stable identifier for this caller"""
 
     scopes: frozenset[str] = frozenset()
-    """Free-form authorization scopes this caller holds. Not interpreted by
-    `slb_glossary.mcp` itself; read them from
+    """
+    Free-form authorization scopes this caller holds. You can read them from
     `slb_glossary.mcp.types.ToolRunContext.principal` in a hook or a
-    custom `AuthBackend` if you need scope-gated behavior."""
+    custom `AuthBackend` if you need scope-gated behavior.
+    """
 
     metadata: Mapping[str, typing.Any] = types.MappingProxyType({})
-    """Arbitrary extra data an `AuthBackend` wants to carry alongside the
-    principal (e.g. a display name, a plan tier). Typed `Any` because it's
-    genuinely backend-specific, free-form data."""
+    """
+    Arbitrary extra free-form data an `AuthBackend` wants to carry alongside the
+    principal (e.g. a display name, a plan tier).
+    """
 
 
 ANONYMOUS = Principal(id="anonymous")
@@ -69,31 +63,27 @@ ANONYMOUS = Principal(id="anonymous")
 
 class AuthRequest(typing.NamedTuple):
     """
-    Everything an `AuthBackend` gets to resolve a caller's identity from.
-
-    Deliberately carries more than just a bearer token: some backends key
-    off a custom header (an API-key header, a signed request, mTLS client
-    info surfaced as a header by a proxy), or want to make per-tool
-    authorization decisions (e.g. reject `glossary_sync` calls for
-    read-only tokens) using `tool_name`/`arguments` rather than a bare token lookup.
+    Holds everything an `AuthBackend` gets to resolve a caller's identity from.
     """
 
     token: str | None
-    """The bearer token parsed from the `Authorization: Bearer <token>`
+    """
+    The bearer token parsed from the `Authorization: Bearer <token>`
     header, with the scheme prefix stripped, or `None` if there wasn't
-    one (including on transports with no per-request headers, like stdio)."""
+    one (including on transports with no per-request headers, like stdio).
+    """
 
     headers: Mapping[str, str]
-    """Every HTTP header on the incoming request, lower-cased keys. Empty
-    on transports with no per-request headers (e.g. stdio)."""
+    """
+    Every HTTP header on the incoming request, lower-cased keys. Empty
+    on transports with no per-request headers (e.g. stdio).
+    """
 
     tool_name: str
     """The MCP tool name about to be called."""
 
     arguments: Mapping[str, typing.Any]
-    """The tool call's raw arguments, as a plain mapping. Typed `Any`
-    because these are whatever JSON-compatible values the caller sent -
-    genuinely dynamic, not a fixed shape."""
+    """The tool call's raw arguments, as a plain mapping. """
 
 
 @typing.runtime_checkable
@@ -101,20 +91,17 @@ class AuthBackend(typing.Protocol):
     """
     Protocol for resolving an `AuthRequest` into a `Principal`.
 
-    Implement this (no base class required, just `authenticate`) to back
-    tokens with a database, an external identity provider, environment
-    variables, whatever. Pass an instance to
-    `slb_glossary.mcp.config.AuthConfig.backend`.
+    Pass an instance to `slb_glossary.mcp.config.AuthConfig.backend`.
     """
 
     async def authenticate(self, request: AuthRequest) -> Principal | None:
         """
-        Resolve `request` into a `Principal`.
+        Resolves `request` into a `Principal`.
 
         :param request: The token, headers, and call metadata to authenticate from.
         :return: The resolved `Principal`, or `None` if `request` doesn't
             resolve to anyone. A `None` return is treated as
-            "unauthenticated": rejected if `AuthConfig.required` is `True`,
+            "unauthenticated" and rejected if `AuthConfig.required` is `True`,
             otherwise falls back to `ANONYMOUS`.
         """
         ...
@@ -127,6 +114,9 @@ class StaticTokenAuth:
 
     def __init__(self, tokens: Mapping[str, Principal | str]) -> None:
         """
+        Initialize the backend with a mapping of bearer token to
+        `Principal` (or bare string shorthand).
+
         :param tokens: Mapping of raw bearer token to either a `Principal`
             directly, or a bare `str` used as shorthand for
             `Principal(id=that_string)`.
@@ -157,11 +147,6 @@ class NullAuth:
 def import_backend(dotted_path: str) -> AuthBackend:
     """
     Import and instantiate an `AuthBackend` from a dotted path, with no constructor arguments.
-
-    Mirrors `slb_glossary.logging.import_sink`'s convention, for the same
-    reason: a simple way for CLI flags (`--auth-backend module:ClassName`)
-    to reach a user-defined backend without slb_glossary needing to know
-    about it ahead of time.
 
     :param dotted_path: `"module:ClassName"` or `"package.module.ClassName"`.
     :return: An instance of the imported class.

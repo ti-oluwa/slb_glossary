@@ -25,7 +25,7 @@ def mcp() -> None:
     "config_path",
     type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path),
     default=None,
-    help="An slb_glossary Config file (JSON/TOML/YAML) to source session/local settings from.",
+    help="An `slb_glossary` Config file (JSON/TOML/YAML) to source session/local settings from.",
 )
 @click.option(
     "--transport",
@@ -35,7 +35,9 @@ def mcp() -> None:
     help="MCP transport to serve over.",
 )
 @click.option("--host", default="127.0.0.1", show_default=True, help="Bind host (http/sse only).")
-@click.option("--port", type=int, default=8000, show_default=True, help="Bind port (http/sse only).")
+@click.option(
+    "--port", type=int, default=8000, show_default=True, help="Bind port (http/sse only)."
+)
 @click.option(
     "--tools",
     default="read_only",
@@ -76,12 +78,12 @@ def mcp() -> None:
     default=None,
     help="Dotted import path ('module:ClassName' or 'package.module.ClassName') to a custom "
     "AuthBackend, instantiated with no constructor arguments. For a backend that needs "
-    "constructor arguments (a DB pool, API client, etc.), build the Application in Python "
+    "constructor arguments (a DB pool, API client, etc.), build the `MCPApp` in Python "
     "yourself instead of going through this flag. Mutually exclusive with --auth-token.",
 )
 @click.option(
     "--rate-limit",
-    "requests_per_minute",
+    "limit",
     type=int,
     default=None,
     help="Enable rate limiting: max requests per client per tool per minute.",
@@ -106,12 +108,12 @@ def serve(
     timeout: float,
     auth_tokens: tuple[str, ...],
     auth_backend_path: str | None,
-    requests_per_minute: int | None,
+    limit: int | None,
     log_level: str | None,
 ) -> None:
     """Build an `MCPConfig` from flags and serve it."""
     try:
-        from slb_glossary.mcp.api import Application
+        from slb_glossary.mcp.api import MCPApp
         from slb_glossary.mcp.auth import StaticTokenAuth, import_backend
         from slb_glossary.mcp.config import (
             AuthConfig,
@@ -151,8 +153,8 @@ def serve(
         auth_config = AuthConfig(backend=import_backend(auth_backend_path), required=True)
 
     rate_limit = RateLimitConfig()
-    if requests_per_minute is not None:
-        rate_limit = RateLimitConfig(enabled=True, requests_per_minute=requests_per_minute)
+    if limit is not None:
+        rate_limit = RateLimitConfig(enabled=True, limit=limit)
 
     config = MCPConfig(
         session=session,
@@ -165,7 +167,7 @@ def serve(
         logging=dataclasses.replace(MCPConfig.default().logging, level=log_level),
     )
 
-    app = Application(config)
+    app = MCPApp(config)
     transport_kwargs: dict[str, typing.Any] = {"transport": transport}
     if transport != "stdio":
         transport_kwargs.update(host=host, port=port)
