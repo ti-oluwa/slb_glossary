@@ -13,6 +13,7 @@ from slb_glossary.cli.source_options import (
     database_option,
     get_loaded_config,
     open_configured_db,
+    persist_kwargs,
     resolve_source,
     resolve_stream,
     source_options,
@@ -132,6 +133,11 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     local database available, cached results are used first and the live
     site is only visited if the local database has nothing for QUERY.
 
+    With --cache (the default), live results are saved to the local
+    database as they arrive, --cache-batch-size at a time, rather than all
+    at once at the end - so a long-running fetch that gets interrupted
+    still keeps whatever it already fetched (see --cache-on-error).
+
     \b
     Examples:
       slb-glossary search porosity
@@ -141,6 +147,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
       slb-glossary search porosity --local
       slb-glossary search porosity --local --fuzzy --topic Petrophysics
       slb-glossary search porosity --live --cache
+      slb-glossary search porosity --live --limit 0 --cache-batch-size 5
       slb-glossary search porosity --config ~/my-config.toml
       slb-glossary search porosity --config none --headed
     """
@@ -180,7 +187,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                     start_letter=params["start_letter"],
                     limit=limit,
                     concurrency=concurrency,
-                    persist=params["cache_results"],
+                    **persist_kwargs(params),
                 ),
             )
             return await output_results(
