@@ -33,6 +33,7 @@ __all__ = [
     "resolve_lookup",
     "resolve_stream",
     "get_loaded_config",
+    "persist_kwargs",
 ]
 
 
@@ -41,9 +42,12 @@ F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
 
 def source_options(func: F) -> F:
     """
-    Attach `--source`, its `--local`/`--live`/`--auto` shorthands, and `--cache` to a command.
+    Attach `--source`, its `--local`/`--live`/`--auto` shorthands, and
+    `--cache`/`--cache-batch-size`/`--cache-on-error` to a command.
 
-    Pair with `resolve_source` to turn the parsed flags into one `Source`.
+    Pair with `resolve_source` to turn the parsed flags into one `Source`,
+    and `persist_kwargs` to turn the cache-related flags into keyword
+    arguments for a `slb_glossary.query` function's `persist*` parameters.
 
     :param func: The click command callback to attach options to.
     :return: `func`, with the source-selection options attached.
@@ -56,6 +60,31 @@ def source_options(func: F) -> F:
         help=(
             "When a live fetch happens, save its results to the local "
             "database so the same lookup is served locally next time."
+        ),
+    )(func)
+    func = click.option(
+        "--cache-batch-size",
+        "cache_batch_size",
+        type=click.IntRange(min=1),
+        default=20,
+        show_default=True,
+        help=(
+            "Number of live results to buffer before each incremental "
+            "write to the local database (only relevant with --cache). "
+            "Lower values save progress more often; higher values write "
+            "less often but risk losing more unsaved results if the fetch "
+            "is interrupted before the next write."
+        ),
+    )(func)
+    func = click.option(
+        "--cache-on-error/--no-cache-on-error",
+        "cache_on_error",
+        default=True,
+        show_default=True,
+        help=(
+            "If a live fetch fails partway through, save whatever's been "
+            "buffered so far (only relevant with --cache) instead of "
+            "losing it. Disable to only save complete, uninterrupted fetches."
         ),
     )(func)
     func = click.option(
@@ -108,6 +137,21 @@ def resolve_source(params: typing.Mapping[str, typing.Any]) -> Source:
     if len(unique) > 1:
         raise click.UsageError("Give at most one of --source/--local/--live/--auto.")
     return unique[0] if unique else Source.AUTO
+
+
+def persist_kwargs(params: typing.Mapping[str, typing.Any]) -> dict[str, typing.Any]:
+    """
+    Turn `source_options`'s `--cache*` flags into `slb_glossary.query` `persist*` kwargs.
+
+    :param params: The command's parsed parameters, as attached by `source_options`.
+    :return: A kwargs dict with `persist`, `persist_batch_size`, and
+        `persist_on_error`, ready to splat into `query.search`/`query.get_terms_on`.
+    """
+    return {
+        "persist": params.get("cache_results", True),
+        "persist_batch_size": params.get("cache_batch_size") or 20,
+        "persist_on_error": params.get("cache_on_error", True),
+    }
 
 
 def database_option(func: F) -> F:
