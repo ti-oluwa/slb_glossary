@@ -13,6 +13,7 @@ from slb_glossary.cli.source_options import (
     database_option,
     get_loaded_config,
     open_configured_db,
+    persist_kwargs,
     resolve_source,
     resolve_stream,
     source_options,
@@ -124,6 +125,11 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
     local database available, cached results are used first and the live
     site is only visited if the local database has nothing for TOPIC.
 
+    With --cache (the default), live results are saved to the local
+    database as they arrive, --cache-batch-size at a time, rather than all
+    at once at the end - so a long-running fetch that gets interrupted
+    still keeps whatever it already fetched (see --cache-on-error).
+
     \b
     Examples:
       slb-glossary terms Geophysics
@@ -132,6 +138,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
       slb-glossary terms Drilling --save drilling_terms.json
       slb-glossary terms Drilling --local --fuzzy
       slb-glossary terms Drilling --config ~/my-config.toml
+      slb-glossary terms Drilling --limit 0 --cache-batch-size 10
     """
     if use_tui:
         launch_tui(ctx, command_path=("terms",))
@@ -170,7 +177,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
                     start_letter=start_letter,
                     limit=limit,
                     concurrency=concurrency,
-                    persist=params["cache_results"],
+                    **persist_kwargs(params),
                 ),
             )
             return await output_results(
