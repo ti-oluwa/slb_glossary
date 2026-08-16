@@ -1,0 +1,695 @@
+From 057b8026f51d5b2e6676d2f030f67fe81cee8717 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 16 Aug 2026 14:37:52 +0000
+Subject: [PATCH 1/2] mcp/cli: support serving a prebuilt app, ASCII-art
+ banner, streaming docs
+
+- mcp/loader.py (new): load_app(dotted_path), a uvicorn-style
+  "module:attr" loader for an already-built MCPApp, a raw
+  fastmcp.FastMCP, or a zero-argument factory returning either.
+  Verified against all three shapes plus an end-to-end tool call
+  through a loaded raw FastMCP instance.
+- cli/commands/mcp.py: `slb mcp serve` now takes an optional APP_PATH
+  positional argument. When given, it's loaded via load_app() and
+  served directly, bypassing the flag-built MCPConfig entirely; every
+  MCPConfig-building flag (--config/--tools/--source/--no-local/
+  --no-live/--allow-write/--timeout/--auth-token/--auth-backend/
+  --rate-limit) is rejected with a UsageError if passed explicitly
+  alongside APP_PATH (checked via click's parameter-source
+  introspection, not default-value comparison, so an explicit flag
+  that happens to match the default is still caught).
+  --transport/--host/--port/--log-level still apply either way.
+- mcp/tools.py: expanded ProgressReporter's docstring to explain, with
+  a pointer to fastmcp's own source
+  (FunctionTool._materialize_generator), why true partial/incremental
+  tool *results* aren't possible over MCP - tools/call always delivers
+  one CallToolResult at the end, and FastMCP itself collects an async
+  generator into a list before returning it. ctx.report_progress
+  (already wired up as `stream=True` on glossary_search/
+  glossary_get_terms_on) is the closest available thing: interim
+  notifications/progress messages while the call is in flight, not a
+  change in the final payload.
+- cli/banner.py (new): a small verified ASCII-art "SLB glossary"
+  banner (plain ASCII, no box-drawing/unicode).
+- cli/main.py: BannerGroup (a click.Group subclass) prints the banner
+  above `--help`; a custom --version callback prints it above the
+  version string, replacing the old click.version_option. Also fixed
+  a leftover "MCPApp's" typo in --log-level's help text.
+
+Verified against a real fastmcp 3.4.7 install: load_app() resolves an
+MCPApp instance, a factory function, and a raw FastMCP, and the raw
+FastMCP case round-trips a real tool call through an in-memory Client.
+`slb mcp serve app.main:app --allow-write` correctly rejects with a
+UsageError. `--help`/`--version` render the banner correctly.
+---
+ slb_glossary/cli/banner.py       | 16 ++++++
+ slb_glossary/cli/commands/mcp.py | 92 ++++++++++++++++++++++++++------
+ slb_glossary/cli/main.py         | 33 ++++++++++--
+ slb_glossary/mcp/__init__.py     |  2 +
+ slb_glossary/mcp/loader.py       | 83 ++++++++++++++++++++++++++++
+ slb_glossary/mcp/tools.py        | 15 +++++-
+ 6 files changed, 221 insertions(+), 20 deletions(-)
+ create mode 100644 slb_glossary/cli/banner.py
+ create mode 100644 slb_glossary/mcp/loader.py
+
+diff --git a/slb_glossary/cli/banner.py b/slb_glossary/cli/banner.py
+new file mode 100644
+index 0000000..8b0c013
+--- /dev/null
++++ b/slb_glossary/cli/banner.py
+@@ -0,0 +1,16 @@
++"""A small ASCII-art banner for the `slb-glossary` CLI's `--help`/`--version` output."""
++
++__all__ = ["BANNER"]
++
++BANNER = r"""
++ ____  _     ____
++/ ___|| |   | __ )
++\___ \| |   |  _ \
++ ___) | |___| |_) |
++|____/|_____|____/    glossary
++""".strip("\n")
++"""
++Rendered once at the top of `slb-glossary --help`/`--version`, via
++`slb_glossary.cli.main.BannerGroup`/`slb_glossary.cli.main._version_option`.
++Plain ASCII (no box-drawing/unicode) so it renders identically in any terminal.
++"""
+diff --git a/slb_glossary/cli/commands/mcp.py b/slb_glossary/cli/commands/mcp.py
+index 5122a90..6a6fa29 100644
+--- a/slb_glossary/cli/commands/mcp.py
++++ b/slb_glossary/cli/commands/mcp.py
+@@ -13,6 +13,42 @@ from slb_glossary.query import Source
+ 
+ __all__ = ["mcp"]
+ 
++_APP_PATH_IGNORED_OPTIONS = (
++    "config_path",
++    "tools",
++    "source",
++    "no_local",
++    "no_live",
++    "allow_write",
++    "timeout",
++    "auth_tokens",
++    "auth_backend_path",
++    "limit",
++)
++"""Option names that only make sense when *building* an `MCPConfig` from
++flags - meaningless (and silently ignored, if we let them through) once
++APP_PATH hands over an already-built app. Kept as a tuple of parameter
++names, checked against `click.Context.get_parameter_source` in
++`_reject_flags_with_app_path`, rather than compared against each
++option's default value, so an explicit `--timeout 60` (which happens to
++equal the default) is still caught as "the user asked for this"."""
++
++
++def _reject_flags_with_app_path(ctx: click.Context) -> None:
++    """Raise a `click.UsageError` if APP_PATH and any config-building flag were both given."""
++    explicit = [
++        name
++        for name in _APP_PATH_IGNORED_OPTIONS
++        if ctx.get_parameter_source(name) is click.core.ParameterSource.COMMANDLINE
++    ]
++    if explicit:
++        flags = ", ".join(f"--{name.replace('_', '-')}" for name in explicit)
++        raise click.UsageError(
++            f"APP_PATH loads an already-built app, so {flags} would be ignored. Configure "
++            f"that app in Python instead, or drop APP_PATH and let this command build the "
++            f"MCPConfig from flags."
++        )
++
+ 
+ @click.group("mcp")
+ def mcp() -> None:
+@@ -20,6 +56,7 @@ def mcp() -> None:
+ 
+ 
+ @mcp.command("serve")
++@click.argument("app_path", required=False, metavar="[APP_PATH]")
+ @click.option(
+     "--config",
+     "config_path",
+@@ -95,7 +132,10 @@ def mcp() -> None:
+     help="Verbosity of slb_glossary's own logging output.",
+ )
+ @cli_command
++@click.pass_context
+ def serve(
++    ctx: click.Context,
++    app_path: str | None,
+     config_path: pathlib.Path | None,
+     transport: str,
+     host: str,
+@@ -111,25 +151,50 @@ def serve(
+     limit: int | None,
+     log_level: str | None,
+ ) -> None:
+-    """Build an `MCPConfig` from flags and serve it."""
++    """
++    Serve an MCP server, either built from the flags below or loaded from APP_PATH.
++
++    \b
++    APP_PATH, if given, is a "module:attr" import path (uvicorn-style) to an
++    already-built `MCPApp` or `fastmcp.FastMCP` - e.g. `app.main:app` for
++    `app/main.py` containing a module-level `app = MCPApp(...)`. `attr` may
++    also be a zero-argument factory function returning either. When
++    APP_PATH is given, every flag below except --transport/--host/--port/
++    --log-level is ignored (the app is already fully configured); passing
++    one of the ignored flags explicitly alongside APP_PATH is an error, to
++    avoid silently doing something other than what was asked.
++    """
+     try:
+         from slb_glossary.mcp.api import MCPApp
+-        from slb_glossary.mcp.auth import StaticTokenAuth, import_backend
+-        from slb_glossary.mcp.config import (
+-            AuthConfig,
+-            LocalAccessConfig,
+-            MCPConfig,
+-            RateLimitConfig,
+-            SessionAccessConfig,
+-            SourcePolicyConfig,
+-            TimeoutConfig,
+-            resolve_tools,
+-        )
+     except ImportError as exc:
+         raise click.ClickException(
+             "The MCP server needs the 'mcp' extra: `pip install slb-glossary[mcp]`."
+         ) from exc
+ 
++    transport_kwargs: dict[str, typing.Any] = {"transport": transport}
++    if transport != "stdio":
++        transport_kwargs.update(host=host, port=port)
++
++    if app_path is not None:
++        _reject_flags_with_app_path(ctx)
++        from slb_glossary.mcp.loader import load_app
++
++        app = load_app(app_path)
++        run_async(app.run_async(**transport_kwargs))
++        return
++
++    from slb_glossary.mcp.auth import StaticTokenAuth, import_backend
++    from slb_glossary.mcp.config import (
++        AuthConfig,
++        LocalAccessConfig,
++        MCPConfig,
++        RateLimitConfig,
++        SessionAccessConfig,
++        SourcePolicyConfig,
++        TimeoutConfig,
++        resolve_tools,
++    )
++
+     if auth_tokens and auth_backend_path:
+         raise click.UsageError("--auth-token and --auth-backend are mutually exclusive.")
+ 
+@@ -168,7 +233,4 @@ def serve(
+     )
+ 
+     app = MCPApp(config)
+-    transport_kwargs: dict[str, typing.Any] = {"transport": transport}
+-    if transport != "stdio":
+-        transport_kwargs.update(host=host, port=port)
+     run_async(app.run_async(**transport_kwargs))
+diff --git a/slb_glossary/cli/main.py b/slb_glossary/cli/main.py
+index 91350ce..4a8b97c 100644
+--- a/slb_glossary/cli/main.py
++++ b/slb_glossary/cli/main.py
+@@ -5,6 +5,8 @@ import typing
+ 
+ import click
+ 
++from slb_glossary import __version__
++from slb_glossary.cli.banner import BANNER
+ from slb_glossary.cli.commands import (
+     compare,
+     config,
+@@ -31,13 +33,31 @@ def _configure_logging(level_name: str) -> None:
+     logging.getLogger("slb_glossary").setLevel(getattr(logging, level_name.upper()))
+ 
+ 
+-@click.group("slb-glossary", invoke_without_command=True, no_args_is_help=True)
++class BannerGroup(click.Group):
++    """A `click.Group` that prints `slb_glossary.cli.banner.BANNER` above the usual `--help` text."""
++
++    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
++        formatter.write(BANNER + "\n\n")
++        super().format_help(ctx, formatter)
++
++
++def _print_version(ctx: click.Context, param: click.Parameter, value: bool) -> None:
++    """Eager `--version` callback: print `BANNER` plus the package version, then exit."""
++    if not value or ctx.resilient_parsing:
++        return
++    click.echo(BANNER)
++    click.echo()
++    click.echo(f"slb-glossary, version {__version__}")
++    ctx.exit()
++
++
++@click.group("slb-glossary", cls=BannerGroup, invoke_without_command=True, no_args_is_help=True)
+ @click.option(
+     "--log-level",
+     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
+     default="WARNING",
+     show_default=True,
+-    help="Verbosity of the MCPApps's own logging output.",
++    help="Verbosity of the package's own logging output.",
+ )
+ @click.option(
+     "--tui",
+@@ -45,7 +65,14 @@ def _configure_logging(level_name: str) -> None:
+     is_flag=True,
+     help="Open the interactive TUI to browse and run any command.",
+ )
+-@click.version_option(package_name="slb-glossary", prog_name="slb-glossary")
++@click.option(
++    "--version",
++    is_flag=True,
++    expose_value=False,
++    is_eager=True,
++    callback=_print_version,
++    help="Show the version and exit.",
++)
+ @click.pass_context
+ def cli(ctx: click.Context, log_level: str, use_tui: bool) -> None:
+     """
+diff --git a/slb_glossary/mcp/__init__.py b/slb_glossary/mcp/__init__.py
+index 6da2d65..b5e6a7f 100644
+--- a/slb_glossary/mcp/__init__.py
++++ b/slb_glossary/mcp/__init__.py
+@@ -56,6 +56,7 @@ from slb_glossary.mcp.errors import (
+     MCPError,
+     RateLimitExceededError,
+ )
++from slb_glossary.mcp.loader import load_app
+ from slb_glossary.mcp.ratelimit import RateLimiter, SlidingWindowRateLimiter
+ from slb_glossary.mcp.runtime import Runtime
+ from slb_glossary.mcp.types import (
+@@ -104,4 +105,5 @@ __all__ = [
+     "MCPConfigError",
+     "AuthenticationError",
+     "RateLimitExceededError",
++    "load_app",
+ ]
+diff --git a/slb_glossary/mcp/loader.py b/slb_glossary/mcp/loader.py
+new file mode 100644
+index 0000000..1cb49e3
+--- /dev/null
++++ b/slb_glossary/mcp/loader.py
+@@ -0,0 +1,83 @@
++"""
++Load a pre-built MCP server from a dotted import path, uvicorn-style.
++
++Lets `slb mcp serve` run an app a user assembled themselves in Python -
++with custom hooks, a hand-built `AuthBackend`, extra tools bolted on, or a
++plain `fastmcp.FastMCP` with its own middleware - instead of one this CLI
++builds from flags:
++
++```
++slb mcp serve app.main:app
++```
++
++where `app/main.py` has something like:
++
++```python
++from slb_glossary.mcp import MCPApp, MCPConfig, LocalAccessConfig
++
++app = MCPApp(MCPConfig(local=LocalAccessConfig(allow_write=True)))
++```
++
++`app` there can be an `MCPApp`, a raw `fastmcp.FastMCP` (e.g. for a server
++that doesn't use `slb_glossary.mcp.tools` at all), or a zero-argument
++callable/factory returning either - resolved the same way uvicorn's
++`--factory` targets are, but without needing a separate flag: this module
++just calls whatever it finds if it's callable and not already a server instance.
++"""
++
++import importlib
++import inspect
++
++from fastmcp import FastMCP
++
++from slb_glossary.mcp.api import MCPApp
++
++__all__ = ["load_app"]
++
++
++def load_app(dotted_path: str) -> MCPApp | FastMCP:
++    """
++    Import `dotted_path` and return the `MCPApp`/`FastMCP` instance it points to.
++
++    :param dotted_path: `"module:attr"` or `"package.module:attr"` - the
++        part after `:` is looked up with `getattr` on the imported module.
++        If that attribute is callable and not already an `MCPApp`/`FastMCP`,
++        it's called with no arguments and its return value is used instead
++        (a factory function, e.g. `def create_app() -> MCPApp: ...`).
++    :return: The resolved `MCPApp` or `FastMCP` instance.
++    :raises ValueError: If `dotted_path` doesn't contain a `:` separator.
++    :raises ImportError: If the module can't be imported, or has no such attribute.
++    :raises TypeError: If, after resolving/calling it, the result still
++        isn't an `MCPApp` or `FastMCP`.
++    """
++    module_path, sep, attr = dotted_path.partition(":")
++    if not sep or not module_path or not attr:
++        raise ValueError(
++            f"{dotted_path!r} is not a valid app import path. Use "
++            f"'module:attr' or 'package.module:attr', e.g. 'app.main:app'."
++        )
++
++    module = importlib.import_module(module_path)
++    try:
++        target = getattr(module, attr)
++    except AttributeError as exc:
++        raise ImportError(f"Module {module_path!r} has no attribute {attr!r}") from exc
++
++    app = target
++    if callable(app) and not isinstance(app, (MCPApp, FastMCP)):
++        app = app()
++        if inspect.isawaitable(app):
++            raise TypeError(
++                f"{dotted_path!r} resolved to an async factory ({target!r}); "
++                f"only synchronous zero-argument factories are supported. Build the "
++                f"MCPApp/FastMCP instance at import time instead (e.g. module-level "
++                f"`app = MCPApp(...)`), or call your async setup yourself and expose "
++                f"the already-built instance as the target attribute."
++            )
++
++    if not isinstance(app, (MCPApp, FastMCP)):
++        raise TypeError(
++            f"{dotted_path!r} resolved to {app!r}, which is neither an MCPApp, a "
++            f"FastMCP, nor a zero-argument factory returning one."
++        )
++    return app
+diff --git a/slb_glossary/mcp/tools.py b/slb_glossary/mcp/tools.py
+index 9b48686..55a2099 100644
+--- a/slb_glossary/mcp/tools.py
++++ b/slb_glossary/mcp/tools.py
+@@ -30,12 +30,23 @@ __all__ = [
+ ]
+ 
+ ProgressReporter = Callable[[int, int | None], Awaitable[None]]
+-"""`
+-async def report(count: int, total: int | None) -> None`. 
++"""`async def report(count: int, total: int | None) -> None`.
+ 
+ A thin callback tools use to report incremental progress, so this module doesn't
+ need to import FastMCP's `Context` to stream. `slb_glossary.mcp.api` adapts
+ a real `Context.report_progress` into this shape when wiring tools up.
++
++This is progress *notification*, not partial result streaming: MCP's
++`tools/call` still delivers one `CallToolResult` at the end, and FastMCP
++itself materializes a tool that returns/yields an async generator into a
++plain list before sending it (see `fastmcp.tools.function_tool.FunctionTool
++._materialize_generator`) - so there's no way for a tool to hand the
++client individual results as they're found. `ctx.report_progress` (what
++this callback wraps) is the closest available thing: it sends interim
++`notifications/progress` messages with a running count/total while the
++call is still in flight, which is enough for a client to show "3 of 10
++found..." live, even though the actual result payload only shows up once,
++complete, at the end.
+ """
+ 
+ 
+-- 
+2.43.0
+
+
+From 5bb6077c816b9a2c88baf7a17ae9c598f0001446 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 16 Aug 2026 19:44:06 +0000
+Subject: [PATCH 2/2] docs: add MCP server section to README; new flipping-book
+ CLI banner
+
+- README.md: new "MCP server: slb_glossary.mcp" section covering
+  MCPApp/MCPConfig quick start, the full config-section table
+  (server/session/local/source_policy/tools/timeouts/auth/rate_limit/
+  hooks/logging/streaming), the tool table (all 9 glossary_* tools,
+  with the Tool flag each maps to), the two auth layers
+  (auth.provider vs auth.backend) and rate limiting/hooks, the
+  `slb mcp serve` CLI (including --auth-token/--auth-backend/
+  --rate-limit examples), and serving a prebuilt app via
+  `slb mcp serve app.main:app`. Added the `mcp` extra to the
+  installation table, `mcp serve` to the command reference table, and
+  MCPError/MCPConfigError/AuthenticationError/RateLimitExceededError
+  to Exceptions. Every code sample in the new section was executed
+  verbatim against the installed package (not just written from
+  memory) to confirm it's accurate against the current API
+  (Tool/MCPApp/ServerInfo naming, RateLimitConfig's limit/window
+  field names, etc.).
+- cli/banner.py: replaced the old block-letter "SLB" wordmark with a
+  book-and-flipping-pages pictogram - a solid cover page reading "SLB"
+  with three lighter, progressively offset pages fanning out behind
+  it, plus a "GLOSSARY" wordmark and tagline underneath. Built with a
+  small generator script (not hand-typed row by row) so the alignment
+  is guaranteed correct, then frozen into the module as a literal
+  string. Uses the box-drawing Unicode block (solid lines for the
+  cover, dashed/light lines for the flipping pages) - every character
+  is single-column-width in essentially any monospace terminal font.
+  Verified rendering under --help and --version.
+---
+ README.md                  | 149 +++++++++++++++++++++++++++++++++++++
+ slb_glossary/cli/banner.py |  32 +++++---
+ 2 files changed, 172 insertions(+), 9 deletions(-)
+
+diff --git a/README.md b/README.md
+index da20e05..2877956 100644
+--- a/README.md
++++ b/README.md
+@@ -30,6 +30,12 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
+   - [Source-aware queries: `slb_glossary.query`](#source-aware-queries-slb_glossaryquery)
+   - [Configuration: `slb_glossary.config`](#configuration-slb_glossaryconfig)
+   - [Saving results to a file: `slb_glossary.store`](#saving-results-to-a-file-slb_glossarystore)
++  - [MCP server: `slb_glossary.mcp`](#mcp-server-slb_glossarymcp)
++    - [Configuring the server](#configuring-the-server)
++    - [The tools it exposes](#the-tools-it-exposes)
++    - [Auth, rate limiting, and hooks](#auth-rate-limiting-and-hooks)
++    - [From the command line](#from-the-command-line)
++    - [Serving a prebuilt app](#serving-a-prebuilt-app)
+   - [Command-line interface](#command-line-interface)
+     - [Command reference](#command-reference)
+     - [Choosing a source: `--local` / `--live` / `--auto`](#choosing-a-source---local----live----auto)
+@@ -53,6 +59,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
+ - **File-based configuration.** Browser-session, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
+ - **Mostly a functional API.** There's no `Glossary` object to construct, subclass, or configure. Open a session, get back a plain `BrowserSession` value, and pass it to whichever function you need - most of what you'll call is a free function, not a method on some stateful object.
+ - **A full-featured CLI.** Every capability above - search, local caching, config, sync - is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
++- **An MCP server for LLM agents.** `slb_glossary.mcp` exposes the same search/lookup functions as MCP tools, via `slb mcp serve` or `slb_glossary.mcp.MCPApp` - with granular config for sources, local write access, auth, rate limiting, timeouts, and hooks. See [MCP server](#mcp-server-slb_glossarymcp).
+ - **A `store` package that stands on its own.** Saving results to CSV/JSON/TXT/XLSX lives in a separate package that only cares about ["things shaped like" a `SearchResult`](#saving-results-to-a-file-slb_glossarystore) - it has no idea the glossary or a browser even exists, so you can reuse it to save any of your own record types too.
+ - **Configurable retries.** Flaky page loads are retried with a pluggable backoff policy - constant, linear, exponential or logarithmic.
+ - **Reasonably complete on the API front.** Nearly everything the CLI can do, the library can do too - search, caching, config, sync, saving to a file - so you're not stuck shelling out just to get at a feature.
+@@ -86,6 +93,7 @@ Optional extras, installed as needed:
+ | `xlsx`  | Saving results as `.xlsx`, and importing `.xlsx`/`.xlsm` into the local database. | `uv add "slb-glossary[xlsx]"`      |
+ | `config`| TOML/YAML config files (`config.toml`/`.yaml`). JSON always works with no extra. | `uv add "slb-glossary[config]"`    |
+ | `tui`   | The interactive `--tui` mode for every CLI command.                   | `uv add "slb-glossary[tui]"`       |
++| `mcp`   | The MCP server (`slb mcp serve`, `slb_glossary.mcp`). See [MCP server](#mcp-server-slb_glossarymcp). | `uv add "slb-glossary[mcp]"`       |
+ | `all`   | Every extra above.                                                     | `uv add "slb-glossary[all]"`       |
+ 
+ ### As a CLI tool
+@@ -477,6 +485,142 @@ async def write_yaml(records: list[RecordLike], destination: pathlib.Path) -> No
+ await slb.store.save(results_list, "results.yaml")
+ ```
+ 
++## MCP server: `slb_glossary.mcp`
++
++`slb_glossary.mcp` exposes the same search/lookup functions as [MCP](https://modelcontextprotocol.io) tools, so an LLM agent (Claude, or anything else that speaks MCP) can search the glossary directly, backed by [FastMCP](https://gofastmcp.com). It's an optional extra - see [Installation](#installation) - since it pulls in FastMCP as a dependency.
++
++```python
++import asyncio
++from slb_glossary.mcp import MCPApp, MCPConfig
++
++app = MCPApp(MCPConfig.default())
++asyncio.run(app.run_async())  # stdio, read-only, local-and-live, unauthenticated
++```
++
++Or from the command line:
++
++```bash
++slb mcp serve
++```
++
++Both do the same thing: build an MCP server from an `MCPConfig` and serve it. `MCPConfig()` alone (or `slb mcp serve` with no flags) is already a valid server - read-only, local database and live site both reachable, no auth, no rate limiting.
++
++### Configuring the server
++
++`MCPConfig` is a frozen dataclass tree; every section is independent, so you only set what you need to change. Build one with keyword arguments, or start from `MCPConfig.default()` and override a few fields with `dataclasses.replace`:
++
++```python
++import dataclasses
++from slb_glossary.mcp import MCPConfig, LocalAccessConfig, Tool
++
++config = dataclasses.replace(
++    MCPConfig.default(),
++    local=LocalAccessConfig(allow_write=True),
++    tools=Tool.ALL,
++)
++```
++
++| Section         | Covers                                                                                      |
++| ---------------- | ------------------------------------------------------------------------------------------------ |
++| `server`          | Name/version/instructions advertised to MCP clients.                                          |
++| `session`          | Whether/how the live `BrowserSession` is used - `SessionMode.EAGER`/`LAZY`/`PER_CALL`, idle timeout, concurrency, and every `open_session` option (via `browser`). |
++| `local`            | Whether the local database is reachable, and whether **writes** are allowed (`allow_write`, off by default). |
++| `source_policy`    | Which `Source` values (`LOCAL`/`LIVE`/`AUTO`) a tool call may resolve to, and the default when a caller doesn't specify one. |
++| `tools`            | Which tools to build - a `Tool` flag combination, e.g. `Tool.SEARCH \| Tool.GET_TERM`, or `Tool.READ_ONLY`/`Tool.ALL`. |
++| `timeouts`         | A global per-call timeout, plus per-tool overrides.                                            |
++| `auth`             | An `AuthBackend` for per-call caller identity, and/or a FastMCP `AuthProvider` for transport-level auth. See [Auth, rate limiting, and hooks](#auth-rate-limiting-and-hooks). |
++| `rate_limit`       | Per-client/per-tool request-rate limiting.                                                     |
++| `hooks`            | Callables run before/after each tool call, on error, and on startup/shutdown.                  |
++| `logging`          | Where/how `slb_glossary`'s own logging is routed for the server process.                       |
++| `streaming`        | Whether tools that support it report progress notifications as they work.                      |
++
++Local writes are **off by default**: with `local.allow_write=False`, every read tool's `persist` argument is silently ignored, and the write-capable `glossary_sync` tool is never registered even if it's in `tools` - see `MCPConfig.resolved_tools`. Turning it on is a deliberate, single flag:
++
++```python
++config = MCPConfig(local=LocalAccessConfig(allow_write=True), tools=Tool.ALL)
++```
++
++### The tools it exposes
++
++| Tool                     | `Tool` flag       | What it does                                                              |
++| -------------------------- | ------------------- | -------------------------------------------------------------------------- |
++| `glossary_search`          | `SEARCH`             | Free-text search - the default choice when a term name isn't known exactly. |
++| `glossary_get_term`        | `GET_TERM`           | Exact-name or URL single-term lookup - cheaper than search when you already know the name. |
++| `glossary_get_terms_on`    | `GET_TERMS_ON`       | Every term filed under one or more topics.                               |
++| `glossary_get_terms_urls`  | `GET_TERMS_URLS`     | URL-only listing, no full definitions.                                   |
++| `glossary_get_topics`      | `GET_TOPICS`         | Topic name to term-count mapping.                                        |
++| `glossary_related_terms`   | `RELATED_TERMS`      | A term's "related terms" links.                                          |
++| `glossary_random_term`     | `RANDOM_TERM`        | One randomly chosen term, optionally within a topic.                     |
++| `glossary_compare`         | `COMPARE`            | Several specific terms looked up side by side.                           |
++| `glossary_sync`            | `SYNC`               | Fetches from the live site and writes into the local database. The only tool that writes anything - gated behind `local.allow_write=True`. |
++
++Every tool's arguments are a frozen dataclass, mirrored straight into its MCP JSON schema, and every result is built from `SearchResult`/`RelatedTerm`'s own `asdict()` - the same shapes used everywhere else in this package. Tool descriptions are written to make the right choice as unambiguous as possible for an LLM (`glossary_get_term` for a known name, `glossary_search` otherwise, and so on) - see `slb_glossary.mcp.tools.DEFAULT_INSTRUCTIONS` for the full server-level guidance shown to a connecting client.
++
++`glossary_search` and `glossary_get_terms_on` accept a `stream=True` argument that reports live MCP progress notifications (`Context.report_progress`) as results are found. This is progress reporting, not partial results: MCP's `tools/call` always delivers one complete result at the end regardless, so `stream` only affects what a client can show *while the call is still running*, not the final payload's shape.
++
++### Auth, rate limiting, and hooks
++
++Two independent auth layers, doing different jobs:
++
++- **`auth.provider`** - a FastMCP `AuthProvider`/`TokenVerifier`, forwarded to `fastmcp.FastMCP(auth=...)`. Protects the transport itself; a request that fails this check never reaches a tool call.
++- **`auth.backend`** - an `AuthBackend` you implement (one `async def authenticate(self, request: AuthRequest) -> Principal | None` method), resolving each call into a `Principal` this server's own middleware uses for rate-limit keys, hooks, and call logging. `AuthRequest` carries the parsed bearer token, every request header, and the tool name/arguments, so a backend can key off more than a bare token if it needs to.
++
++```python
++from slb_glossary.mcp import AuthConfig, StaticTokenAuth, Principal
++
++auth = StaticTokenAuth({"sk-alice-...": Principal(id="alice", scopes=frozenset({"write"}))})
++config = MCPConfig(auth=AuthConfig(backend=auth, required=True))
++```
++
++Rate limiting is a `RateLimiter` protocol (one `async def hit(self, key: str) -> float` method, returning milliseconds to wait, `0` if allowed) - `SlidingWindowRateLimiter` is the built-in, in-memory, single-process implementation; swap in your own for anything distributed:
++
++```python
++from slb_glossary.mcp import RateLimitConfig
++
++config = MCPConfig(rate_limit=RateLimitConfig(enabled=True, limit=60, window=60.0))
++```
++
++Hooks run around every call and around server startup/shutdown, given a `ToolRunContext` (tool name, resolved `Principal`, arguments, resolved `Source`):
++
++```python
++from slb_glossary.mcp import HooksConfig, ToolRunContext
++
++async def audit(run: ToolRunContext) -> None:
++    print(f"{run.principal.id} called {run.tool_name}")
++
++config = MCPConfig(hooks=HooksConfig(before_tool=(audit,)))
++```
++
++### From the command line
++
++```bash
++slb mcp serve                                   # stdio, read-only, local+live
++slb mcp serve --transport http --port 8000
++slb mcp serve --allow-write --tools all          # enable glossary_sync too
++slb mcp serve --auth-token sk-alice-...:alice    # StaticTokenAuth, one or more --auth-token
++slb mcp serve --rate-limit 60                    # 60 requests/client/tool/minute
++slb mcp serve --config glossary.toml             # reuse an slb_glossary Config file's session/local settings
++```
++
++Run `slb mcp serve --help` for the full set of flags, including `--source`/`--no-local`/`--no-live` (narrow which `Source`s are reachable), `--timeout` (global per-call cap), and `--auth-backend module:ClassName` (a custom, no-argument-constructor `AuthBackend`, for anything beyond static tokens).
++
++### Serving a prebuilt app
++
++For anything `slb mcp serve`'s flags don't cover - custom hooks, a hand-built `AuthBackend` with its own constructor arguments, extra tools bolted onto a plain `fastmcp.FastMCP` - build the app yourself in Python and point the CLI at it, uvicorn-style:
++
++```python
++# app/main.py
++from slb_glossary.mcp import MCPApp, MCPConfig, LocalAccessConfig
++
++app = MCPApp(MCPConfig(local=LocalAccessConfig(allow_write=True)))
++```
++
++```bash
++slb mcp serve app.main:app
++```
++
++`app.main:app` can be an `MCPApp`, a raw `fastmcp.FastMCP`, or a zero-argument factory function returning either. `--transport`/`--host`/`--port`/`--log-level` still apply; every other flag is rejected if passed alongside a prebuilt app, since it would otherwise be silently ignored.
++
+ ## Command-line interface
+ 
+ Installing `slb-glossary` (see [As a CLI tool](#as-a-cli-tool) above) gets you the `slb-glossary` command, and the shorter `slb` alias for it:
+@@ -514,6 +658,7 @@ Run `slb --help`, or `--help` after any subcommand, for the full set of options
+ | `local reset`        | Local only                          | Flush the database and forget its sync history too.                                              |
+ | `config`             | -                                  | Interactive wizard for the config file (see [Configuration](#configuration-slb_glossaryconfig)). |
+ | `install`            | -                                  | Install/list/remove/update the browser engines patchright launches.                              |
++| `mcp serve`          | -                                  | Run an MCP server for LLM agents (see [MCP server](#mcp-server-slb_glossarymcp)). Requires the `mcp` extra. |
+ 
+ Every command in the "Local, live, or auto" rows is built on `slb_glossary.query`, so they all take the same `--local`/`--live`/`--auto` trio described below. `topics refresh` and `urls fetch` are the two holdouts that stay live-only by design: a "refresh" is explicitly asking for a fresh copy from the site, and fetching one specific URL doesn't have a meaningful local equivalent. `local search`/`local get` read the cached copy exclusively, with no live fallback at all - reach for those when you want a hard guarantee that nothing will touch the network.
+ 
+@@ -585,6 +730,10 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
+ - `slb_glossary.LoggingError` - a custom `log_sink` (see [Logging](#logging)) couldn't be set up.
+ - `slb_glossary.store.UnsupportedFormatError` - `save` was asked for a format with no registered writer.
+ - `slb_glossary.store.WriterError` - the registered writer raised while writing, e.g. a permissions error or a full disk. The original exception is chained as `__cause__`.
++- `slb_glossary.mcp.MCPError` - base for every `slb_glossary.mcp`-specific error (requires the `mcp` extra):
++  - `MCPConfigError` - an `MCPConfig` (or a nested config within it) was invalid.
++  - `AuthenticationError` - a tool call couldn't be authenticated and `auth.required` is `True`.
++  - `RateLimitExceededError` - a caller exhausted their rate-limit quota; carries `.wait_ms`.
+ 
+ ## Development
+ 
+diff --git a/slb_glossary/cli/banner.py b/slb_glossary/cli/banner.py
+index 8b0c013..fbeaaab 100644
+--- a/slb_glossary/cli/banner.py
++++ b/slb_glossary/cli/banner.py
+@@ -2,15 +2,29 @@
+ 
+ __all__ = ["BANNER"]
+ 
+-BANNER = r"""
+- ____  _     ____
+-/ ___|| |   | __ )
+-\___ \| |   |  _ \
+- ___) | |___| |_) |
+-|____/|_____|____/    glossary
+-""".strip("\n")
++BANNER = (
++    "                       ╭╌╌╌╌╌╌╌╌╌╌╌╌╌╮\n"
++    "┌─────────────┐     ╭╌╌╎╌╌╌╌╌╌╌╌╌╌╮  ╎\n"
++    "│             │  ╭╌╌╎╌╌╎╌╌╌╌╌╌╌╮  ╎  ╎\n"
++    "│     SLB     │  ╎  ╎  ╎       ╎  ╎  ╎\n"
++    "│             │  ╎  ╎  ╎       ╎  ╎  ╎\n"
++    "│             │  ╎  ╎  ╰╌╌╌╌╌╌╌╌╌╌╌╌╌╯\n"
++    "└─────────────┘  ╎  ╰╌╌╌╌╌╌╌╌╌╌╌╌╌╯\n"
++    "                 ╰╌╌╌╌╌╌╌╌╌╌╌╌╌╯\n"
++    "\n"
++    "  G L O S S A R Y\n"
++    "  Search energy terms, right from your terminal."
++)
+ """
+ Rendered once at the top of `slb-glossary --help`/`--version`, via
+-`slb_glossary.cli.main.BannerGroup`/`slb_glossary.cli.main._version_option`.
+-Plain ASCII (no box-drawing/unicode) so it renders identically in any terminal.
++`slb_glossary.cli.main.BannerGroup`/`slb_glossary.cli.main._print_version`.
++
++A single cover page ("SLB") with three lighter, progressively offset pages
++fanning out behind it - a book caught mid-flip - built and its alignment
++verified programmatically (a small generator script, not hand-typed row by
++row) before being frozen into this literal string. Uses the box-drawing
++Unicode block (`─│┌┐└┘` for the solid cover, `╌╎╭╮╰╯` for the lighter
++flipping pages) rather than plain ASCII: every character in it is
++single-column-width in essentially any monospace terminal font, so it's a
++safe choice without needing a plain-ASCII fallback.
+ """
+-- 
+2.43.0
+

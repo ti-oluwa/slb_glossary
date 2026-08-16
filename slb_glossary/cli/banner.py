@@ -3,14 +3,13 @@
 __all__ = ["BANNER"]
 
 BANNER = r"""
- ____  _     ____
-/ ___|| |   | __ )
-\___ \| |   |  _ \
- ___) | |___| |_) |
-|____/|_____|____/    glossary
+   ███████╗██╗     ██████╗
+  ██╔════╝██║     ██╔══██╗
+  ███████╗██║     ██████╔╝
+  ╚════██║██║     ██╔══██╗
+  ███████║███████╗██████╔╝
+  ╚══════╝╚══════╝╚═════╝
+
+       S L B   G L O S S A R Y
 """.strip("\n")
-"""
-Rendered once at the top of `slb-glossary --help`/`--version`, via
-`slb_glossary.cli.main.BannerGroup`/`slb_glossary.cli.main._version_option`.
-Plain ASCII (no box-drawing/unicode) so it renders identically in any terminal.
-"""
+
