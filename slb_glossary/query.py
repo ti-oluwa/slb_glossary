@@ -32,10 +32,11 @@ in what order) is controlled by `source`:
 When only one of `db`/`session` is given, `Source.AUTO` simply
 behaves like whichever of `Source.LOCAL`/`Source.LIVE` that one supports.
 
-`search`/`get_terms_on` write live results to `db` incrementally rather
-than buffering the whole stream and writing it in one shot at the end:
-see `_persist_incrementally`'s docstring for why, and `persist_batch_size`/
-`persist_on_error` for how to tune it.
+`search`/`get_terms_on` write live results to `db` incrementally, in
+batches, rather than buffering the whole stream and writing it in one shot
+at the end - see `slb_glossary.local.upsert_results_incrementally`'s
+docstring for why, and `persist_batch_size`/`persist_on_error` for how to
+tune it.
 """
 
 import dataclasses
@@ -68,7 +69,7 @@ __all__ = [
     "compare",
 ]
 
-DEFAULT_PERSIST_BATCH_SIZE = 20
+DEFAULT_PERSIST_BATCH_SIZE = local_api.DEFAULT_UPSERT_BATCH_SIZE
 """Default `persist_batch_size` for `search`/`get_terms_on`: how many
 live results to buffer before writing an incremental upsert batch."""
 
@@ -149,7 +150,7 @@ async def _maybe_persist(
     return written > 0
 
 
-async def _persist_incrementally(
+def _persist_incrementally(
     db: Database | None,
     results: typing.AsyncIterator[SearchResult],
     *,
@@ -161,15 +162,11 @@ async def _persist_incrementally(
     """
     Wrap a live result stream, upserting into `db` in batches as results arrive.
 
-    Buffering the *entire* stream and writing one big upsert only once
-    it's exhausted (the old behavior) means every result sits in memory
-    for the whole fetch, and a fetch that dies partway through (a browser
-    crash, a network blip, the process getting killed) loses everything
-    already fetched, since nothing was ever written. This writes to `db`
-    every `batch_size` results instead - and again with whatever's left
-    over once the stream ends, including when it ends via an exception,
-    if `persist_on_error` is `True` - so progress is saved as it happens
-    rather than all at once at the very end.
+    A thin `search`/`get_terms_on`-facing wrapper around
+    `slb_glossary.local.upsert_results_incrementally`, which does the
+    actual batching/flush-on-error work (and is also what
+    `slb_glossary.local.sync`'s `sync_*` functions use, so both
+    live-persisting code paths share one implementation).
 
     :param db: The local database to write to. `results` is passed through
         unchanged (no persistence attempted) if this is `None`.
@@ -178,7 +175,7 @@ async def _persist_incrementally(
         passes through unchanged. Checked once up front so this is a cheap
         no-op wrapper when persistence wasn't requested.
     :param language: Glossary language edition these results were fetched
-        in. Passed straight through to `local_api.upsert_results`.
+        in. Passed straight through to `local_api.upsert_results_incrementally`.
     :param batch_size: Number of results to buffer before writing an
         incremental batch. Smaller values save progress more often at the
         cost of more (smaller) database writes; larger values write less
@@ -194,62 +191,15 @@ async def _persist_incrementally(
     :raises ValueError: If `batch_size` is less than 1.
     """
     if not persist or db is None:
-        async for result in results:
-            yield result
-        return
+        return results
 
-    if batch_size < 1:
-        raise ValueError("persist_batch_size must be at least 1")
-
-    buffer: list[SearchResult] = []
-    total_written = 0
-    batches_written = 0
-    error: BaseException | None = None
-
-    async def _flush() -> None:
-        nonlocal buffer, total_written, batches_written
-        if not buffer:
-            return
-        pending, buffer = buffer, []
-        written = await local_api.upsert_results(db, pending, language=language)
-        total_written += written
-        batches_written += 1
-        logger.debug(
-            "Persisted batch #%d: %d result(s) (%d total so far)",
-            batches_written,
-            written,
-            total_written,
-        )
-
-    try:
-        async for result in results:
-            buffer.append(result)
-            yield result
-            if len(buffer) >= batch_size:
-                await _flush()
-    except BaseException as exc:
-        error = exc
-        raise
-    finally:
-        if buffer and (error is None or persist_on_error):
-            try:
-                await _flush()
-            except Exception:
-                logger.warning("Failed to persist the final batch of results", exc_info=True)
-        elif buffer:
-            logger.debug(
-                "Discarding %d unpersisted result(s) after an error (persist_on_error=False)",
-                len(buffer),
-            )
-        if total_written:
-            level = logging.WARNING if error is not None else logging.INFO
-            logger.log(
-                level,
-                "Cached %d result(s) fetched live into the local database across %d batch(es)%s",
-                total_written,
-                batches_written,
-                " (fetch was interrupted)" if error is not None else "",
-            )
+    return local_api.upsert_results_incrementally(
+        db,
+        results,
+        language=language,
+        batch_size=batch_size,
+        persist_on_error=persist_on_error,
+    )
 
 
 async def search(
@@ -291,13 +241,14 @@ async def search(
     :param persist: If `True`, and a live fetch happens, write its results
         into `db` (if given) so the next matching call can be served
         locally. Written incrementally as results arrive - see
-        `_persist_incrementally` - not all at once at the end.
+        `slb_glossary.local.upsert_results_incrementally` - not all at
+        once at the end.
     :param persist_batch_size: Number of live results to buffer before each
         incremental write to `db`. Only relevant when `persist=True` and a
-        live fetch actually happens. See `_persist_incrementally`.
+        live fetch actually happens.
     :param persist_on_error: If `True` (the default), and `persist=True`,
         save whatever's buffered so far if the live fetch raises partway
-        through, instead of losing it. See `_persist_incrementally`.
+        through, instead of losing it.
     :param fuzzy: If `True`, any local-database read (a `Source.LOCAL` read,
         or `Source.AUTO`'s local-first attempt) tolerates minor
         misspellings/partial names in `topic` - see
@@ -438,13 +389,14 @@ async def get_terms_on(
     :param concurrency: Concurrent term-page fetches, only relevant when a
         live fetch happens.
     :param persist: If `True`, and a live fetch happens, cache its results
-        into `db`, incrementally as they arrive - see `_persist_incrementally`.
+        into `db`, incrementally as they arrive - see
+        `slb_glossary.local.upsert_results_incrementally`.
     :param persist_batch_size: Number of live results to buffer before each
         incremental write to `db`. Only relevant when `persist=True` and a
-        live fetch actually happens. See `_persist_incrementally`.
+        live fetch actually happens.
     :param persist_on_error: If `True` (the default), and `persist=True`,
         save whatever's buffered so far if the live fetch raises partway
-        through, instead of losing it. See `_persist_incrementally`.
+        through, instead of losing it.
     :param fuzzy: If `True`, any local-database read tolerates minor
         misspellings/partial names in `topic` - see
         `slb_glossary.local.fuzzy_match_topics`. Live reads already
