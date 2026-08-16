@@ -5,12 +5,15 @@ import typing
 
 import click
 
+from slb_glossary import __version__
+from slb_glossary.cli.banner import BANNER
 from slb_glossary.cli.commands import (
     compare,
     config,
     define,
     install,
     local,
+    mcp,
     random_term,
     related,
     search,
@@ -30,13 +33,31 @@ def _configure_logging(level_name: str) -> None:
     logging.getLogger("slb_glossary").setLevel(getattr(logging, level_name.upper()))
 
 
-@click.group("slb-glossary", invoke_without_command=True, no_args_is_help=True)
+class BannerGroup(click.Group):
+    """A `click.Group` that prints `slb_glossary.cli.banner.BANNER` above the usual `--help` text."""
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        formatter.write(BANNER + "\n\n")
+        super().format_help(ctx, formatter)
+
+
+def _print_version(ctx: click.Context, param: click.Parameter, value: bool) -> None:
+    """Eager `--version` callback: print `BANNER` plus the package version, then exit."""
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(BANNER)
+    click.echo()
+    click.echo(f"slb-glossary, version {__version__}")
+    ctx.exit()
+
+
+@click.group("slb-glossary", cls=BannerGroup, invoke_without_command=True, no_args_is_help=True)
 @click.option(
     "--log-level",
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
     default="WARNING",
     show_default=True,
-    help="Verbosity of the applications's own logging output.",
+    help="Verbosity of the package's own logging output.",
 )
 @click.option(
     "--tui",
@@ -44,7 +65,14 @@ def _configure_logging(level_name: str) -> None:
     is_flag=True,
     help="Open the interactive TUI to browse and run any command.",
 )
-@click.version_option(package_name="slb-glossary", prog_name="slb-glossary")
+@click.option(
+    "--version",
+    is_flag=True,
+    expose_value=False,
+    is_eager=True,
+    callback=_print_version,
+    help="Show the version and exit.",
+)
 @click.pass_context
 def cli(ctx: click.Context, log_level: str, use_tui: bool) -> None:
     """
@@ -77,6 +105,7 @@ COMMANDS = {
     "update": update,
     "local": local,
     "config": config,
+    "mcp": mcp,
 }
 
 for name, command in COMMANDS.items():

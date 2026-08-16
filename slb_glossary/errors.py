@@ -3,43 +3,43 @@
 import pathlib
 
 
-class GlossaryError(Exception):
-    """Base exception for all errors in the glossary"""
+class SLBGlossaryError(Exception):
+    """Base exception for all errors in `slb-glossary`"""
 
 
-class NetworkError(ConnectionError, GlossaryError):
+class NetworkError(ConnectionError, SLBGlossaryError):
     """Raised when a page or resource could not be reached over the network."""
 
 
-class BrowserError(GlossaryError):
+class BrowserError(SLBGlossaryError):
     """Raised when the browser automation layer fails outside of a network issue."""
 
 
-class ParsingError(GlossaryError):
+class ParsingError(SLBGlossaryError):
     """Raised when a glossary page did not contain the markup a parser expected."""
 
 
-class ConfigError(GlossaryError):
+class ConfigError(SLBGlossaryError):
     """Raised when a `slb_glossary.config.Config` file or key is invalid."""
 
 
-class DatabaseError(GlossaryError):
+class DatabaseError(SLBGlossaryError):
     """Raised when `slb_glossary.local` fails to open, query, or write the local database."""
 
 
-class QueryError(GlossaryError):
+class QueryError(SLBGlossaryError):
     """Raised when `slb_glossary.query` can't satisfy a lookup with the source(s) it was given."""
 
 
-class LoggingError(GlossaryError):
+class LoggingError(SLBGlossaryError):
     """Raised when a `slb_glossary.logging` sink (e.g. `--log-to`/`--log-sink`) could not be set up."""
 
 
-class UnsupportedFormatError(ValueError, GlossaryError):
+class UnsupportedFormatError(ValueError, SLBGlossaryError):
     """Raised when `save` is asked to write a format with no registered writer."""
 
 
-class WriterError(OSError, GlossaryError):
+class WriterError(OSError, SLBGlossaryError):
     """
     Raised when a registered writer fails while writing `records`.
 

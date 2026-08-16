@@ -33,7 +33,8 @@ dependencies = [
 xlsx = ["openpyxl>=3.1"]
 tui = ["trogon>=0.6.0", "textual>=0.58"]
 config = ["tomlkit>=0.12", "pyyaml>=6.0"]
-all = ["slb-glossary[xlsx,tui,config]"]
+mcp = ["fastmcp>=2.9,<4", "typing-extensions>=4.6; python_version < '3.11'"]
+all = ["slb-glossary[xlsx,tui,config,mcp]"]
 
 [project.scripts]
 slb-glossary = "slb_glossary.cli.main:main"

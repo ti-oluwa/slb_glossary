@@ -30,6 +30,12 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
   - [Source-aware queries: `slb_glossary.query`](#source-aware-queries-slb_glossaryquery)
   - [Configuration: `slb_glossary.config`](#configuration-slb_glossaryconfig)
   - [Saving results to a file: `slb_glossary.store`](#saving-results-to-a-file-slb_glossarystore)
+  - [MCP server: `slb_glossary.mcp`](#mcp-server-slb_glossarymcp)
+    - [Configuring the server](#configuring-the-server)
+    - [The tools it exposes](#the-tools-it-exposes)
+    - [Auth, rate limiting, and hooks](#auth-rate-limiting-and-hooks)
+    - [From the command line](#from-the-command-line)
+    - [Serving a prebuilt app](#serving-a-prebuilt-app)
   - [Command-line interface](#command-line-interface)
     - [Command reference](#command-reference)
     - [Choosing a source: `--local` / `--live` / `--auto`](#choosing-a-source---local----live----auto)
@@ -53,6 +59,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
 - **File-based configuration.** Browser-session, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
 - **Mostly a functional API.** There's no `Glossary` object to construct, subclass, or configure. Open a session, get back a plain `BrowserSession` value, and pass it to whichever function you need - most of what you'll call is a free function, not a method on some stateful object.
 - **A full-featured CLI.** Every capability above - search, local caching, config, sync - is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
+- **An MCP server for LLM agents.** `slb_glossary.mcp` exposes the same search/lookup functions as MCP tools, via `slb mcp serve` or `slb_glossary.mcp.MCPApp` - with granular config for sources, local write access, auth, rate limiting, timeouts, and hooks. See [MCP server](#mcp-server-slb_glossarymcp).
 - **A `store` package that stands on its own.** Saving results to CSV/JSON/TXT/XLSX lives in a separate package that only cares about ["things shaped like" a `SearchResult`](#saving-results-to-a-file-slb_glossarystore) - it has no idea the glossary or a browser even exists, so you can reuse it to save any of your own record types too.
 - **Configurable retries.** Flaky page loads are retried with a pluggable backoff policy - constant, linear, exponential or logarithmic.
 - **Reasonably complete on the API front.** Nearly everything the CLI can do, the library can do too - search, caching, config, sync, saving to a file - so you're not stuck shelling out just to get at a feature.
@@ -86,6 +93,7 @@ Optional extras, installed as needed:
 | `xlsx`  | Saving results as `.xlsx`, and importing `.xlsx`/`.xlsm` into the local database. | `uv add "slb-glossary[xlsx]"`      |
 | `config`| TOML/YAML config files (`config.toml`/`.yaml`). JSON always works with no extra. | `uv add "slb-glossary[config]"`    |
 | `tui`   | The interactive `--tui` mode for every CLI command.                   | `uv add "slb-glossary[tui]"`       |
+| `mcp`   | The MCP server (`slb mcp serve`, `slb_glossary.mcp`). See [MCP server](#mcp-server-slb_glossarymcp). | `uv add "slb-glossary[mcp]"`       |
 | `all`   | Every extra above.                                                     | `uv add "slb-glossary[all]"`       |
 
 ### As a CLI tool
@@ -477,6 +485,142 @@ async def write_yaml(records: list[RecordLike], destination: pathlib.Path) -> No
 await slb.store.save(results_list, "results.yaml")
 ```
 
+## MCP server: `slb_glossary.mcp`
+
+`slb_glossary.mcp` exposes the same search/lookup functions as [MCP](https://modelcontextprotocol.io) tools, so an LLM agent (Claude, or anything else that speaks MCP) can search the glossary directly, backed by [FastMCP](https://gofastmcp.com). It's an optional extra - see [Installation](#installation) - since it pulls in FastMCP as a dependency.
+
+```python
+import asyncio
+from slb_glossary.mcp import MCPApp, MCPConfig
+
+app = MCPApp(MCPConfig.default())
+asyncio.run(app.run_async())  # stdio, read-only, local-and-live, unauthenticated
+```
+
+Or from the command line:
+
+```bash
+slb mcp serve
+```
+
+Both do the same thing: build an MCP server from an `MCPConfig` and serve it. `MCPConfig()` alone (or `slb mcp serve` with no flags) is already a valid server - read-only, local database and live site both reachable, no auth, no rate limiting.
+
+### Configuring the server
+
+`MCPConfig` is a frozen dataclass tree; every section is independent, so you only set what you need to change. Build one with keyword arguments, or start from `MCPConfig.default()` and override a few fields with `dataclasses.replace`:
+
+```python
+import dataclasses
+from slb_glossary.mcp import MCPConfig, LocalAccessConfig, Tool
+
+config = dataclasses.replace(
+    MCPConfig.default(),
+    local=LocalAccessConfig(allow_write=True),
+    tools=Tool.ALL,
+)
+```
+
+| Section         | Covers                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `server`          | Name/version/instructions advertised to MCP clients.                                          |
+| `session`          | Whether/how the live `BrowserSession` is used - `SessionMode.EAGER`/`LAZY`/`PER_CALL`, idle timeout, concurrency, and every `open_session` option (via `browser`). |
+| `local`            | Whether the local database is reachable, and whether **writes** are allowed (`allow_write`, off by default). |
+| `source_policy`    | Which `Source` values (`LOCAL`/`LIVE`/`AUTO`) a tool call may resolve to, and the default when a caller doesn't specify one. |
+| `tools`            | Which tools to build - a `Tool` flag combination, e.g. `Tool.SEARCH \| Tool.GET_TERM`, or `Tool.READ_ONLY`/`Tool.ALL`. |
+| `timeouts`         | A global per-call timeout, plus per-tool overrides.                                            |
+| `auth`             | An `AuthBackend` for per-call caller identity, and/or a FastMCP `AuthProvider` for transport-level auth. See [Auth, rate limiting, and hooks](#auth-rate-limiting-and-hooks). |
+| `rate_limit`       | Per-client/per-tool request-rate limiting.                                                     |
+| `hooks`            | Callables run before/after each tool call, on error, and on startup/shutdown.                  |
+| `logging`          | Where/how `slb_glossary`'s own logging is routed for the server process.                       |
+| `streaming`        | Whether tools that support it report progress notifications as they work.                      |
+
+Local writes are **off by default**: with `local.allow_write=False`, every read tool's `persist` argument is silently ignored, and the write-capable `glossary_sync` tool is never registered even if it's in `tools` - see `MCPConfig.resolved_tools`. Turning it on is a deliberate, single flag:
+
+```python
+config = MCPConfig(local=LocalAccessConfig(allow_write=True), tools=Tool.ALL)
+```
+
+### The tools it exposes
+
+| Tool                     | `Tool` flag       | What it does                                                              |
+| -------------------------- | ------------------- | -------------------------------------------------------------------------- |
+| `glossary_search`          | `SEARCH`             | Free-text search - the default choice when a term name isn't known exactly. |
+| `glossary_get_term`        | `GET_TERM`           | Exact-name or URL single-term lookup - cheaper than search when you already know the name. |
+| `glossary_get_terms_on`    | `GET_TERMS_ON`       | Every term filed under one or more topics.                               |
+| `glossary_get_terms_urls`  | `GET_TERMS_URLS`     | URL-only listing, no full definitions.                                   |
+| `glossary_get_topics`      | `GET_TOPICS`         | Topic name to term-count mapping.                                        |
+| `glossary_related_terms`   | `RELATED_TERMS`      | A term's "related terms" links.                                          |
+| `glossary_random_term`     | `RANDOM_TERM`        | One randomly chosen term, optionally within a topic.                     |
+| `glossary_compare`         | `COMPARE`            | Several specific terms looked up side by side.                           |
+| `glossary_sync`            | `SYNC`               | Fetches from the live site and writes into the local database. The only tool that writes anything - gated behind `local.allow_write=True`. |
+
+Every tool's arguments are a frozen dataclass, mirrored straight into its MCP JSON schema, and every result is built from `SearchResult`/`RelatedTerm`'s own `asdict()` - the same shapes used everywhere else in this package. Tool descriptions are written to make the right choice as unambiguous as possible for an LLM (`glossary_get_term` for a known name, `glossary_search` otherwise, and so on) - see `slb_glossary.mcp.tools.DEFAULT_INSTRUCTIONS` for the full server-level guidance shown to a connecting client.
+
+`glossary_search` and `glossary_get_terms_on` accept a `stream=True` argument that reports live MCP progress notifications (`Context.report_progress`) as results are found. This is progress reporting, not partial results: MCP's `tools/call` always delivers one complete result at the end regardless, so `stream` only affects what a client can show *while the call is still running*, not the final payload's shape.
+
+### Auth, rate limiting, and hooks
+
+Two independent auth layers, doing different jobs:
+
+- **`auth.provider`** - a FastMCP `AuthProvider`/`TokenVerifier`, forwarded to `fastmcp.FastMCP(auth=...)`. Protects the transport itself; a request that fails this check never reaches a tool call.
+- **`auth.backend`** - an `AuthBackend` you implement (one `async def authenticate(self, request: AuthRequest) -> Principal | None` method), resolving each call into a `Principal` this server's own middleware uses for rate-limit keys, hooks, and call logging. `AuthRequest` carries the parsed bearer token, every request header, and the tool name/arguments, so a backend can key off more than a bare token if it needs to.
+
+```python
+from slb_glossary.mcp import AuthConfig, StaticTokenAuth, Principal
+
+auth = StaticTokenAuth({"sk-alice-...": Principal(id="alice", scopes=frozenset({"write"}))})
+config = MCPConfig(auth=AuthConfig(backend=auth, required=True))
+```
+
+Rate limiting is a `RateLimiter` protocol (one `async def hit(self, key: str) -> float` method, returning milliseconds to wait, `0` if allowed) - `SlidingWindowRateLimiter` is the built-in, in-memory, single-process implementation; swap in your own for anything distributed:
+
+```python
+from slb_glossary.mcp import RateLimitConfig
+
+config = MCPConfig(rate_limit=RateLimitConfig(enabled=True, limit=60, window=60.0))
+```
+
+Hooks run around every call and around server startup/shutdown, given a `ToolRunContext` (tool name, resolved `Principal`, arguments, resolved `Source`):
+
+```python
+from slb_glossary.mcp import HooksConfig, ToolRunContext
+
+async def audit(run: ToolRunContext) -> None:
+    print(f"{run.principal.id} called {run.tool_name}")
+
+config = MCPConfig(hooks=HooksConfig(before_tool=(audit,)))
+```
+
+### From the command line
+
+```bash
+slb mcp serve                                   # stdio, read-only, local+live
+slb mcp serve --transport http --port 8000
+slb mcp serve --allow-write --tools all          # enable glossary_sync too
+slb mcp serve --auth-token sk-alice-...:alice    # StaticTokenAuth, one or more --auth-token
+slb mcp serve --rate-limit 60                    # 60 requests/client/tool/minute
+slb mcp serve --config glossary.toml             # reuse an slb_glossary Config file's session/local settings
+```
+
+Run `slb mcp serve --help` for the full set of flags, including `--source`/`--no-local`/`--no-live` (narrow which `Source`s are reachable), `--timeout` (global per-call cap), and `--auth-backend module:ClassName` (a custom, no-argument-constructor `AuthBackend`, for anything beyond static tokens).
+
+### Serving a prebuilt app
+
+For anything `slb mcp serve`'s flags don't cover - custom hooks, a hand-built `AuthBackend` with its own constructor arguments, extra tools bolted onto a plain `fastmcp.FastMCP` - build the app yourself in Python and point the CLI at it, uvicorn-style:
+
+```python
+# app/main.py
+from slb_glossary.mcp import MCPApp, MCPConfig, LocalAccessConfig
+
+app = MCPApp(MCPConfig(local=LocalAccessConfig(allow_write=True)))
+```
+
+```bash
+slb mcp serve app.main:app
+```
+
+`app.main:app` can be an `MCPApp`, a raw `fastmcp.FastMCP`, or a zero-argument factory function returning either. `--transport`/`--host`/`--port`/`--log-level` still apply; every other flag is rejected if passed alongside a prebuilt app, since it would otherwise be silently ignored.
+
 ## Command-line interface
 
 Installing `slb-glossary` (see [As a CLI tool](#as-a-cli-tool) above) gets you the `slb-glossary` command, and the shorter `slb` alias for it:
@@ -514,6 +658,7 @@ Run `slb --help`, or `--help` after any subcommand, for the full set of options 
 | `local reset`        | Local only                          | Flush the database and forget its sync history too.                                              |
 | `config`             | -                                  | Interactive wizard for the config file (see [Configuration](#configuration-slb_glossaryconfig)). |
 | `install`            | -                                  | Install/list/remove/update the browser engines patchright launches.                              |
+| `mcp serve`          | -                                  | Run an MCP server for LLM agents (see [MCP server](#mcp-server-slb_glossarymcp)). Requires the `mcp` extra. |
 
 Every command in the "Local, live, or auto" rows is built on `slb_glossary.query`, so they all take the same `--local`/`--live`/`--auto` trio described below. `topics refresh` and `urls fetch` are the two holdouts that stay live-only by design: a "refresh" is explicitly asking for a fresh copy from the site, and fetching one specific URL doesn't have a meaningful local equivalent. `local search`/`local get` read the cached copy exclusively, with no live fallback at all - reach for those when you want a hard guarantee that nothing will touch the network.
 
@@ -585,6 +730,10 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
 - `slb_glossary.LoggingError` - a custom `log_sink` (see [Logging](#logging)) couldn't be set up.
 - `slb_glossary.store.UnsupportedFormatError` - `save` was asked for a format with no registered writer.
 - `slb_glossary.store.WriterError` - the registered writer raised while writing, e.g. a permissions error or a full disk. The original exception is chained as `__cause__`.
+- `slb_glossary.mcp.MCPError` - base for every `slb_glossary.mcp`-specific error (requires the `mcp` extra):
+  - `MCPConfigError` - an `MCPConfig` (or a nested config within it) was invalid.
+  - `AuthenticationError` - a tool call couldn't be authenticated and `auth.required` is `True`.
+  - `RateLimitExceededError` - a caller exhausted their rate-limit quota; carries `.wait_ms`.
 
 ## Development
 

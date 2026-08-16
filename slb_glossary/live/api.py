@@ -72,7 +72,7 @@ async def _wait_for_settle(
     """
     Load `url` and wait until the results panel differs from the given baseline.
 
-    The glossary is a single-page application: navigating between search
+    The glossary is a single-page MCPApp: navigating between search
     filters changes only the URL fragment, so a fresh `page.goto` can
     resolve before the site's JavaScript has actually re-rendered the
     results panel. This polls the rendered result links and results header
@@ -544,7 +544,9 @@ async def get_terms_on(
     urls = get_terms_urls(session, topic=topic, start_letter=start_letter, limit=limit)
     count = 0
     async for result in log_timed_yields(
-        get_results_from_urls(session, urls, topic=topic, concurrency=concurrency, first_only=True),
+        get_results_from_urls(
+            session, urls, topic=topic, concurrency=concurrency, first_only=True
+        ),
         logger=logger,
         label=f"get_terms_on({topic!r})",
     ):

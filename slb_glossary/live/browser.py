@@ -400,7 +400,7 @@ async def open_session(
     :param block: Which request resource types to drop for speed. `True`
         (the default) blocks `DEFAULT_BLOCKED_RESOURCE_TYPES` (images, media,
         fonts). `False` blocks nothing. Or pass a `ResourceType` to block. The
-        glossary is a JavaScript application so scripts are always loaded
+        glossary is a JavaScript MCPApp so scripts are always loaded
         regardless of this setting.
     :param timeout: Milliseconds to wait for page loads and element lookups
         before raising a timeout error.

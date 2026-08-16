@@ -87,12 +87,12 @@ async def log_timed_yields(
 
     Every item logs one `level` line with the time since the previous
     yield (or since iteration started, for the first item), the running
-    average time per yield so far, and the total elapsed time so far -
+    average time per yield so far, and the total elapsed time so far,
     e.g. for spotting a slow tail end of an otherwise-fast fetch. Nothing
     is logged if the wrapped iterator never yields anything.
 
     This only instruments timing; it doesn't buffer or otherwise change
-    what's yielded - `async for item in log_timed_yields(inner, ...)` is
+    what's yielded. `async for item in log_timed_yields(inner, ...)` is
     equivalent to `async for item in inner` except for the added logging.
 
     :param iterable: The async iterator to wrap.

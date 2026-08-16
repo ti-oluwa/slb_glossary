@@ -69,9 +69,7 @@ async def fetch_topics(
             await expand_button.scroll_into_view_if_needed(timeout=5_000)
             await expand_button.click(timeout=5_000)
             await asyncio.sleep(settle_delay)
-            logger.debug(
-                "Expanded full topic list in %.3fs", time.monotonic() - expand_started_at
-            )
+            logger.debug("Expanded full topic list in %.3fs", time.monotonic() - expand_started_at)
         except Exception:
             logger.debug("Could not expand the full topic list", exc_info=True)
 
