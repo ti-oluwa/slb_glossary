@@ -1,6 +1,6 @@
 """Exceptions raised by `slb_glossary.mcp`."""
 
-from slb_glossary.errors import GlossaryError
+from slb_glossary.errors import SLBGlossaryError
 
 __all__ = [
     "MCPError",
@@ -10,7 +10,7 @@ __all__ = [
 ]
 
 
-class MCPError(GlossaryError):
+class MCPError(SLBGlossaryError):
     """Base exception for every error `slb_glossary.mcp` raises."""
 
 

@@ -56,7 +56,6 @@ from slb_glossary.mcp.errors import (
     MCPError,
     RateLimitExceededError,
 )
-from slb_glossary.mcp.loader import load_app
 from slb_glossary.mcp.ratelimit import RateLimiter, SlidingWindowRateLimiter
 from slb_glossary.mcp.runtime import Runtime
 from slb_glossary.mcp.types import (
@@ -105,5 +104,4 @@ __all__ = [
     "MCPConfigError",
     "AuthenticationError",
     "RateLimitExceededError",
-    "load_app",
 ]

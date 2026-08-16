@@ -25,17 +25,15 @@ _APP_PATH_IGNORED_OPTIONS = (
     "auth_backend_path",
     "limit",
 )
-"""Option names that only make sense when *building* an `MCPConfig` from
-flags - meaningless (and silently ignored, if we let them through) once
-APP_PATH hands over an already-built app. Kept as a tuple of parameter
-names, checked against `click.Context.get_parameter_source` in
-`_reject_flags_with_app_path`, rather than compared against each
-option's default value, so an explicit `--timeout 60` (which happens to
-equal the default) is still caught as "the user asked for this"."""
+"""
+Option names that only make sense when *building* an `MCPConfig` from
+flags. Thos options are meaningless (and silently ignored, if we let them through) once
+`APP_PATH` hands over an already-built app.
+"""
 
 
 def _reject_flags_with_app_path(ctx: click.Context) -> None:
-    """Raise a `click.UsageError` if APP_PATH and any config-building flag were both given."""
+    """Raise a `click.UsageError` if `APP_PATH` and any config-building flag were both given."""
     explicit = [
         name
         for name in _APP_PATH_IGNORED_OPTIONS
@@ -44,15 +42,15 @@ def _reject_flags_with_app_path(ctx: click.Context) -> None:
     if explicit:
         flags = ", ".join(f"--{name.replace('_', '-')}" for name in explicit)
         raise click.UsageError(
-            f"APP_PATH loads an already-built app, so {flags} would be ignored. Configure "
-            f"that app in Python instead, or drop APP_PATH and let this command build the "
-            f"MCPConfig from flags."
+            f"`APP_PATH` loads an already-built app, so {flags} would be ignored. Configure "
+            f"that app in Python instead, or drop `APP_PATH` and let this command build the "
+            f"`MCPConfig` from flags."
         )
 
 
 @click.group("mcp")
 def mcp() -> None:
-    """Run the SLB Energy Glossary as an MCP server for LLM agents."""
+    """Run the SLB Energy Glossary API as an MCP server for LLM agents."""
 
 
 @mcp.command("serve")
@@ -155,17 +153,18 @@ def serve(
     Serve an MCP server, either built from the flags below or loaded from APP_PATH.
 
     \b
-    APP_PATH, if given, is a "module:attr" import path (uvicorn-style) to an
-    already-built `MCPApp` or `fastmcp.FastMCP` - e.g. `app.main:app` for
+    `APP_PATH`, if given, is a "module:attr" import path (uvicorn-style) to an
+    already-built `MCPApp` or `fastmcp.FastMCP`, e.g. `app.main:app` for
     `app/main.py` containing a module-level `app = MCPApp(...)`. `attr` may
-    also be a zero-argument factory function returning either. When
-    APP_PATH is given, every flag below except --transport/--host/--port/
+    also be a zero-argument factory function returning either.
+
+    When `APP_PATH` is given, every flag below except --transport/--host/--port/
     --log-level is ignored (the app is already fully configured); passing
-    one of the ignored flags explicitly alongside APP_PATH is an error, to
+    one of the ignored flags explicitly alongside `APP_PATH` is an error, to
     avoid silently doing something other than what was asked.
     """
     try:
-        from slb_glossary.mcp.api import MCPApp
+        from slb_glossary.mcp.api import MCPApp, load_app
     except ImportError as exc:
         raise click.ClickException(
             "The MCP server needs the 'mcp' extra: `pip install slb-glossary[mcp]`."
@@ -177,8 +176,6 @@ def serve(
 
     if app_path is not None:
         _reject_flags_with_app_path(ctx)
-        from slb_glossary.mcp.loader import load_app
-
         app = load_app(app_path)
         run_async(app.run_async(**transport_kwargs))
         return
@@ -231,6 +228,5 @@ def serve(
         rate_limit=rate_limit,
         logging=dataclasses.replace(MCPConfig.default().logging, level=log_level),
     )
-
     app = MCPApp(config)
     run_async(app.run_async(**transport_kwargs))
