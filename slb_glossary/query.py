@@ -31,6 +31,11 @@ in what order) is controlled by `source`:
 
 When only one of `db`/`session` is given, `Source.AUTO` simply
 behaves like whichever of `Source.LOCAL`/`Source.LIVE` that one supports.
+
+`search`/`get_terms_on` write live results to `db` incrementally rather
+than buffering the whole stream and writing it in one shot at the end:
+see `_persist_incrementally`'s docstring for why, and `persist_batch_size`/
+`persist_on_error` for how to tune it.
 """
 
 import dataclasses
@@ -62,6 +67,10 @@ __all__ = [
     "get_random_term",
     "compare",
 ]
+
+DEFAULT_PERSIST_BATCH_SIZE = 20
+"""Default `persist_batch_size` for `search`/`get_terms_on`: how many
+live results to buffer before writing an incremental upsert batch."""
 
 
 class Source(enum.Enum):
@@ -121,7 +130,12 @@ def _resolve_source(db: Database | None, session: BrowserSession | None, source:
 async def _maybe_persist(
     db: Database | None, results: typing.Sequence[SearchResult], *, persist: bool, language: str
 ) -> bool:
-    """Upsert `results` into `db` if `persist` was requested and there's anything to write."""
+    """Upsert `results` into `db` in one shot, for single-value lookups (`get_term` et al).
+
+    `search`/`get_terms_on` use `_persist_incrementally` instead, since
+    they stream potentially many results and shouldn't hold them all in
+    memory (or lose them all on an error) before writing anything.
+    """
     if not persist or db is None or not results:
         return False
     started_at = time.monotonic()
@@ -135,6 +149,109 @@ async def _maybe_persist(
     return written > 0
 
 
+async def _persist_incrementally(
+    db: Database | None,
+    results: typing.AsyncIterator[SearchResult],
+    *,
+    persist: bool,
+    language: str,
+    batch_size: int = DEFAULT_PERSIST_BATCH_SIZE,
+    persist_on_error: bool = True,
+) -> typing.AsyncIterator[SearchResult]:
+    """
+    Wrap a live result stream, upserting into `db` in batches as results arrive.
+
+    Buffering the *entire* stream and writing one big upsert only once
+    it's exhausted (the old behavior) means every result sits in memory
+    for the whole fetch, and a fetch that dies partway through (a browser
+    crash, a network blip, the process getting killed) loses everything
+    already fetched, since nothing was ever written. This writes to `db`
+    every `batch_size` results instead - and again with whatever's left
+    over once the stream ends, including when it ends via an exception,
+    if `persist_on_error` is `True` - so progress is saved as it happens
+    rather than all at once at the very end.
+
+    :param db: The local database to write to. `results` is passed through
+        unchanged (no persistence attempted) if this is `None`.
+    :param results: The live result stream to wrap.
+    :param persist: If `False`, disables writing entirely; `results` still
+        passes through unchanged. Checked once up front so this is a cheap
+        no-op wrapper when persistence wasn't requested.
+    :param language: Glossary language edition these results were fetched
+        in. Passed straight through to `local_api.upsert_results`.
+    :param batch_size: Number of results to buffer before writing an
+        incremental batch. Smaller values save progress more often at the
+        cost of more (smaller) database writes; larger values write less
+        often but risk losing more unsaved results if something goes wrong
+        before the next flush. Defaults to `DEFAULT_PERSIST_BATCH_SIZE`.
+    :param persist_on_error: If `True` (the default), flush whatever's
+        currently buffered when `results` raises, before letting the
+        exception propagate - so an interrupted fetch still saves the
+        progress it made. If `False`, an exception discards the current,
+        not-yet-flushed buffer (results already flushed in earlier batches
+        are unaffected either way).
+    :yield: Every item from `results`, unchanged.
+    :raises ValueError: If `batch_size` is less than 1.
+    """
+    if not persist or db is None:
+        async for result in results:
+            yield result
+        return
+
+    if batch_size < 1:
+        raise ValueError("persist_batch_size must be at least 1")
+
+    buffer: list[SearchResult] = []
+    total_written = 0
+    batches_written = 0
+    error: BaseException | None = None
+
+    async def _flush() -> None:
+        nonlocal buffer, total_written, batches_written
+        if not buffer:
+            return
+        pending, buffer = buffer, []
+        written = await local_api.upsert_results(db, pending, language=language)
+        total_written += written
+        batches_written += 1
+        logger.debug(
+            "Persisted batch #%d: %d result(s) (%d total so far)",
+            batches_written,
+            written,
+            total_written,
+        )
+
+    try:
+        async for result in results:
+            buffer.append(result)
+            yield result
+            if len(buffer) >= batch_size:
+                await _flush()
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        if buffer and (error is None or persist_on_error):
+            try:
+                await _flush()
+            except Exception:
+                logger.warning("Failed to persist the final batch of results", exc_info=True)
+        elif buffer:
+            logger.debug(
+                "Discarding %d unpersisted result(s) after an error (persist_on_error=False)",
+                len(buffer),
+            )
+        if total_written:
+            level = logging.WARNING if error is not None else logging.INFO
+            logger.log(
+                level,
+                "Cached %d result(s) fetched live into the local database across %d batch(es)%s",
+                total_written,
+                batches_written,
+                " (fetch was interrupted)" if error is not None else "",
+            )
+
+
 async def search(
     query: str,
     *,
@@ -146,6 +263,8 @@ async def search(
     limit: int | None = 3,
     concurrency: int = 1,
     persist: bool = False,
+    persist_batch_size: int = DEFAULT_PERSIST_BATCH_SIZE,
+    persist_on_error: bool = True,
     fuzzy: bool = False,
 ) -> typing.AsyncIterator[SearchResult]:
     """
@@ -170,7 +289,15 @@ async def search(
     :param concurrency: Concurrent term-page fetches, only relevant when a
         live fetch happens. See `slb_glossary.live.search`.
     :param persist: If `True`, and a live fetch happens, write its results
-        into `db` (if given) so the next matching call can be served locally.
+        into `db` (if given) so the next matching call can be served
+        locally. Written incrementally as results arrive - see
+        `_persist_incrementally` - not all at once at the end.
+    :param persist_batch_size: Number of live results to buffer before each
+        incremental write to `db`. Only relevant when `persist=True` and a
+        live fetch actually happens. See `_persist_incrementally`.
+    :param persist_on_error: If `True` (the default), and `persist=True`,
+        save whatever's buffered so far if the live fetch raises partway
+        through, instead of losing it. See `_persist_incrementally`.
     :param fuzzy: If `True`, any local-database read (a `Source.LOCAL` read,
         or `Source.AUTO`'s local-first attempt) tolerates minor
         misspellings/partial names in `topic` - see
@@ -198,22 +325,28 @@ async def search(
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
-        results: list[SearchResult] = []
-        async for result in live.search(
+        live_stream = live.search(
             session,
             query,
             topic=topic,
             start_letter=start_letter,
             limit=limit,
             concurrency=concurrency,
+        )
+        async for result in _persist_incrementally(
+            db,
+            live_stream,
+            persist=persist,
+            language=session.language.value,
+            batch_size=persist_batch_size,
+            persist_on_error=persist_on_error,
         ):
-            results.append(result)
+            count += 1
             yield result
-        await _maybe_persist(db, results, persist=persist, language=session.language.value)
         logger.debug(
             "query.search(%r, source=LIVE) yielded %d result(s) in %.3fs",
             query,
-            len(results),
+            count,
             time.monotonic() - started_at,
         )
         return
@@ -250,22 +383,29 @@ async def search(
     logger.debug(
         "Local database had nothing for search(%r); falling back to the live glossary", query
     )
-    live_results: list[SearchResult] = []
-    async for result in live.search(
+    live_stream = live.search(
         session,
         query,
         topic=topic,
         start_letter=start_letter,
         limit=limit,
         concurrency=concurrency,
+    )
+    live_count = 0
+    async for result in _persist_incrementally(
+        db,
+        live_stream,
+        persist=persist,
+        language=session.language.value,
+        batch_size=persist_batch_size,
+        persist_on_error=persist_on_error,
     ):
-        live_results.append(result)
+        live_count += 1
         yield result
-    await _maybe_persist(db, live_results, persist=persist, language=session.language.value)
     logger.debug(
         "query.search(%r, source=AUTO->LIVE) yielded %d result(s) in %.3fs total",
         query,
-        len(live_results),
+        live_count,
         time.monotonic() - started_at,
     )
 
@@ -280,6 +420,8 @@ async def get_terms_on(
     limit: int | None = None,
     concurrency: int = 1,
     persist: bool = False,
+    persist_batch_size: int = DEFAULT_PERSIST_BATCH_SIZE,
+    persist_on_error: bool = True,
     fuzzy: bool = False,
 ) -> typing.AsyncIterator[SearchResult]:
     """
@@ -295,7 +437,14 @@ async def get_terms_on(
     :param limit: Maximum number of terms to yield. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches, only relevant when a
         live fetch happens.
-    :param persist: If `True`, and a live fetch happens, cache its results into `db`.
+    :param persist: If `True`, and a live fetch happens, cache its results
+        into `db`, incrementally as they arrive - see `_persist_incrementally`.
+    :param persist_batch_size: Number of live results to buffer before each
+        incremental write to `db`. Only relevant when `persist=True` and a
+        live fetch actually happens. See `_persist_incrementally`.
+    :param persist_on_error: If `True` (the default), and `persist=True`,
+        save whatever's buffered so far if the live fetch raises partway
+        through, instead of losing it. See `_persist_incrementally`.
     :param fuzzy: If `True`, any local-database read tolerates minor
         misspellings/partial names in `topic` - see
         `slb_glossary.local.fuzzy_match_topics`. Live reads already
@@ -324,17 +473,24 @@ async def get_terms_on(
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
-        results: list[SearchResult] = []
-        async for result in live.get_terms_on(
+        live_stream = live.get_terms_on(
             session, topic, start_letter=start_letter, limit=limit, concurrency=concurrency
+        )
+        count = 0
+        async for result in _persist_incrementally(
+            db,
+            live_stream,
+            persist=persist,
+            language=session.language.value,
+            batch_size=persist_batch_size,
+            persist_on_error=persist_on_error,
         ):
-            results.append(result)
+            count += 1
             yield result
-        await _maybe_persist(db, results, persist=persist, language=session.language.value)
         logger.debug(
             "query.get_terms_on(%r, source=LIVE) yielded %d result(s) in %.3fs",
             topic,
-            len(results),
+            count,
             time.monotonic() - started_at,
         )
         return
@@ -363,17 +519,24 @@ async def get_terms_on(
     logger.debug(
         "Local database had nothing for topic %r; falling back to the live glossary", topic
     )
-    live_results: list[SearchResult] = []
-    async for result in live.get_terms_on(
+    live_stream = live.get_terms_on(
         session, topic, start_letter=start_letter, limit=limit, concurrency=concurrency
+    )
+    live_count = 0
+    async for result in _persist_incrementally(
+        db,
+        live_stream,
+        persist=persist,
+        language=session.language.value,
+        batch_size=persist_batch_size,
+        persist_on_error=persist_on_error,
     ):
-        live_results.append(result)
+        live_count += 1
         yield result
-    await _maybe_persist(db, live_results, persist=persist, language=session.language.value)
     logger.debug(
         "query.get_terms_on(%r, source=AUTO->LIVE) yielded %d result(s) in %.3fs total",
         topic,
-        len(live_results),
+        live_count,
         time.monotonic() - started_at,
     )
 
@@ -394,8 +557,9 @@ async def get_terms_urls(
     `db`/`session` according to `source`.
 
     Lighter-weight than `search`/`get_terms_on`: only the URLs themselves
-    are returned, no definitions are fetched or parsed. Same local-first,
-    live-fallback behavior as `search` for `Source.AUTO`.
+    are returned, no definitions are fetched or parsed - so there's
+    nothing here to persist. Same local-first, live-fallback behavior as
+    `search` for `Source.AUTO`.
 
     :param db: An open local `Database`.
     :param session: An open live `BrowserSession`.
@@ -517,7 +681,10 @@ async def get_term(
     :param db: An open local `Database`.
     :param session: An open live `BrowserSession`.
     :param source: Which source(s) to read from. See the module docstring.
-    :param persist: If `True`, and a live fetch happens, cache its result into `db`.
+    :param persist: If `True`, and a live fetch happens, cache its result
+        into `db`. This is a single-value lookup, so there's only ever one
+        result to write - batching doesn't apply here the way it does for
+        `search`/`get_terms_on`.
     :return: A `TermLookup` wrapping the found `SearchResult` (or `None` if
         not found by the resolved source(s)), which source actually served
         it, and whether it was cached as a result of this call.
@@ -634,6 +801,7 @@ async def get_random_term(
         the local database is empty.
     :param topic: Restrict the pick to this topic, or several comma-separated topics.
     :param persist: If `True`, and a live pick happens, cache it into `db`.
+        A single-value lookup, so batching doesn't apply.
     :param fuzzy: If `True`, a local pick tolerates minor misspellings/
         partial names in `topic` - see `slb_glossary.local.fuzzy_match_topics`.
         Live picks already fuzzy-match topics unconditionally, so this has
@@ -731,7 +899,10 @@ async def compare(
     :param db: An open local `Database`.
     :param session: An open live `BrowserSession`.
     :param source: Which source(s) to read from. See the module docstring.
-    :param persist: If `True`, cache any live fetches into `db`.
+    :param persist: If `True`, cache any live fetches into `db`. Each term
+        is looked up (and, on a live fetch, persisted) individually via
+        `get_term`, so an error partway through this call still leaves
+        earlier terms' results saved.
     :return: `{term_or_url: TermLookup}`, in the order `terms` was given.
         A `TermLookup.value` of `None` means that term wasn't found by the
         resolved source(s).
