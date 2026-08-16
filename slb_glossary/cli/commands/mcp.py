@@ -1,16 +1,4 @@
-"""
-`slb-glossary-mcp` - a small CLI wrapper around `slb_glossary.mcp.Application`.
-
-```
-slb-glossary-mcp serve                          # stdio, read-only, local+live
-slb-glossary-mcp serve --transport http --port 8000
-slb-glossary-mcp serve --allow-write --tools all # enable glossary_sync too
-slb-glossary-mcp serve --config glossary.toml    # reuse an slb_glossary Config file
-```
-
-Only a thin translation layer from CLI flags to `MCPConfig` lives here;
-all the actual behavior lives in `slb_glossary.mcp`.
-"""
+"""`slb-glossary mcp` - run the SLB Energy Glossary as an MCP server for LLM agents."""
 
 import dataclasses
 import pathlib
@@ -18,30 +6,20 @@ import typing
 
 import click
 
+from slb_glossary.cli.errors import cli_command
+from slb_glossary.cli.runtime import run_async
 from slb_glossary.config import Config
-from slb_glossary.mcp.api import Application
-from slb_glossary.mcp.auth import StaticTokenAuth
-from slb_glossary.mcp.config import (
-    AuthConfig,
-    LocalAccessConfig,
-    MCPConfig,
-    RateLimitConfig,
-    SessionAccessConfig,
-    SourcePolicyConfig,
-    TimeoutConfig,
-    resolve_tools,
-)
 from slb_glossary.query import Source
 
-__all__ = ["cli", "main"]
+__all__ = ["mcp"]
 
 
-@click.group("slb-glossary-mcp")
-def cli() -> None:
-    """Run an MCP server exposing the SLB Energy Glossary to LLM agents."""
+@click.group("mcp")
+def mcp() -> None:
+    """Run the SLB Energy Glossary as an MCP server for LLM agents."""
 
 
-@cli.command("serve")
+@mcp.command("serve")
 @click.option(
     "--config",
     "config_path",
@@ -69,7 +47,7 @@ def cli() -> None:
     type=click.Choice([s.value for s in Source]),
     multiple=True,
     default=(),
-    help="Restrict which source(s) tools may use. May be given more than once. Default: all.",
+    help="Restrict which source(s) tools may use. May be given more than once. Default: all enabled.",
 )
 @click.option("--no-local", is_flag=True, help="Disable local database access entirely.")
 @click.option("--no-live", is_flag=True, help="Disable live glossary access entirely.")
@@ -89,8 +67,17 @@ def cli() -> None:
     "--auth-token",
     "auth_tokens",
     multiple=True,
-    help="A 'token' or 'token:principal_id' pair to accept as a valid caller. "
-    "May be given more than once. If any are given, auth becomes required.",
+    help="A 'token' or 'token:principal_id' pair to accept as a valid caller, backed by "
+    "StaticTokenAuth. May be given more than once. Mutually exclusive with --auth-backend.",
+)
+@click.option(
+    "--auth-backend",
+    "auth_backend_path",
+    default=None,
+    help="Dotted import path ('module:ClassName' or 'package.module.ClassName') to a custom "
+    "AuthBackend, instantiated with no constructor arguments. For a backend that needs "
+    "constructor arguments (a DB pool, API client, etc.), build the Application in Python "
+    "yourself instead of going through this flag. Mutually exclusive with --auth-token.",
 )
 @click.option(
     "--rate-limit",
@@ -105,6 +92,7 @@ def cli() -> None:
     default=None,
     help="Verbosity of slb_glossary's own logging output.",
 )
+@cli_command
 def serve(
     config_path: pathlib.Path | None,
     transport: str,
@@ -117,17 +105,39 @@ def serve(
     allow_write: bool,
     timeout: float,
     auth_tokens: tuple[str, ...],
+    auth_backend_path: str | None,
     requests_per_minute: int | None,
     log_level: str | None,
 ) -> None:
     """Build an `MCPConfig` from flags and serve it."""
+    try:
+        from slb_glossary.mcp.api import Application
+        from slb_glossary.mcp.auth import StaticTokenAuth, import_backend
+        from slb_glossary.mcp.config import (
+            AuthConfig,
+            LocalAccessConfig,
+            MCPConfig,
+            RateLimitConfig,
+            SessionAccessConfig,
+            SourcePolicyConfig,
+            TimeoutConfig,
+            resolve_tools,
+        )
+    except ImportError as exc:
+        raise click.ClickException(
+            "The MCP server needs the 'mcp' extra: `pip install slb-glossary[mcp]`."
+        ) from exc
+
+    if auth_tokens and auth_backend_path:
+        raise click.UsageError("--auth-token and --auth-backend are mutually exclusive.")
+
     glossary_config = Config.load(config_path) if config_path is not None else Config()
 
     session = SessionAccessConfig(enabled=not no_live, browser=glossary_config.session)
     local = LocalAccessConfig(
         enabled=not no_local, allow_write=allow_write, database=glossary_config.local
     )
-    allowed_sources = frozenset(Source(value) for value in source) or frozenset(Source)
+    allowed_sources = frozenset(Source(value) for value in source) or None
     source_policy = SourcePolicyConfig(allowed=allowed_sources)
 
     auth_config = AuthConfig()
@@ -137,6 +147,8 @@ def serve(
             token, _, principal_id = entry.partition(":")
             token_map[token] = principal_id or token
         auth_config = AuthConfig(backend=StaticTokenAuth(token_map), required=True)
+    elif auth_backend_path:
+        auth_config = AuthConfig(backend=import_backend(auth_backend_path), required=True)
 
     rate_limit = RateLimitConfig()
     if requests_per_minute is not None:
@@ -147,7 +159,7 @@ def serve(
         local=local,
         source_policy=source_policy,
         tools=resolve_tools(tools.split(",")),
-        timeouts=TimeoutConfig(global_seconds=timeout or None),
+        timeouts=TimeoutConfig(global_=timeout or None),
         auth=auth_config,
         rate_limit=rate_limit,
         logging=dataclasses.replace(MCPConfig.default().logging, level=log_level),
@@ -157,13 +169,4 @@ def serve(
     transport_kwargs: dict[str, typing.Any] = {"transport": transport}
     if transport != "stdio":
         transport_kwargs.update(host=host, port=port)
-    app.run(**transport_kwargs)
-
-
-def main() -> None:
-    """`slb-glossary-mcp` console-script entry point."""
-    cli()
-
-
-if __name__ == "__main__":
-    main()
+    run_async(app.run_async(**transport_kwargs))

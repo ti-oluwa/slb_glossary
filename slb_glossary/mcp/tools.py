@@ -19,10 +19,12 @@ without an MCP server running at all.
 import dataclasses
 import time
 import typing
+from collections.abc import Awaitable, Callable
 
 from slb_glossary import query as query_api
 from slb_glossary.local import sync as sync_api
-from slb_glossary.mcp.config import MCPConfig, StreamingConfig
+from slb_glossary.mcp.config import MCPConfig, StreamingConfig, Tool
+from slb_glossary.mcp.errors import MCPError
 from slb_glossary.mcp.runtime import Runtime
 from slb_glossary.models import SearchResult
 from slb_glossary.query import Source, TermLookup
@@ -43,7 +45,7 @@ __all__ = [
     "DEFAULT_INSTRUCTIONS",
 ]
 
-ProgressReporter = typing.Callable[[int, int | None], typing.Awaitable[None]]
+ProgressReporter = Callable[[int, int | None], Awaitable[None]]
 """`async def report(count: int, total: int | None) -> None` - a thin
 callback tools use to report incremental progress, so this module doesn't
 need to import FastMCP's `Context` to stream. `slb_glossary.mcp.api` adapts
@@ -98,7 +100,7 @@ class ToolSpec:
     """One MCP tool's registration metadata, ready for `slb_glossary.mcp.api` to wire up."""
 
     name: str
-    """MCP tool name, e.g. `\"glossary_search\"`."""
+    """MCP tool name, e.g. `"glossary_search"`."""
 
     description: str
     """Tool description shown to MCP clients/LLMs. Written to make the
@@ -108,7 +110,7 @@ class ToolSpec:
     """The frozen dataclass type describing this tool's arguments."""
 
     tags: frozenset[str]
-    """Categorization tags (e.g. `{\"read\", \"search\"}`) forwarded to FastMCP."""
+    """Categorization tags (e.g. `{"read", "search"}`) forwarded to FastMCP."""
 
     writes: bool
     """Whether this tool can write to the local database. Only ever `True`
@@ -121,8 +123,11 @@ class ToolSpec:
     supports_streaming: bool
     """Whether this tool accepts a `stream` argument and reports progress."""
 
-    handler: typing.Callable[..., typing.Awaitable[typing.Any]]
-    """`async def handler(args, runtime, config, *, report_progress) -> dict`."""
+    handler: Callable[..., Awaitable[typing.Any]]
+    """`async def handler(args, runtime, config, *, report_progress) -> dict`.
+    Return type is `Any` here since it's whatever JSON-serializable `dict`
+    shape that particular handler produces - there's no one shared result
+    type to name across every tool."""
 
 
 # --------------------------------------------------------------------------
@@ -135,10 +140,10 @@ class SearchArgs:
     """Arguments for `glossary_search`."""
 
     query: str
-    """Free-text search query, e.g. `\"water saturation\"`."""
+    """Free-text search query, e.g. `"water saturation"`."""
 
     source: Source = Source.AUTO
-    """Where to search: `\"auto\"` (local first, live fallback), `\"local\"`, or `\"live\"`."""
+    """Where to search: `"auto"` (local first, live fallback), `"local"`, or `"live"`."""
 
     topic: str | None = None
     """Restrict results to this topic, or several comma-separated topics."""
@@ -170,7 +175,7 @@ class GetTermArgs:
     """An exact (case-insensitive) term name, or a glossary term detail-page URL."""
 
     source: Source = Source.AUTO
-    """Where to look up the term: `\"auto\"`, `\"local\"`, or `\"live\"`."""
+    """Where to look up the term: `"auto"`, `"local"`, or `"live"`."""
 
     persist: bool = False
     """If a live fetch happens, cache its result locally. Ignored unless
@@ -186,7 +191,7 @@ class TermsOnArgs:
     `glossary_get_topics` first if you're unsure of the exact name."""
 
     source: Source = Source.AUTO
-    """Where to read from: `\"auto\"`, `\"local\"`, or `\"live\"`."""
+    """Where to read from: `"auto"`, `"local"`, or `"live"`."""
 
     start_letter: str | None = None
     """Restrict results to terms starting with this letter."""
@@ -219,7 +224,7 @@ class TermsUrlsArgs:
     """Restrict to terms starting with this letter."""
 
     source: Source = Source.AUTO
-    """Where to read from: `\"auto\"`, `\"local\"`, or `\"live\"`."""
+    """Where to read from: `"auto"`, `"local"`, or `"live"`."""
 
     limit: int | None = 50
     """Maximum number of URLs to return. `None` for unlimited (use with care)."""
@@ -233,7 +238,7 @@ class TopicsArgs:
     """Arguments for `glossary_get_topics`."""
 
     source: Source = Source.AUTO
-    """Where to read from: `\"auto\"`, `\"local\"`, or `\"live\"`."""
+    """Where to read from: `"auto"`, `"local"`, or `"live"`."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -246,7 +251,7 @@ class RandomTermArgs:
     """Arguments for `glossary_random_term`."""
 
     source: Source = Source.AUTO
-    """Where to pick from: `\"auto\"`, `\"local\"`, or `\"live\"`."""
+    """Where to pick from: `"auto"`, `"local"`, or `"live"`."""
 
     topic: str | None = None
     """Restrict the pick to this topic, or several comma-separated topics."""
@@ -267,7 +272,7 @@ class CompareArgs:
     """Term names (or detail-page URLs) to look up, side by side."""
 
     source: Source = Source.AUTO
-    """Where to look up each term: `\"auto\"`, `\"local\"`, or `\"live\"`."""
+    """Where to look up each term: `"auto"`, `"local"`, or `"live"`."""
 
     persist: bool = False
     """If a live fetch happens, cache each result locally. Ignored unless
@@ -280,19 +285,19 @@ class SyncArgs:
     Arguments for `glossary_sync` - the one tool that writes to the local database.
 
     Only ever registered when this server was explicitly configured with
-    both `ToolName.SYNC` and `LocalAccessConfig.allow_write=True`.
+    both `Tool.SYNC` and `LocalAccessConfig.allow_write=True`.
     """
 
     mode: typing.Literal["query", "topic", "letter", "all"]
-    """What to sync: a single free-text `\"query\"`, everything under one
-    `\"topic\"`, everything starting with one `\"letter\"`, or `\"all\"` (the
+    """What to sync: a single free-text `"query"`, everything under one
+    `"topic"`, everything starting with one `"letter"`, or `"all"` (the
     entire glossary - heavy, use sparingly)."""
 
     value: str | None = None
-    """The query/topic/letter to sync. Required for every `mode` except `\"all\"`."""
+    """The query/topic/letter to sync. Required for every `mode` except `"all"`."""
 
     limit: int | None = None
-    """Maximum number of terms to fetch. `None` for unlimited. Ignored for `mode=\"all\"`."""
+    """Maximum number of terms to fetch. `None` for unlimited. Ignored for `mode="all"`."""
 
     concurrency: int = 1
     """Concurrent term-page fetches while syncing."""
@@ -307,12 +312,14 @@ def _resolve_source(requested: Source, config: MCPConfig) -> Source:
     """Narrow `requested` against `config.source_policy`, raising if it's not allowed."""
     policy = config.source_policy
     source = requested if policy.expose_choice else policy.default
-    if source not in policy.allowed:
-        allowed = ", ".join(sorted(item.value for item in policy.allowed))
-        raise query_api.QueryError(
-            f"source={source.value!r} isn't permitted by this server's policy. "
-            f"Allowed: {allowed}."
-        )
+    allowed = policy.allowed
+    assert allowed is not None, (
+        "MCPConfig.source_policy.allowed should always be resolved to a concrete frozenset "
+        "by MCPConfig.__post_init__ before a tool call can reach this point."
+    )
+    if source not in allowed:
+        choices = ", ".join(sorted(item.value for item in allowed))
+        raise MCPError(f"source={source.value!r} isn't permitted by this server's policy. Allowed: {choices}.")
     return source
 
 
@@ -518,7 +525,7 @@ async def _handle_sync(
     report_progress: ProgressReporter,
 ) -> dict[str, typing.Any]:
     if not config.local.allow_write:
-        raise query_api.QueryError(
+        raise MCPError(
             "glossary_sync is unavailable: this server was not configured with local write access."
         )
     if args.mode != "all" and not args.value:
@@ -526,7 +533,10 @@ async def _handle_sync(
 
     db = await runtime.open_local_db()
     async with runtime.acquire(Source.LIVE) as (_, session):
-        assert session is not None
+        assert session is not None, (
+            "runtime.acquire(Source.LIVE) should always yield a session; Runtime.acquire "
+            "only returns a None session when it isn't asked for one."
+        )
         if args.mode == "query":
             assert args.value is not None
             summary = await sync_api.sync_query(
@@ -543,6 +553,7 @@ async def _handle_sync(
                 db, session, args.value, limit=args.limit, concurrency=args.concurrency
             )
         else:
+            assert args.mode == "all", f"Unexpected SyncArgs.mode {args.mode!r}."
             summary = await sync_api.sync_all(db, session, concurrency=args.concurrency)
 
     return dataclasses.asdict(summary)
@@ -560,19 +571,17 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
     :param config: The server's `MCPConfig`.
     :return: One `ToolSpec` per enabled tool, in a stable, sensible order.
     """
-    from slb_glossary.mcp.config import ToolName
-
     enabled = config.resolved_tools()
     specs: list[ToolSpec] = []
 
     def add(
-        flag: "ToolName",
+        flag: Tool,
         *,
         name: str,
         description: str,
         args_type: type,
         tags: frozenset[str],
-        handler: typing.Callable[..., typing.Awaitable[typing.Any]],
+        handler: Callable[..., Awaitable[typing.Any]],
         writes: bool = False,
         supports_source: bool = True,
         supports_streaming: bool = False,
@@ -593,7 +602,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         )
 
     add(
-        ToolName.SEARCH,
+        Tool.SEARCH,
         name="glossary_search",
         description=(
             "Free-text search across the SLB Energy Glossary. Use this for keyword or "
@@ -606,7 +615,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         supports_streaming=True,
     )
     add(
-        ToolName.GET_TERM,
+        Tool.GET_TERM,
         name="glossary_get_term",
         description=(
             "Look up a single glossary term by its exact (case-insensitive) name, or by its "
@@ -618,7 +627,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         handler=_handle_get_term,
     )
     add(
-        ToolName.GET_TERMS_ON,
+        Tool.GET_TERMS_ON,
         name="glossary_get_terms_on",
         description=(
             "List every term filed under one or more glossary topics (subject areas), e.g. "
@@ -631,7 +640,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         supports_streaming=True,
     )
     add(
-        ToolName.GET_TERMS_URLS,
+        Tool.GET_TERMS_URLS,
         name="glossary_get_terms_urls",
         description=(
             "List glossary term detail-page URLs matching a query/topic/starting letter, "
@@ -643,7 +652,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         handler=_handle_terms_urls,
     )
     add(
-        ToolName.GET_TOPICS,
+        Tool.GET_TOPICS,
         name="glossary_get_topics",
         description=(
             "List every glossary topic (subject area) and how many terms are filed under "
@@ -654,7 +663,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         handler=_handle_topics,
     )
     add(
-        ToolName.RELATED_TERMS,
+        Tool.RELATED_TERMS,
         name="glossary_related_terms",
         description=(
             "Get the terms linked from within a single term's own definition ('See related "
@@ -665,7 +674,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         handler=_handle_related_terms,
     )
     add(
-        ToolName.RANDOM_TERM,
+        Tool.RANDOM_TERM,
         name="glossary_random_term",
         description=(
             "Get one randomly chosen glossary term, optionally restricted to a topic. Use "
@@ -676,7 +685,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         handler=_handle_random_term,
     )
     add(
-        ToolName.COMPARE,
+        Tool.COMPARE,
         name="glossary_compare",
         description=(
             "Look up several specific glossary terms at once, for side-by-side comparison. "
@@ -688,7 +697,7 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         handler=_handle_compare,
     )
     add(
-        ToolName.SYNC,
+        Tool.SYNC,
         name="glossary_sync",
         description=(
             "Fetch terms from the live glossary and write them into this server's local "

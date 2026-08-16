@@ -25,18 +25,29 @@ instances are hashable-by-value-where-possible, cheap to copy with
 
 import dataclasses
 import enum
+import pathlib
+import sys
 import typing
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
 from slb_glossary.config import BrowserSessionConfig, DatabaseConfig
-from slb_glossary.errors import ConfigError
 from slb_glossary.logging import LogSink
 from slb_glossary.mcp.auth import AuthBackend
+from slb_glossary.mcp.errors import MCPConfigError
 from slb_glossary.mcp.ratelimit import RateLimiter
+from slb_glossary.mcp.types import AfterToolHook, BeforeToolHook, LifecycleHook, ToolErrorHook
 from slb_glossary.query import Source
 
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
+
+if typing.TYPE_CHECKING:
+    from fastmcp.server.auth import AuthProvider
+
 __all__ = [
-    "ToolName",
+    "Tool",
     "SessionMode",
     "RateLimitScope",
     "SessionAccessConfig",
@@ -50,22 +61,18 @@ __all__ = [
     "StreamingConfig",
     "ServerInfoConfig",
     "MCPConfig",
-    "BeforeToolHook",
-    "AfterToolHook",
-    "ToolErrorHook",
-    "LifecycleHook",
     "resolve_tools",
 ]
 
 
-class ToolName(enum.Flag):
+class Tool(enum.Flag):
     """
     Which `slb_glossary.query` operations the MCP server exposes as tools.
 
-    An `IntFlag`-style set: combine members with `|` to build up a set of
-    tools (`ToolName.SEARCH | ToolName.GET_TERM`), and test membership with
-    `in`/`&`. Pass a `ToolName` combination, or any iterable of tool-name
-    strings (see `resolve_tools`), to `MCPConfig(tools=...)`.
+    A flag set: combine members with `|` to build up a set of tools
+    (`Tool.SEARCH | Tool.GET_TERM`), and test membership with `in`/`&`.
+    Pass a `Tool` combination, or any iterable of tool-name strings (see
+    `resolve_tools`), to `MCPConfig(tools=...)`.
     """
 
     SEARCH = enum.auto()
@@ -116,37 +123,37 @@ class ToolName(enum.Flag):
     """Every tool this server knows how to build, including `SYNC`."""
 
 
-_TOOL_NAME_ALIASES: dict[str, ToolName] = {
-    member.name.lower(): member  # type: ignore[union-attr]
-    for member in ToolName
-    if member not in (ToolName.READ_ONLY, ToolName.ALL)
+_TOOL_NAME_ALIASES: dict[str, Tool] = {
+    member.name.lower(): member
+    for member in Tool
+    if member not in (Tool.READ_ONLY, Tool.ALL) and member.name is not None
 }
-_TOOL_NAME_ALIASES["read_only"] = ToolName.READ_ONLY
-_TOOL_NAME_ALIASES["all"] = ToolName.ALL
+_TOOL_NAME_ALIASES["read_only"] = Tool.READ_ONLY
+_TOOL_NAME_ALIASES["all"] = Tool.ALL
 
 
-def resolve_tools(value: "ToolName | str | Iterable[str] | None") -> ToolName:
+def resolve_tools(value: Tool | str | Iterable[str] | None) -> Tool:
     """
-    Normalize `value` into a `ToolName` flag combination.
+    Normalize `value` into a `Tool` flag combination.
 
-    :param value: A `ToolName` (returned as-is), a single tool-name string
+    :param value: A `Tool` (returned as-is), a single tool-name string
         (e.g. `"search"`, `"read_only"`), an iterable of such strings, or
-        `None` for `ToolName.READ_ONLY`.
-    :return: The resolved `ToolName` combination.
-    :raises ConfigError: If any name in `value` isn't a known tool name.
+        `None` for `Tool.READ_ONLY`.
+    :return: The resolved `Tool` combination.
+    :raises MCPConfigError: If any name in `value` isn't a known tool name.
     """
     if value is None:
-        return ToolName.READ_ONLY
-    if isinstance(value, ToolName):
+        return Tool.READ_ONLY
+    if isinstance(value, Tool):
         return value
     names = [value] if isinstance(value, str) else list(value)
-    resolved = ToolName(0)
+    resolved = Tool(0)
     for name in names:
         key = name.strip().lower()
         member = _TOOL_NAME_ALIASES.get(key)
         if member is None:
             choices = ", ".join(sorted(_TOOL_NAME_ALIASES))
-            raise ConfigError(f"Unknown MCP tool name {name!r}. Expected one of: {choices}.")
+            raise MCPConfigError(f"Unknown MCP tool name {name!r}. Expected one of: {choices}.")
         resolved |= member
     return resolved
 
@@ -178,7 +185,7 @@ class RateLimitScope(enum.Enum):
     """One shared bucket for the whole server, across every client and tool."""
 
     CLIENT = "client"
-    """One bucket per authenticated client (or `\"anonymous\"`), across all tools."""
+    """One bucket per authenticated client (or `"anonymous"`), across all tools."""
 
     TOOL = "tool"
     """One bucket per tool name, shared by every client."""
@@ -210,8 +217,8 @@ class SessionAccessConfig:
     concurrent tool calls can each want their own session."""
 
     browser: BrowserSessionConfig = dataclasses.field(default_factory=BrowserSessionConfig)
-    """Options forwarded to `slb_glossary.browser.open_session` - language,
-    browser type, headless, resource blocking, retry policy, and so on."""
+    """Options forwarded to `slb_glossary.live.browser.open_session` -
+    language, browser type, headless, resource blocking, retry policy, and so on."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -226,10 +233,10 @@ class LocalAccessConfig:
     """
     Whether any tool call may write to the local database. **Off by default**:
     with this `False`, every read tool's `persist` argument is silently
-    ignored (never actually persists), and `ToolName.SYNC` is never
-    registered even if requested in `MCPConfig.tools` - see
-    `MCPConfig.resolved_tools`. Set this `True` deliberately to let the
-    server cache live lookups, or run explicit syncs.
+    ignored (never actually persists), and `Tool.SYNC` is never registered
+    even if requested in `MCPConfig.tools` - see `MCPConfig.resolved_tools`.
+    Set this `True` deliberately to let the server cache live lookups, or
+    run explicit syncs.
     """
 
     database: DatabaseConfig = dataclasses.field(default_factory=DatabaseConfig)
@@ -241,10 +248,14 @@ class LocalAccessConfig:
 class SourcePolicyConfig:
     """Controls which `slb_glossary.query.Source` values callers may request."""
 
-    allowed: frozenset[Source] = frozenset({Source.AUTO, Source.LOCAL, Source.LIVE})
+    allowed: frozenset[Source] | None = None
     """The set of `Source` values a tool call's `source` argument may
-    resolve to. Narrow this (e.g. to `{Source.LOCAL}`) to hard-pin every
-    tool to one source regardless of what a caller asks for."""
+    resolve to. `None` (the default) is computed automatically by
+    `MCPConfig.__post_init__` from `SessionAccessConfig.enabled`/
+    `LocalAccessConfig.enabled` - every source this server actually has
+    access to. Set explicitly to narrow further (e.g. to `{Source.LOCAL}`
+    on a server with both local and live access, to still pin every tool
+    to one source)."""
 
     default: Source = Source.AUTO
     """`Source` used when a tool call doesn't specify one."""
@@ -260,37 +271,52 @@ class SourcePolicyConfig:
 class TimeoutConfig:
     """Per-call execution time caps, enforced by FastMCP's own tool `timeout=`."""
 
-    global_seconds: float | None = 60.0
+    global_: float | None = 60.0
     """Default seconds a foreground tool call may run before being
     cancelled. `None` means tools run with no cap unless overridden per-tool
-    in `per_tool`."""
+    in `per_tool`. Named `global_` (trailing underscore) since `global` is
+    a reserved keyword and can't be used as a field name."""
 
     per_tool: Mapping[str, float | None] = dataclasses.field(default_factory=dict)
-    """Tool name (e.g. `\"glossary_search\"`) to timeout override in
-    seconds, taking precedence over `global_seconds` for that tool. A value
-    of `None` here explicitly disables the timeout for that tool."""
+    """Tool name (e.g. `"glossary_search"`) to timeout override in
+    seconds, taking precedence over `global_` for that tool. A value of
+    `None` here explicitly disables the timeout for that tool."""
 
     def for_tool(self, name: str) -> float | None:
         """Resolve the effective timeout, in seconds, for tool `name`."""
         if name in self.per_tool:
             return self.per_tool[name]
-        return self.global_seconds
+        return self.global_
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class AuthConfig:
-    """Controls token-based authentication/authorization for tool calls."""
+    """Controls authentication/authorization for tool calls."""
 
     backend: AuthBackend | None = None
-    """The `slb_glossary.mcp.auth.AuthBackend` used to resolve a caller's
-    bearer token into a `Principal`. `None` disables authentication - every
-    caller is treated as an anonymous `Principal`."""
+    """The `slb_glossary.mcp.auth.AuthBackend` used to resolve a caller
+    into a `Principal`, for this server's own use (rate-limit keys, hooks,
+    call logging). `None` disables this layer - every caller is treated as
+    the anonymous `Principal`. See the module docstring of
+    `slb_glossary.mcp.auth` for how this relates to `provider` below."""
 
     required: bool = False
     """If `True` and `backend` is set, calls with no token, or a token that
     doesn't resolve to a `Principal`, are rejected. If `False`, an
     unresolved token just falls back to the anonymous principal (still
     subject to rate limiting/hooks under whatever key that resolves to)."""
+
+    provider: "AuthProvider | None" = None
+    """A FastMCP `fastmcp.server.auth.AuthProvider` (e.g. a `TokenVerifier`
+    subclass), forwarded straight to `fastmcp.FastMCP(auth=...)`. This
+    protects the transport itself - an HTTP request that fails this check
+    never reaches a tool call, let alone `backend` above. The two layers
+    can share one underlying identity store: have your `TokenVerifier`
+    and your `AuthBackend` both read from the same store/database, or wrap
+    one in a small adapter. Quoted as a string annotation because
+    `fastmcp.server.auth` is only imported under `typing.TYPE_CHECKING`,
+    so this module doesn't require FastMCP to be installed just to import
+    `slb_glossary.mcp.config`."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -301,41 +327,21 @@ class RateLimitConfig:
     """Whether rate limiting is enforced at all. Off by default."""
 
     limiter: RateLimiter | None = None
-    """The `slb_glossary.mcp.ratelimit.RateLimiter` to consult. `None` while
-    `enabled=True` builds a default in-memory
+    """The `slb_glossary.mcp.ratelimit.RateLimiter` to consult. `None`
+    while `enabled=True` builds a default in-memory
     `slb_glossary.mcp.ratelimit.SlidingWindowRateLimiter` from
-    `requests_per_minute`/`window_seconds` - see `MCPConfig.__post_init__`."""
+    `requests_per_minute`/`window_seconds` - see
+    `slb_glossary.mcp.api.Application._resolve_default_rate_limiter`."""
 
     requests_per_minute: int = 60
     """Requests allowed per `window_seconds` per rate-limit key, used only
     when `limiter` is left `None` for the default limiter to be built from."""
 
     window_seconds: float = 60.0
-    """Sliding window size, in seconds, used only when `limiter` is left
-    `None`."""
+    """Sliding window size, in seconds, used only when `limiter` is left `None`."""
 
     scope: RateLimitScope = RateLimitScope.CLIENT_TOOL
     """What key `limiter` is consulted under. See `RateLimitScope`."""
-
-
-ToolRunContextT = typing.Any
-"""Alias for `slb_glossary.mcp.runtime.ToolRunContext`, spelled as `Any`
-here to avoid a circular import; hooks receive the real type at call time."""
-
-BeforeToolHook = Callable[[ToolRunContextT], typing.Awaitable[None]]
-"""`async def hook(run: ToolRunContext) -> None`, called just before a tool's
-body executes. Raise to abort the call (surfaced to the caller as a tool error)."""
-
-AfterToolHook = Callable[[ToolRunContextT, typing.Any], typing.Awaitable[None]]
-"""`async def hook(run: ToolRunContext, result: Any) -> None`, called after a
-tool's body returns successfully, with its result."""
-
-ToolErrorHook = Callable[[ToolRunContextT, BaseException], typing.Awaitable[None]]
-"""`async def hook(run: ToolRunContext, error: BaseException) -> None`,
-called when a tool's body raises. The error still propagates afterward."""
-
-LifecycleHook = Callable[[], typing.Awaitable[None]]
-"""`async def hook() -> None`, called once on server startup/shutdown."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -343,13 +349,16 @@ class HooksConfig:
     """Caller-supplied hooks run around every tool call and around the server's lifecycle."""
 
     before_tool: tuple[BeforeToolHook, ...] = ()
-    """Run in order, just before each tool call's body. See `BeforeToolHook`."""
+    """Run in order, just before each tool call's body. See
+    `slb_glossary.mcp.types.BeforeToolHook`."""
 
     after_tool: tuple[AfterToolHook, ...] = ()
-    """Run in order, after each successful tool call. See `AfterToolHook`."""
+    """Run in order, after each successful tool call. See
+    `slb_glossary.mcp.types.AfterToolHook`."""
 
     on_error: tuple[ToolErrorHook, ...] = ()
-    """Run in order, when a tool call's body raises. See `ToolErrorHook`."""
+    """Run in order, when a tool call's body raises. See
+    `slb_glossary.mcp.types.ToolErrorHook`."""
 
     on_startup: tuple[LifecycleHook, ...] = ()
     """Run in order, once, before the server starts accepting calls."""
@@ -361,15 +370,41 @@ class HooksConfig:
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class MCPLoggingConfig:
-    """Controls where/how `slb_glossary`'s logging is routed for this server process."""
+    """
+    Controls where/how `slb_glossary`'s logging is routed for this server process.
 
-    sink: LogSink | type[LogSink] | str | None = None
-    """Where to route logging - see `slb_glossary.logging.resolve_sink`.
-    `None` leaves whatever logging setup is already in place untouched."""
+    Mirrors `slb_glossary.logging.configure_logging`'s own parameters
+    closely, so anything that module supports is available here too - see
+    `slb_glossary.mcp.api.Application._configure_logging` for exactly how
+    these are applied (each `sinks` entry resolved through
+    `slb_glossary.logging.resolve_sink` first, since `configure_logging`
+    itself only accepts already-built `LogSink` instances, not specs).
+    """
+
+    sinks: LogSink | type[LogSink] | str | pathlib.Path | Iterable[
+        LogSink | type[LogSink] | str | pathlib.Path
+    ] | None = None
+    """Where to route logging. Any single `slb_glossary.logging.resolve_sink`
+    spec (a `LogSink` instance/class, `"stderr"`/`"stdout"`, a file path, or
+    a `"module:ClassName"` import path), or several. `None` leaves whatever
+    logging setup is already in place untouched."""
 
     level: int | str | None = None
-    """Logging level for the `slb_glossary` logger. `None` leaves the
-    current level untouched."""
+    """Logging level for `logger_name`'s logger. `None` leaves the current
+    level untouched."""
+
+    logger_name: str = "slb_glossary"
+    """Name of the logger `sinks`/`level` are applied to. Defaults to
+    `slb_glossary`'s package root logger, so every module's own logger
+    propagates up to it."""
+
+    fmt: str | None = None
+    """`logging.Formatter` format string used for every sink. `None` uses
+    `slb_glossary.logging.DEFAULT_LOG_FORMAT`."""
+
+    propagate: bool = False
+    """Whether `logger_name`'s logger should still propagate records to its
+    own ancestor loggers after also sending them to `sinks`."""
 
     log_tool_calls: bool = True
     """Whether the server's own middleware logs each tool call's name,
@@ -398,11 +433,12 @@ class ServerInfoConfig:
     """Identity metadata for the MCP server itself."""
 
     name: str = "slb-glossary"
-    """Server name advertised to MCP clients."""
+    """Server name advertised to MCP clients, and used as
+    `slb_glossary.mcp.types.NamedComponent.name` for
+    `slb_glossary.mcp.api.Application`/`slb_glossary.mcp.runtime.Runtime` logging."""
 
     version: str | None = None
-    """Server version advertised to MCP clients. `None` uses
-    `slb_glossary.__version__`."""
+    """Server version advertised to MCP clients. `None` uses `slb_glossary.__version__`."""
 
     instructions: str | None = None
     """Free-text instructions shown to connecting clients/LLMs about how to
@@ -416,11 +452,11 @@ class MCPConfig:
     Top-level, fully composable configuration for `slb_glossary.mcp.api.Application`.
 
     ```python
-    from slb_glossary.mcp.config import MCPConfig, LocalAccessConfig, ToolName
+    from slb_glossary.mcp.config import MCPConfig, LocalAccessConfig, Tool
 
     config = MCPConfig(
         local=LocalAccessConfig(allow_write=True),
-        tools=ToolName.ALL,
+        tools=Tool.ALL,
     )
     ```
 
@@ -443,15 +479,15 @@ class MCPConfig:
     source_policy: SourcePolicyConfig = dataclasses.field(default_factory=SourcePolicyConfig)
     """Which `Source` values tool calls may resolve to."""
 
-    tools: ToolName = ToolName.READ_ONLY
-    """Which tools to build. See `ToolName`, `resolve_tools`, and
+    tools: Tool = Tool.READ_ONLY
+    """Which tools to build. See `Tool`, `resolve_tools`, and
     `resolved_tools` for how this interacts with `local.allow_write`."""
 
     timeouts: TimeoutConfig = dataclasses.field(default_factory=TimeoutConfig)
     """Per-call execution time caps."""
 
     auth: AuthConfig = dataclasses.field(default_factory=AuthConfig)
-    """Token-based authentication/authorization."""
+    """Authentication/authorization."""
 
     rate_limit: RateLimitConfig = dataclasses.field(default_factory=RateLimitConfig)
     """Per-tool/per-client request-rate limiting."""
@@ -467,51 +503,63 @@ class MCPConfig:
 
     def __post_init__(self) -> None:
         if not self.session.enabled and not self.local.enabled:
-            raise ConfigError(
-                "MCPConfig: at least one of `session.enabled`/`local.enabled` must be True - "
-                "a server with neither can't read anything."
+            raise MCPConfigError(
+                f"{type(self).__name__}: at least one of `session.enabled`/`local.enabled` "
+                f"must be True - a server with neither can't read anything."
             )
-        if not self.source_policy.allowed:
-            raise ConfigError("MCPConfig: `source_policy.allowed` must not be empty.")
-        if self.source_policy.default not in self.source_policy.allowed:
-            raise ConfigError(
-                f"MCPConfig: `source_policy.default` ({self.source_policy.default}) must be "
-                f"a member of `source_policy.allowed` ({self.source_policy.allowed})."
+
+        allowed = self.source_policy.allowed
+        if allowed is None:
+            computed = {Source.AUTO}
+            if self.local.enabled:
+                computed.add(Source.LOCAL)
+            if self.session.enabled:
+                computed.add(Source.LIVE)
+            object.__setattr__(
+                self, "source_policy", dataclasses.replace(self.source_policy, allowed=frozenset(computed))
             )
-        if Source.LOCAL in self.source_policy.allowed and not self.local.enabled:
-            raise ConfigError(
-                "MCPConfig: `source_policy.allowed` includes Source.LOCAL but `local.enabled` is False."
-            )
-        if Source.LIVE in self.source_policy.allowed and not self.session.enabled:
-            raise ConfigError(
-                "MCPConfig: `source_policy.allowed` includes Source.LIVE but `session.enabled` is False."
+            allowed = self.source_policy.allowed
+        else:
+            if not allowed:
+                raise MCPConfigError(f"{type(self).__name__}: `source_policy.allowed` must not be empty.")
+            if Source.LOCAL in allowed and not self.local.enabled:
+                raise MCPConfigError(
+                    f"{type(self).__name__}: `source_policy.allowed` includes Source.LOCAL "
+                    f"but `local.enabled` is False."
+                )
+            if Source.LIVE in allowed and not self.session.enabled:
+                raise MCPConfigError(
+                    f"{type(self).__name__}: `source_policy.allowed` includes Source.LIVE "
+                    f"but `session.enabled` is False."
+                )
+
+        if self.source_policy.default not in allowed:
+            raise MCPConfigError(
+                f"{type(self).__name__}: `source_policy.default` ({self.source_policy.default}) "
+                f"must be a member of `source_policy.allowed` ({allowed})."
             )
         if self.rate_limit.enabled and self.rate_limit.requests_per_minute <= 0:
-            raise ConfigError("MCPConfig: `rate_limit.requests_per_minute` must be positive.")
+            raise MCPConfigError(f"{type(self).__name__}: `rate_limit.requests_per_minute` must be positive.")
         if self.session.max_concurrent < 1:
-            raise ConfigError("MCPConfig: `session.max_concurrent` must be at least 1.")
+            raise MCPConfigError(f"{type(self).__name__}: `session.max_concurrent` must be at least 1.")
 
-    def resolved_tools(self) -> ToolName:
+    def resolved_tools(self) -> Tool:
         """
-        The actual set of tools to build, after gating `ToolName.SYNC` on write access.
+        The actual set of tools to build, after gating `Tool.SYNC` on write access.
 
-        `ToolName.SYNC` is stripped out unless *both* `ToolName.SYNC` is in
-        `tools` *and* `local.allow_write` is `True` - so flipping on a
+        `Tool.SYNC` is stripped out unless *both* `Tool.SYNC` is in `tools`
+        *and* `local.allow_write` is `True` - so flipping on a
         write-capable tool always requires an explicit, deliberate
         `local.allow_write=True` in addition to requesting the tool itself.
 
-        :return: `self.tools`, with `ToolName.SYNC` cleared if write access isn't granted.
+        :return: `self.tools`, with `Tool.SYNC` cleared if write access isn't granted.
         """
         tools = self.tools
-        if ToolName.SYNC in tools and not self.local.allow_write:
-            tools &= ~ToolName.SYNC
+        if Tool.SYNC in tools and not self.local.allow_write:
+            tools &= ~Tool.SYNC
         return tools
 
-    def effective_default_source(self) -> Source:
-        """The `Source` used when a tool call doesn't specify one, narrowed to what's enabled."""
-        return self.source_policy.default
-
     @classmethod
-    def default(cls) -> "MCPConfig":
+    def default(cls) -> Self:
         """Return a fresh, all-defaults `MCPConfig`. Equivalent to `MCPConfig()`."""
         return cls()

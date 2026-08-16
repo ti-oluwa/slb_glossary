@@ -14,33 +14,24 @@ import collections
 import time
 import typing
 
-__all__ = ["RateLimiter", "SlidingWindowRateLimiter", "RateLimitExceeded"]
-
-
-class RateLimitExceeded(Exception):
-    """Raised internally when a rate-limit key has no requests left in its window."""
-
-    def __init__(self, key: str, *, retry_after: float | None = None) -> None:
-        message = f"Rate limit exceeded for {key!r}"
-        if retry_after is not None:
-            message += f"; retry after {retry_after:.1f}s"
-        super().__init__(message)
-        self.key = key
-        self.retry_after = retry_after
+__all__ = ["RateLimiter", "SlidingWindowRateLimiter"]
 
 
 @typing.runtime_checkable
 class RateLimiter(typing.Protocol):
     """Protocol for a request-rate limiter, consulted once per tool call."""
 
-    async def acquire(self, key: str) -> bool:
+    async def hit(self, key: str) -> float:
         """
-        Register one request against `key` and report whether it's allowed.
+        Register one request against `key` and report how long it must wait, if at all.
 
         :param key: The rate-limit key for this call - shaped by
-            `slb_glossary.mcp.config.RateLimitScope` (e.g. `\"alice:glossary_search\"`).
-        :return: `True` if the request is allowed to proceed, `False` if
-            `key` has exhausted its quota for the current window.
+            `slb_glossary.mcp.config.RateLimitScope` (e.g. `"alice:glossary_search"`).
+        :return: `0.0` (or less) if the request is allowed to proceed right
+            now. A positive number of milliseconds if `key` has exhausted
+            its quota - `slb_glossary.mcp.middleware.GlossaryMiddleware`
+            raises `slb_glossary.mcp.errors.RateLimitExceededError` with
+            that wait time whenever this is greater than zero.
         """
         ...
 
@@ -51,8 +42,9 @@ class SlidingWindowRateLimiter:
 
     Tracks each key's recent request timestamps in a deque; a request is
     allowed if fewer than `limit` timestamps remain within the trailing
-    `window_seconds`. Process-local only - fine for a single server
-    process, not for a rate limit shared across replicas.
+    `window_seconds`, and otherwise reports how long until the oldest
+    timestamp ages out of the window. Process-local only - fine for a
+    single server process, not for a rate limit shared across replicas.
     """
 
     def __init__(self, limit: int, window_seconds: float = 60.0) -> None:
@@ -72,7 +64,7 @@ class SlidingWindowRateLimiter:
         )
         self._lock = asyncio.Lock()
 
-    async def acquire(self, key: str) -> bool:
+    async def hit(self, key: str) -> float:
         now = time.monotonic()
         cutoff = now - self.window_seconds
         async with self._lock:
@@ -80,9 +72,10 @@ class SlidingWindowRateLimiter:
             while hits and hits[0] < cutoff:
                 hits.popleft()
             if len(hits) >= self.limit:
-                return False
+                wait_seconds = hits[0] + self.window_seconds - now
+                return max(wait_seconds, 0.0) * 1000.0
             hits.append(now)
-            return True
+            return 0.0
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(limit={self.limit}, window_seconds={self.window_seconds})"

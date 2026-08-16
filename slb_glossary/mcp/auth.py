@@ -1,12 +1,14 @@
 """
-Pluggable, token-based authentication/authorization for `slb_glossary.mcp`.
+Pluggable, request-aware authentication/authorization for `slb_glossary.mcp`.
 
 This is deliberately independent of FastMCP's own OAuth-flavored
-`AuthProvider` machinery (which secures the *transport*): `AuthBackend` here
-resolves a single bearer token, taken from the request, into a `Principal`
-that the server's middleware and rate limiter key off of, per tool call. If
-you don't need per-caller identity, ignore this module entirely - the
-server runs unauthenticated by default (`AuthConfig.backend=None`).
+`fastmcp.server.auth.AuthProvider` machinery, which secures the
+*transport* (e.g. rejecting an unauthenticated HTTP request before it ever
+reaches a tool). `AuthBackend` here resolves each tool call into a
+`Principal` that the server's middleware, rate limiter, and hooks key off
+of - a different, complementary layer. See `slb_glossary.mcp.config.AuthConfig`
+for how the two combine, and `slb_glossary.mcp.api.Application` for where
+each is wired in.
 
 ```python
 from slb_glossary.mcp.auth import Principal, StaticTokenAuth
@@ -16,13 +18,30 @@ auth = StaticTokenAuth({
     "sk-bot-...": "readonly-bot",  # bare string is shorthand for Principal(id=...)
 })
 ```
+
+Backends with their own constructor arguments (a database pool, an
+external identity-provider client, etc.) can be imported by dotted path
+with `import_backend` and instantiated with no arguments - handy for
+`--auth-backend module:ClassName`-style CLI flags. A backend that needs
+constructor arguments doesn't fit that no-args convention; build the
+`slb_glossary.mcp.config.MCPConfig`/`slb_glossary.mcp.api.Application`
+yourself in Python instead of going through the CLI in that case.
 """
 
+import importlib
 import types
 import typing
 from collections.abc import Mapping
 
-__all__ = ["Principal", "AuthBackend", "StaticTokenAuth", "NullAuth", "ANONYMOUS"]
+__all__ = [
+    "Principal",
+    "AuthRequest",
+    "AuthBackend",
+    "StaticTokenAuth",
+    "NullAuth",
+    "ANONYMOUS",
+    "import_backend",
+]
 
 
 class Principal(typing.NamedTuple):
@@ -35,36 +54,65 @@ class Principal(typing.NamedTuple):
     scopes: frozenset[str] = frozenset()
     """Free-form authorization scopes this caller holds. Not interpreted by
     `slb_glossary.mcp` itself; read them from
-    `slb_glossary.mcp.runtime.ToolRunContext.principal` in a hook or a
+    `slb_glossary.mcp.types.ToolRunContext.principal` in a hook or a
     custom `AuthBackend` if you need scope-gated behavior."""
 
     metadata: Mapping[str, typing.Any] = types.MappingProxyType({})
     """Arbitrary extra data an `AuthBackend` wants to carry alongside the
-    principal (e.g. a display name, a plan tier)."""
+    principal (e.g. a display name, a plan tier). Typed `Any` because it's
+    genuinely backend-specific, free-form data."""
 
 
 ANONYMOUS = Principal(id="anonymous")
 """The `Principal` used for calls with no token, when `AuthConfig.required` is `False`."""
 
 
+class AuthRequest(typing.NamedTuple):
+    """
+    Everything an `AuthBackend` gets to resolve a caller's identity from.
+
+    Deliberately carries more than just a bearer token: some backends key
+    off a custom header (an API-key header, a signed request, mTLS client
+    info surfaced as a header by a proxy), or want to make per-tool
+    authorization decisions (e.g. reject `glossary_sync` calls for
+    read-only tokens) using `tool_name`/`arguments` rather than a bare token lookup.
+    """
+
+    token: str | None
+    """The bearer token parsed from the `Authorization: Bearer <token>`
+    header, with the scheme prefix stripped, or `None` if there wasn't
+    one (including on transports with no per-request headers, like stdio)."""
+
+    headers: Mapping[str, str]
+    """Every HTTP header on the incoming request, lower-cased keys. Empty
+    on transports with no per-request headers (e.g. stdio)."""
+
+    tool_name: str
+    """The MCP tool name about to be called."""
+
+    arguments: Mapping[str, typing.Any]
+    """The tool call's raw arguments, as a plain mapping. Typed `Any`
+    because these are whatever JSON-compatible values the caller sent -
+    genuinely dynamic, not a fixed shape."""
+
+
 @typing.runtime_checkable
 class AuthBackend(typing.Protocol):
     """
-    Protocol for resolving a bearer token into a `Principal`.
+    Protocol for resolving an `AuthRequest` into a `Principal`.
 
     Implement this (no base class required, just `authenticate`) to back
     tokens with a database, an external identity provider, environment
-    variables, whatever. Pass an instance to `slb_glossary.mcp.config.AuthConfig.backend`.
+    variables, whatever. Pass an instance to
+    `slb_glossary.mcp.config.AuthConfig.backend`.
     """
 
-    async def authenticate(self, token: str | None) -> Principal | None:
+    async def authenticate(self, request: AuthRequest) -> Principal | None:
         """
-        Resolve `token` into a `Principal`.
+        Resolve `request` into a `Principal`.
 
-        :param token: The bearer token extracted from the incoming
-            request's `Authorization` header (with the `\"Bearer \"` prefix
-            already stripped), or `None` if the request carried no token at all.
-        :return: The resolved `Principal`, or `None` if `token` doesn't
+        :param request: The token, headers, and call metadata to authenticate from.
+        :return: The resolved `Principal`, or `None` if `request` doesn't
             resolve to anyone. A `None` return is treated as
             "unauthenticated": rejected if `AuthConfig.required` is `True`,
             otherwise falls back to `ANONYMOUS`.
@@ -77,7 +125,7 @@ class StaticTokenAuth:
 
     __slots__ = ("_tokens",)
 
-    def __init__(self, tokens: Mapping[str, "Principal | str"]) -> None:
+    def __init__(self, tokens: Mapping[str, Principal | str]) -> None:
         """
         :param tokens: Mapping of raw bearer token to either a `Principal`
             directly, or a bare `str` used as shorthand for
@@ -88,10 +136,10 @@ class StaticTokenAuth:
             resolved[token] = value if isinstance(value, Principal) else Principal(id=value)
         self._tokens = resolved
 
-    async def authenticate(self, token: str | None) -> Principal | None:
-        if token is None:
+    async def authenticate(self, request: AuthRequest) -> Principal | None:
+        if request.token is None:
             return None
-        return self._tokens.get(token)
+        return self._tokens.get(request.token)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({len(self._tokens)} token(s))"
@@ -102,5 +150,43 @@ class NullAuth:
 
     __slots__ = ()
 
-    async def authenticate(self, token: str | None) -> Principal | None:
+    async def authenticate(self, request: AuthRequest) -> Principal | None:
         return None
+
+
+def import_backend(dotted_path: str) -> AuthBackend:
+    """
+    Import and instantiate an `AuthBackend` from a dotted path, with no constructor arguments.
+
+    Mirrors `slb_glossary.logging.import_sink`'s convention, for the same
+    reason: a simple way for CLI flags (`--auth-backend module:ClassName`)
+    to reach a user-defined backend without slb_glossary needing to know
+    about it ahead of time.
+
+    :param dotted_path: `"module:ClassName"` or `"package.module.ClassName"`.
+    :return: An instance of the imported class.
+    :raises ValueError: If `dotted_path` doesn't look like a valid import path.
+    :raises ImportError: If the module can't be imported, or has no such attribute.
+    :raises TypeError: If the resolved attribute isn't a no-argument-constructible `AuthBackend`.
+    """
+    module_path, _, attr = dotted_path.partition(":")
+    if not attr:
+        module_path, _, attr = dotted_path.rpartition(".")
+    if not module_path or not attr:
+        raise ValueError(
+            f"{dotted_path!r} is not a valid auth-backend import path. Use "
+            f"'module:ClassName' or 'package.module.ClassName'."
+        )
+    module = importlib.import_module(module_path)
+    try:
+        target = getattr(module, attr)
+    except AttributeError as exc:
+        raise ImportError(f"Module {module_path!r} has no attribute {attr!r}") from exc
+
+    backend = target() if isinstance(target, type) else target
+    if not isinstance(backend, AuthBackend):
+        raise TypeError(
+            f"{dotted_path!r} resolved to {backend!r}, which doesn't implement "
+            f"AuthBackend (an `authenticate(self, request)` coroutine method)."
+        )
+    return backend

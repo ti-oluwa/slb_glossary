@@ -5,6 +5,7 @@ from slb_glossary.cli.commands.config import config
 from slb_glossary.cli.commands.define import define
 from slb_glossary.cli.commands.install import install
 from slb_glossary.cli.commands.local import local
+from slb_glossary.cli.commands.mcp import mcp
 from slb_glossary.cli.commands.random_term import random_term
 from slb_glossary.cli.commands.related import related
 from slb_glossary.cli.commands.search import search
@@ -20,6 +21,7 @@ __all__ = [
     "define",
     "install",
     "local",
+    "mcp",
     "random_term",
     "related",
     "search",

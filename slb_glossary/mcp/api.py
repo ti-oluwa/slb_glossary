@@ -27,26 +27,35 @@ hooks, logging) live in `slb_glossary.mcp.middleware`. This module's only
 job is wiring those together onto a `FastMCP` instance.
 """
 
+import asyncio
+import contextlib
 import dataclasses
 import logging
+import sys
 import typing
 
 from fastmcp import Context, FastMCP
 
 from slb_glossary import __version__
-from slb_glossary.logging import configure_logging
+from slb_glossary.logging import DEFAULT_LOG_FORMAT, configure_logging, resolve_sink
 from slb_glossary.mcp.config import MCPConfig
 from slb_glossary.mcp.middleware import GlossaryMiddleware
 from slb_glossary.mcp.ratelimit import SlidingWindowRateLimiter
 from slb_glossary.mcp.runtime import Runtime
 from slb_glossary.mcp.tools import DEFAULT_INSTRUCTIONS, ToolSpec, build_tool_specs
+from slb_glossary.mcp.types import NamedComponent
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["Application"]
 
 
-class Application:
+class Application(NamedComponent):
     """
     A configured, buildable MCP server for the SLB Energy Glossary.
 
@@ -63,11 +72,12 @@ class Application:
         :param config: The server's `MCPConfig`. Defaults to `MCPConfig.default()`.
         """
         self.config = config if config is not None else MCPConfig.default()
+        super().__init__(self.config.server.name)
         self.runtime = Runtime(self.config)
         self._server: FastMCP | None = None
 
     @classmethod
-    def from_config(cls, config: MCPConfig) -> "Application":
+    def from_config(cls, config: MCPConfig) -> Self:
         """Build an `Application` from `config`. Equivalent to `Application(config)`."""
         return cls(config)
 
@@ -89,6 +99,7 @@ class Application:
             name=self.config.server.name,
             version=self.config.server.version or __version__,
             instructions=self.config.server.instructions or DEFAULT_INSTRUCTIONS,
+            auth=self.config.auth.provider,
         )
         server.add_middleware(GlossaryMiddleware(self.config))
 
@@ -147,33 +158,56 @@ class Application:
         await self.runtime.start()
         for hook in self.config.hooks.on_startup:
             await hook()
+        logger.info("[%s] Application started", self.name)
 
     async def aclose(self) -> None:
         """Tear down every resource opened by `start()` and run `HooksConfig.on_shutdown` hooks."""
         await self.runtime.aclose()
         for hook in self.config.hooks.on_shutdown:
             await hook()
+        logger.info("[%s] Application closed", self.name)
 
     def _configure_logging(self) -> None:
+        """
+        Apply `MCPConfig.logging` via `slb_glossary.logging.configure_logging`.
+
+        `configure_logging` itself only accepts already-built `LogSink`
+        instances (not specs like `"stderr"` or a dotted import path), so
+        every entry in `logging.sinks` is resolved through
+        `slb_glossary.logging.resolve_sink` first.
+        """
         logging_config = self.config.logging
-        if logging_config.sink is None and logging_config.level is None:
+        if logging_config.sinks is None and logging_config.level is None:
             return
-        configure_logging(sinks=logging_config.sink, level=logging_config.level)
+
+        spec = logging_config.sinks
+        if spec is None:
+            resolved_sinks = None
+        elif isinstance(spec, (list, tuple, set, frozenset)):
+            resolved_sinks = [resolve_sink(item) for item in spec]
+        else:
+            resolved_sinks = [resolve_sink(spec)]
+
+        configure_logging(
+            sinks=resolved_sinks,
+            level=logging_config.level,
+            logger_name=logging_config.logger_name,
+            fmt=logging_config.fmt or DEFAULT_LOG_FORMAT,
+            propagate=logging_config.propagate,
+        )
 
     async def run_async(self, **transport_kwargs: typing.Any) -> None:
         """
         Start resources, serve until the transport stops, then always clean up.
 
         :param transport_kwargs: Forwarded to `fastmcp.FastMCP.run_async`,
-            e.g. `transport=\"http\", host=\"0.0.0.0\", port=8000`. Defaults
+            e.g. `transport="http", host="0.0.0.0", port=8000`. Defaults
             to FastMCP's own default (stdio) when omitted.
         """
         server = self.to_server()
         await self.start()
-        try:
+        async with contextlib.aclosing(self):
             await server.run_async(**transport_kwargs)
-        finally:
-            await self.aclose()
 
     def run(self, **transport_kwargs: typing.Any) -> None:
         """
@@ -182,6 +216,4 @@ class Application:
         :param transport_kwargs: Forwarded to `fastmcp.FastMCP.run_async` -
             see `run_async`.
         """
-        import asyncio
-
         asyncio.run(self.run_async(**transport_kwargs))

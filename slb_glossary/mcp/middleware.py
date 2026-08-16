@@ -11,15 +11,16 @@ already covers timeouts without needing middleware for it.
 
 import logging
 import time
-import typing
+from collections.abc import Awaitable, Callable
 
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
-from slb_glossary.mcp.auth import ANONYMOUS, Principal
+from slb_glossary.mcp.auth import ANONYMOUS, AuthRequest, Principal
 from slb_glossary.mcp.config import MCPConfig, RateLimitScope
-from slb_glossary.mcp.runtime import ToolRunContext
+from slb_glossary.mcp.errors import AuthenticationError, RateLimitExceededError
+from slb_glossary.mcp.types import ToolRunContext
 from slb_glossary.query import Source
 
 logger = logging.getLogger(__name__)
@@ -27,17 +28,23 @@ logger = logging.getLogger(__name__)
 __all__ = ["GlossaryMiddleware"]
 
 
-def _extract_bearer_token() -> str | None:
-    """Best-effort extraction of a bearer token from the current HTTP request, if any.
+def _current_http_headers() -> dict[str, str]:
+    """
+    Best-effort read of the current HTTP request's headers, lower-cased keys.
 
-    Returns `None` outside an HTTP transport (e.g. stdio), where there are
-    no per-request headers to read.
+    Returns an empty mapping outside an HTTP transport (e.g. stdio), where
+    there are no per-request headers to read.
     """
     try:
         headers = get_http_headers()
     except Exception:
-        return None
-    authorization = headers.get("authorization") or headers.get("Authorization")
+        return {}
+    return {key.lower(): value for key, value in headers.items()}
+
+
+def _bearer_token(headers: dict[str, str]) -> str | None:
+    """Parse a `Authorization: Bearer <token>` header out of `headers`, if present."""
+    authorization = headers.get("authorization")
     if not authorization:
         return None
     scheme, _, token = authorization.partition(" ")
@@ -53,7 +60,19 @@ def _rate_limit_key(scope: RateLimitScope, principal: Principal, tool_name: str)
         return principal.id
     if scope is RateLimitScope.TOOL:
         return tool_name
+    assert scope is RateLimitScope.CLIENT_TOOL, f"Unexpected RateLimitScope member {scope!r}."
     return f"{principal.id}:{tool_name}"
+
+
+def _source_from_arguments(arguments: dict) -> Source | None:
+    """Best-effort parse of a `source` MCP argument into a `Source`, for `ToolRunContext`."""
+    raw = arguments.get("source")
+    if raw is None:
+        return None
+    try:
+        return Source(raw)
+    except ValueError:
+        return None
 
 
 class GlossaryMiddleware(Middleware):
@@ -72,12 +91,12 @@ class GlossaryMiddleware(Middleware):
     async def on_call_tool(
         self,
         context: MiddlewareContext,
-        call_next: typing.Callable[[MiddlewareContext], typing.Awaitable[typing.Any]],
-    ) -> typing.Any:
+        call_next: Callable[[MiddlewareContext], Awaitable[object]],
+    ) -> object:
         tool_name: str = getattr(context.message, "name", "<unknown>")
-        arguments: dict[str, typing.Any] = dict(getattr(context.message, "arguments", None) or {})
+        arguments: dict = dict(getattr(context.message, "arguments", None) or {})
 
-        principal = await self._authenticate()
+        principal = await self._authenticate(tool_name, arguments)
 
         if self.config.rate_limit.enabled:
             await self._enforce_rate_limit(principal, tool_name)
@@ -89,7 +108,18 @@ class GlossaryMiddleware(Middleware):
             source=_source_from_arguments(arguments),
         )
         if context.fastmcp_context is not None:
-            context.fastmcp_context.set_state("glossary_principal", principal)
+            # The full ToolRunContext is a superset of just the principal (it
+            # also carries the tool name, arguments, resolved source, and call
+            # start time), so tool bodies that pull state back out via
+            # ctx.get_state get everything in one read. The bare principal is
+            # kept alongside it too, for the common case of only wanting "who
+            # is calling" without needing to know/import ToolRunContext's shape.
+            await context.fastmcp_context.set_state(
+                "glossary_run_context", run_context, serializable=False
+            )
+            await context.fastmcp_context.set_state(
+                "glossary_principal", principal, serializable=False
+            )
 
         for hook in self.config.hooks.before_tool:
             await hook(run_context)
@@ -122,38 +152,37 @@ class GlossaryMiddleware(Middleware):
             )
         return result
 
-    async def _authenticate(self) -> Principal:
+    async def _authenticate(self, tool_name: str, arguments: dict) -> Principal:
         auth_config = self.config.auth
         if auth_config.backend is None:
             return ANONYMOUS
 
-        token = _extract_bearer_token()
-        principal = await auth_config.backend.authenticate(token)
+        headers = _current_http_headers()
+        request = AuthRequest(
+            token=_bearer_token(headers),
+            headers=headers,
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+        principal = await auth_config.backend.authenticate(request)
         if principal is not None:
             return principal
         if auth_config.required:
-            raise ToolError("Authentication required or the provided token is invalid.")
+            raise ToolError(str(AuthenticationError("Authentication required, or the provided credentials are invalid.")))
         return ANONYMOUS
 
     async def _enforce_rate_limit(self, principal: Principal, tool_name: str) -> None:
         limiter = self.config.rate_limit.limiter
         if limiter is None:
-            # MCPConfig construction never leaves this None when enabled=True
-            # for the built-in default (see slb_glossary.mcp.api.Application);
-            # guard here anyway in case a caller enabled rate limiting without one.
+            # slb_glossary.mcp.api.Application always resolves a default limiter
+            # before this middleware can run whenever rate_limit.enabled is True;
+            # reaching this branch means that wiring was bypassed somehow.
+            logger.warning(
+                "RateLimitConfig.enabled is True but no limiter was resolved; "
+                "skipping rate limiting for this call."
+            )
             return
         key = _rate_limit_key(self.config.rate_limit.scope, principal, tool_name)
-        allowed = await limiter.acquire(key)
-        if not allowed:
-            raise ToolError(f"Rate limit exceeded for {key!r}. Try again shortly.")
-
-
-def _source_from_arguments(arguments: typing.Mapping[str, typing.Any]) -> Source | None:
-    """Best-effort parse of a `source` MCP argument into a `Source`, for `ToolRunContext`."""
-    raw = arguments.get("source")
-    if raw is None:
-        return None
-    try:
-        return Source(raw)
-    except ValueError:
-        return None
+        wait_ms = await limiter.hit(key)
+        if wait_ms > 0:
+            raise ToolError(str(RateLimitExceededError(key, wait_ms=wait_ms)))

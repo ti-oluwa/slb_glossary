@@ -11,6 +11,7 @@ from slb_glossary.cli.commands import (
     define,
     install,
     local,
+    mcp,
     random_term,
     related,
     search,
@@ -77,6 +78,7 @@ COMMANDS = {
     "update": update,
     "local": local,
     "config": config,
+    "mcp": mcp,
 }
 
 for name, command in COMMANDS.items():

@@ -16,11 +16,21 @@ app = Application(MCPConfig.default())
 asyncio.run(app.run_async())
 ```
 
+Or from the command line: `slb mcp serve` (see `slb_glossary.cli.commands.mcp`).
+
 Requires the `mcp` extra: `pip install slb-glossary[mcp]`.
 """
 
 from slb_glossary.mcp.api import Application
-from slb_glossary.mcp.auth import ANONYMOUS, AuthBackend, NullAuth, Principal, StaticTokenAuth
+from slb_glossary.mcp.auth import (
+    ANONYMOUS,
+    AuthBackend,
+    AuthRequest,
+    NullAuth,
+    Principal,
+    StaticTokenAuth,
+    import_backend,
+)
 from slb_glossary.mcp.config import (
     AuthConfig,
     HooksConfig,
@@ -35,11 +45,25 @@ from slb_glossary.mcp.config import (
     SourcePolicyConfig,
     StreamingConfig,
     TimeoutConfig,
-    ToolName,
+    Tool,
     resolve_tools,
 )
+from slb_glossary.mcp.errors import (
+    AuthenticationError,
+    MCPConfigError,
+    MCPError,
+    RateLimitExceededError,
+)
 from slb_glossary.mcp.ratelimit import RateLimiter, SlidingWindowRateLimiter
-from slb_glossary.mcp.runtime import Runtime, ToolRunContext
+from slb_glossary.mcp.runtime import Runtime
+from slb_glossary.mcp.types import (
+    AfterToolHook,
+    BeforeToolHook,
+    LifecycleHook,
+    NamedComponent,
+    ToolErrorHook,
+    ToolRunContext,
+)
 
 __all__ = [
     "Application",
@@ -56,15 +80,26 @@ __all__ = [
     "HooksConfig",
     "MCPLoggingConfig",
     "StreamingConfig",
-    "ToolName",
+    "Tool",
     "resolve_tools",
     "AuthBackend",
+    "AuthRequest",
     "Principal",
     "ANONYMOUS",
     "StaticTokenAuth",
     "NullAuth",
+    "import_backend",
     "RateLimiter",
     "SlidingWindowRateLimiter",
     "Runtime",
+    "NamedComponent",
     "ToolRunContext",
+    "BeforeToolHook",
+    "AfterToolHook",
+    "ToolErrorHook",
+    "LifecycleHook",
+    "MCPError",
+    "MCPConfigError",
+    "AuthenticationError",
+    "RateLimitExceededError",
 ]

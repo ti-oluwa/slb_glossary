@@ -16,6 +16,11 @@ from slb_glossary.errors import (
     QueryError,
 )
 
+try:
+    from slb_glossary.mcp.errors import MCPError
+except ImportError:
+    MCPError = None  # type: ignore[assignment,misc]
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +39,7 @@ EXIT_CODES: dict[type[BaseException], int] = {
     DatabaseError: 6,
     QueryError: 7,
     LoggingError: 8,
+    **({MCPError: 9} if MCPError is not None else {}),
 }
 """
 Maps a known library exception type to the process exit code it should
@@ -53,6 +59,11 @@ produce, so scripts calling this CLI can distinguish failure causes:
 * `7` - `QueryError`: a `slb_glossary.query` lookup could not be satisfied
   with the source(s) it was given.
 * `8` - `LoggingError`: a `--log-to`/`--log-sink` target could not be set up.
+* `9` - `MCPError` (`slb_glossary.mcp.errors.MCPError`): the `mcp serve`
+  command hit an invalid `MCPConfig`, an authentication/rate-limit
+  failure, or another MCP-server-specific error. Only registered when the
+  `mcp` extra is installed; on a base install this code is never assigned
+  since `slb mcp serve` itself would already have failed to import.
 """
 
 
