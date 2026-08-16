@@ -13,6 +13,42 @@ from slb_glossary.query import Source
 
 __all__ = ["mcp"]
 
+_APP_PATH_IGNORED_OPTIONS = (
+    "config_path",
+    "tools",
+    "source",
+    "no_local",
+    "no_live",
+    "allow_write",
+    "timeout",
+    "auth_tokens",
+    "auth_backend_path",
+    "limit",
+)
+"""Option names that only make sense when *building* an `MCPConfig` from
+flags - meaningless (and silently ignored, if we let them through) once
+APP_PATH hands over an already-built app. Kept as a tuple of parameter
+names, checked against `click.Context.get_parameter_source` in
+`_reject_flags_with_app_path`, rather than compared against each
+option's default value, so an explicit `--timeout 60` (which happens to
+equal the default) is still caught as "the user asked for this"."""
+
+
+def _reject_flags_with_app_path(ctx: click.Context) -> None:
+    """Raise a `click.UsageError` if APP_PATH and any config-building flag were both given."""
+    explicit = [
+        name
+        for name in _APP_PATH_IGNORED_OPTIONS
+        if ctx.get_parameter_source(name) is click.core.ParameterSource.COMMANDLINE
+    ]
+    if explicit:
+        flags = ", ".join(f"--{name.replace('_', '-')}" for name in explicit)
+        raise click.UsageError(
+            f"APP_PATH loads an already-built app, so {flags} would be ignored. Configure "
+            f"that app in Python instead, or drop APP_PATH and let this command build the "
+            f"MCPConfig from flags."
+        )
+
 
 @click.group("mcp")
 def mcp() -> None:
@@ -20,6 +56,7 @@ def mcp() -> None:
 
 
 @mcp.command("serve")
+@click.argument("app_path", required=False, metavar="[APP_PATH]")
 @click.option(
     "--config",
     "config_path",
@@ -95,7 +132,10 @@ def mcp() -> None:
     help="Verbosity of slb_glossary's own logging output.",
 )
 @cli_command
+@click.pass_context
 def serve(
+    ctx: click.Context,
+    app_path: str | None,
     config_path: pathlib.Path | None,
     transport: str,
     host: str,
@@ -111,24 +151,49 @@ def serve(
     limit: int | None,
     log_level: str | None,
 ) -> None:
-    """Build an `MCPConfig` from flags and serve it."""
+    """
+    Serve an MCP server, either built from the flags below or loaded from APP_PATH.
+
+    \b
+    APP_PATH, if given, is a "module:attr" import path (uvicorn-style) to an
+    already-built `MCPApp` or `fastmcp.FastMCP` - e.g. `app.main:app` for
+    `app/main.py` containing a module-level `app = MCPApp(...)`. `attr` may
+    also be a zero-argument factory function returning either. When
+    APP_PATH is given, every flag below except --transport/--host/--port/
+    --log-level is ignored (the app is already fully configured); passing
+    one of the ignored flags explicitly alongside APP_PATH is an error, to
+    avoid silently doing something other than what was asked.
+    """
     try:
         from slb_glossary.mcp.api import MCPApp
-        from slb_glossary.mcp.auth import StaticTokenAuth, import_backend
-        from slb_glossary.mcp.config import (
-            AuthConfig,
-            LocalAccessConfig,
-            MCPConfig,
-            RateLimitConfig,
-            SessionAccessConfig,
-            SourcePolicyConfig,
-            TimeoutConfig,
-            resolve_tools,
-        )
     except ImportError as exc:
         raise click.ClickException(
             "The MCP server needs the 'mcp' extra: `pip install slb-glossary[mcp]`."
         ) from exc
+
+    transport_kwargs: dict[str, typing.Any] = {"transport": transport}
+    if transport != "stdio":
+        transport_kwargs.update(host=host, port=port)
+
+    if app_path is not None:
+        _reject_flags_with_app_path(ctx)
+        from slb_glossary.mcp.loader import load_app
+
+        app = load_app(app_path)
+        run_async(app.run_async(**transport_kwargs))
+        return
+
+    from slb_glossary.mcp.auth import StaticTokenAuth, import_backend
+    from slb_glossary.mcp.config import (
+        AuthConfig,
+        LocalAccessConfig,
+        MCPConfig,
+        RateLimitConfig,
+        SessionAccessConfig,
+        SourcePolicyConfig,
+        TimeoutConfig,
+        resolve_tools,
+    )
 
     if auth_tokens and auth_backend_path:
         raise click.UsageError("--auth-token and --auth-backend are mutually exclusive.")
@@ -168,7 +233,4 @@ def serve(
     )
 
     app = MCPApp(config)
-    transport_kwargs: dict[str, typing.Any] = {"transport": transport}
-    if transport != "stdio":
-        transport_kwargs.update(host=host, port=port)
     run_async(app.run_async(**transport_kwargs))
