@@ -3,6 +3,13 @@ Sync the local database from a live `BrowserSession`.
 
 Call one of these functions as often (or as rarely) as fits your own use of the glossary; see the
 responsible-use note on `sync_all` in particular.
+
+Every fetch here writes to the local database incrementally, in batches
+(see `batch_size`/`persist_on_error` on each function), via
+`slb_glossary.local.upsert_results_incrementally` - rather than collecting
+the whole fetch in memory and writing it in one shot at the end - so a
+sync interrupted partway through (a browser crash, a killed process, a
+flaky network) still keeps whatever it managed to fetch before that point.
 """
 
 import dataclasses
@@ -14,8 +21,9 @@ from slb_glossary.live.api import get_results_from_urls, get_terms_urls
 from slb_glossary.live.api import get_terms_on as fetch_terms_on
 from slb_glossary.live.api import search as live_search
 from slb_glossary.live.browser import BrowserSession
+from slb_glossary.local.api import DEFAULT_UPSERT_BATCH_SIZE
 from slb_glossary.local.api import count as count_terms
-from slb_glossary.local.api import get_topics, upsert_results
+from slb_glossary.local.api import get_topics, upsert_results_incrementally
 from slb_glossary.local.models import Database, Metadata
 
 logger = logging.getLogger(__name__)
@@ -46,8 +54,15 @@ class SyncSummary:
     synced_at: str
     """ISO-8601 UTC timestamp this sync completed at."""
 
+    interrupted: bool = False
+    """`True` if the live fetch behind this sync raised partway through and
+    this summary reflects only the partial progress saved before that
+    (see each function's `persist_on_error`), rather than a complete fetch."""
 
-async def _record_sync(db: Database, *, terms_written: int, language: str) -> SyncSummary:
+
+async def _record_sync(
+    db: Database, *, terms_written: int, language: str, interrupted: bool = False
+) -> SyncSummary:
     """Recompute the local database's totals and persist them to `metadata.json`."""
     total = await count_terms(db)
     topics = await get_topics(db)
@@ -61,14 +76,60 @@ async def _record_sync(db: Database, *, terms_written: int, language: str) -> Sy
     metadata.save(db.metadata_path)
 
     logger.debug(
-        "Recorded sync metadata: %d term(s) written, %d total, %d topic(s)",
+        "Recorded sync metadata: %d term(s) written, %d total, %d topic(s)%s",
         terms_written,
         total,
         len(topics),
+        " (interrupted)" if interrupted else "",
     )
     return SyncSummary(
-        terms_written=terms_written, total_terms=total, topics=topics, synced_at=now
+        terms_written=terms_written,
+        total_terms=total,
+        topics=topics,
+        synced_at=now,
+        interrupted=interrupted,
     )
+
+
+async def _drain_and_upsert(
+    db: Database,
+    results,
+    *,
+    language: str,
+    batch_size: int,
+    persist_on_error: bool,
+) -> tuple[int, bool]:
+    """
+    Drain a live result stream through `upsert_results_incrementally`, returning `(written, interrupted)`.
+
+    :return: The total rows written, and whether `results` raised partway
+        through (in which case, if `persist_on_error` was `True`, whatever
+        had already been buffered at that point was still saved).
+    """
+    stats: dict[str, int] = {}
+    interrupted = False
+    try:
+        async for _ in upsert_results_incrementally(
+            db,
+            results,
+            language=language,
+            batch_size=batch_size,
+            persist_on_error=persist_on_error,
+        ):
+            pass
+    except BaseException:
+        interrupted = True
+        # upsert_results_incrementally already flushed (if persist_on_error)
+        # and logged before this propagated; still populated `stats` via
+        # its `finally`, so re-raise only after recording what was saved.
+        written = stats.get("written", 0)
+        logger.warning(
+            "Sync interrupted after saving %d term(s); re-raising the original error", written
+        )
+        raise
+    finally:
+        pass
+    return stats.get("written", 0), interrupted
 
 
 async def sync_topics(db: Database, session: BrowserSession) -> SyncSummary:
@@ -97,6 +158,8 @@ async def sync_query(
     start_letter: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
+    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    persist_on_error: bool = True,
 ) -> SyncSummary:
     """
     Fetch `query`'s results from the live glossary and store them locally.
@@ -113,6 +176,12 @@ async def sync_query(
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches. Keep this low; see
         `slb_glossary.live.get_results_from_urls`'s own note on server load.
+    :param batch_size: Number of results to buffer before each incremental
+        write to `db`. See `slb_glossary.local.upsert_results_incrementally`.
+    :param persist_on_error: If `True` (the default), save whatever's
+        buffered so far if the fetch raises partway through, instead of
+        losing it (the resulting `SyncSummary.interrupted` is then `True`,
+        and the original exception is still re-raised after saving).
     :return: A summary of the sync.
     """
     started_at = time.monotonic()
@@ -125,8 +194,13 @@ async def sync_query(
         limit=limit,
         concurrency=concurrency,
     )
-    written = await upsert_results(db, results, language=session.language.value)
-    summary = await _record_sync(db, terms_written=written, language=session.language.value)
+    written, interrupted = await _drain_and_upsert(
+        db, results, language=session.language.value, batch_size=batch_size,
+        persist_on_error=persist_on_error,
+    )
+    summary = await _record_sync(
+        db, terms_written=written, language=session.language.value, interrupted=interrupted
+    )
     logger.info(
         "Synced query %r: %d term(s) written in %.3fs",
         query,
@@ -143,6 +217,8 @@ async def sync_topic(
     *,
     limit: int | None = None,
     concurrency: int = 1,
+    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    persist_on_error: bool = True,
 ) -> SyncSummary:
     """
     Fetch every term filed under `topic` from the live glossary and store them locally.
@@ -152,13 +228,24 @@ async def sync_topic(
     :param topic: Topic name, or several comma-separated topic names.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches.
+    :param batch_size: Number of results to buffer before each incremental
+        write to `db`. See `slb_glossary.local.upsert_results_incrementally`.
+    :param persist_on_error: If `True` (the default), save whatever's
+        buffered so far if the fetch raises partway through, instead of
+        losing it (the resulting `SyncSummary.interrupted` is then `True`,
+        and the original exception is still re-raised after saving).
     :return: A summary of the sync.
     """
     started_at = time.monotonic()
     logger.info("Syncing topic %r to the local database", topic)
     results = fetch_terms_on(session, topic, limit=limit, concurrency=concurrency)
-    written = await upsert_results(db, results, language=session.language.value)
-    summary = await _record_sync(db, terms_written=written, language=session.language.value)
+    written, interrupted = await _drain_and_upsert(
+        db, results, language=session.language.value, batch_size=batch_size,
+        persist_on_error=persist_on_error,
+    )
+    summary = await _record_sync(
+        db, terms_written=written, language=session.language.value, interrupted=interrupted
+    )
     logger.info(
         "Synced topic %r: %d term(s) written in %.3fs",
         topic,
@@ -176,6 +263,8 @@ async def sync_letter(
     topic: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
+    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    persist_on_error: bool = True,
 ) -> SyncSummary:
     """
     Fetch every term starting with `start_letter` from the live glossary and store them locally.
@@ -191,6 +280,12 @@ async def sync_letter(
         comma-separated topics.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches.
+    :param batch_size: Number of results to buffer before each incremental
+        write to `db`. See `slb_glossary.local.upsert_results_incrementally`.
+    :param persist_on_error: If `True` (the default), save whatever's
+        buffered so far if the fetch raises partway through, instead of
+        losing it (the resulting `SyncSummary.interrupted` is then `True`,
+        and the original exception is still re-raised after saving).
     :return: A summary of the sync.
     """
     started_at = time.monotonic()
@@ -199,8 +294,13 @@ async def sync_letter(
     results = get_results_from_urls(
         session, urls, topic=topic, concurrency=concurrency, first_only=True
     )
-    written = await upsert_results(db, results, language=session.language.value)
-    summary = await _record_sync(db, terms_written=written, language=session.language.value)
+    written, interrupted = await _drain_and_upsert(
+        db, results, language=session.language.value, batch_size=batch_size,
+        persist_on_error=persist_on_error,
+    )
+    summary = await _record_sync(
+        db, terms_written=written, language=session.language.value, interrupted=interrupted
+    )
     logger.info(
         "Synced letter %r: %d term(s) written in %.3fs",
         start_letter,
@@ -210,7 +310,14 @@ async def sync_letter(
     return summary
 
 
-async def sync_all(db: Database, session: BrowserSession, *, concurrency: int = 1) -> SyncSummary:
+async def sync_all(
+    db: Database,
+    session: BrowserSession,
+    *,
+    concurrency: int = 1,
+    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    persist_on_error: bool = True,
+) -> SyncSummary:
     """
     Fetch the entire glossary from the live site and store it locally.
 
@@ -224,34 +331,63 @@ async def sync_all(db: Database, session: BrowserSession, *, concurrency: int = 
     are lighter alternatives for keeping specific terms fresh instead of
     mirroring the whole site.
 
+    Each topic is upserted incrementally as its terms are fetched (see
+    `batch_size`), and if a topic's fetch fails partway through, whatever
+    was already fetched for it - and for every topic completed before it -
+    is kept: only the failing topic's own in-progress batch is affected by
+    `persist_on_error`, and the exception still propagates once that's
+    handled, ending the sync at that point rather than skipping ahead to
+    the next topic.
+
     :param db: The local database to write to.
     :param session: An open `BrowserSession` to fetch from.
     :param concurrency: Concurrent term-page fetches, per topic.
+    :param batch_size: Number of results to buffer before each incremental
+        write to `db`. See `slb_glossary.local.upsert_results_incrementally`.
+    :param persist_on_error: If `True` (the default), save whatever's
+        buffered for the topic currently being fetched if it raises
+        partway through, instead of losing it (the resulting
+        `SyncSummary.interrupted` is then `True`, and the original
+        exception is still re-raised after saving).
     :return: A summary of the sync.
     """
     started_at = time.monotonic()
     topic_names = sorted(session.topics)
     logger.info("Syncing entire glossary (%d topics) to local database", len(topic_names))
     total_written = 0
-    for index, topic_name in enumerate(topic_names, start=1):
-        topic_started_at = time.monotonic()
-        results = fetch_terms_on(session, topic_name, concurrency=concurrency)
-        written = await upsert_results(db, results, language=session.language.value)
-        total_written += written
-        elapsed = time.monotonic() - started_at
-        logger.debug(
-            "Synced topic %d/%d (%r): %d term(s) in %.3fs (%d total so far, %.3fs elapsed, avg %.3fs/topic)",
-            index,
-            len(topic_names),
-            topic_name,
-            written,
-            time.monotonic() - topic_started_at,
-            total_written,
-            elapsed,
-            elapsed / index,
+    interrupted = False
+    try:
+        for index, topic_name in enumerate(topic_names, start=1):
+            topic_started_at = time.monotonic()
+            results = fetch_terms_on(session, topic_name, concurrency=concurrency)
+            written, _ = await _drain_and_upsert(
+                db, results, language=session.language.value, batch_size=batch_size,
+                persist_on_error=persist_on_error,
+            )
+            total_written += written
+            elapsed = time.monotonic() - started_at
+            logger.debug(
+                "Synced topic %d/%d (%r): %d term(s) in %.3fs (%d total so far, %.3fs elapsed, avg %.3fs/topic)",
+                index,
+                len(topic_names),
+                topic_name,
+                written,
+                time.monotonic() - topic_started_at,
+                total_written,
+                elapsed,
+                elapsed / index,
+            )
+    except BaseException:
+        interrupted = True
+        raise
+    finally:
+        summary = await _record_sync(
+            db,
+            terms_written=total_written,
+            language=session.language.value,
+            interrupted=interrupted,
         )
 
-    summary = await _record_sync(db, terms_written=total_written, language=session.language.value)
     elapsed = time.monotonic() - started_at
     logger.info(
         "Synced entire glossary: %d term(s) written across %d topic(s) in %.3fs (avg %.3fs/topic)",
