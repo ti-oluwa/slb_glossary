@@ -6,7 +6,7 @@ import slb_glossary as slb
 async def main() -> None:
     async with slb.local.database() as db, slb.live.session() as session:
         # Local first; only opens a live page if the local DB has nothing.
-        # persist=True writes whatever came back live into `db`.
+        # `persist=True` writes whatever came back live into `db`.
         async for result in slb.search("water saturation", db=db, session=session, persist=True):
             print(result.term, "-", result.definition)
 

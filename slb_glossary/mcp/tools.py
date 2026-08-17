@@ -72,7 +72,7 @@ Tool selection:
 
 Every tool accepts a `source` argument ("auto", "local", or "live") when
 this server exposes that choice: "auto" tries the local cache first and
-only reaches out to the live site if nothing local matches - prefer leaving
+only reaches out to the live site if nothing local matches. Prefer leaving
 it at "auto" unless you specifically need one or the other.
 """
 
@@ -95,14 +95,16 @@ def related_lookup_to_dict(lookup: TermLookup[tuple[typing.Any, ...]]) -> dict[s
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class ToolSpec:
-    """One MCP tool's registration metadata, ready for `slb_glossary.mcp.api` to wire up."""
+    """One MCP tool's registration metadata, ready for `slb_glossary.mcp.api.MCPApp` to wire up."""
 
     name: str
     """MCP tool name, e.g. `"glossary_search"`."""
 
     description: str
-    """Tool description shown to MCP clients/LLMs. Written to make the
-    right tool choice as unambiguous as possible - see the module docstring."""
+    """
+    Tool description shown to MCP clients/LLMs. Written to make the
+    right tool choice as unambiguous as possible.
+    """
 
     args_type: type
     """The frozen dataclass type describing this tool's arguments."""
@@ -113,8 +115,7 @@ class ToolSpec:
     writes: bool
     """
     Whether this tool can write to the local database. Only ever `True`
-    for the sync tool - drives extra logging/auditing in
-    `slb_glossary.mcp.middleware`.
+    for the sync tool. Drives extra logging/auditing in `slb_glossary.mcp.middleware`.
     """
 
     supports_source: bool
@@ -282,8 +283,10 @@ class CompareArgs:
     """Where to look up each term: `"auto"`, `"local"`, or `"live"`."""
 
     persist: bool = False
-    """If a live fetch happens, cache each result locally. Ignored unless
-    the server has local write access enabled."""
+    """
+    If a live fetch happens, cache each result locally. Ignored unless
+    the server has local write access enabled.
+    """
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -299,7 +302,7 @@ class SyncArgs:
     """
     What to sync: a single free-text `"query"`, everything under one
     `"topic"`, everything starting with one `"letter"`, or `"all"` (the
-    entire glossary - heavy, use sparingly).
+    entire glossary. Heavy, so use sparingly).
     """
 
     value: str | None = None
@@ -318,8 +321,8 @@ def resolve_source(requested: Source, config: MCPConfig) -> Source:
     source = requested if policy.expose_choice else policy.default
     allowed = policy.allowed
     assert allowed is not None, (
-        "MCPConfig.source_policy.allowed should always be resolved to a concrete frozenset "
-        "by MCPConfig.__post_init__ before a tool call can reach this point."
+        "`MCPConfig.source_policy.allowed` should always be resolved to a concrete frozenset "
+        "by `MCPConfig` (post initialization) before a tool call can reach this point."
     )
     if source not in allowed:
         choices = ", ".join(sorted(item.value for item in allowed))
@@ -532,7 +535,7 @@ async def _handle_sync(
 ) -> dict[str, typing.Any]:
     if not config.local.allow_write:
         raise MCPError(
-            "glossary_sync is unavailable: this server was not configured with local write access."
+            "`glossary_sync` is unavailable: this server was not configured with local write access."
         )
     if args.mode != "all" and not args.value:
         raise ValueError(f"`value` is required for mode={args.mode!r}.")
@@ -540,7 +543,7 @@ async def _handle_sync(
     db = await runtime.open_local_db()
     async with runtime.acquire(Source.LIVE) as (_, session):
         assert session is not None, (
-            "runtime.acquire(Source.LIVE) should always yield a session; Runtime.acquire "
+            "`runtime.acquire(Source.LIVE)` should always yield a session; `Runtime.acquire` "
             "only returns a None session when it isn't asked for one."
         )
         if args.mode == "query":
@@ -559,7 +562,7 @@ async def _handle_sync(
                 db, session, args.value, limit=args.limit, concurrency=args.concurrency
             )
         else:
-            assert args.mode == "all", f"Unexpected SyncArgs.mode {args.mode!r}."
+            assert args.mode == "all", f"Unexpected `SyncArgs.mode` {args.mode!r}."
             summary = await sync_api.sync_all(db, session, concurrency=args.concurrency)
 
     return dataclasses.asdict(summary)

@@ -1,11 +1,10 @@
 """
 Pluggable logging sinks for `slb_glossary`, meant for CLI/bug-report use.
 
-`slb_glossary.__init__` calls `logging.basicConfig` so the package logs
-somewhere useful out of the box. This module exists for callers who want
-more control over *where* those log records end up. May be a file for bug
-reports, `stderr`/`stdout` explicitly, or a fully custom destination,
-without having to hand-roll `logging.Handler` boilerplate themselves.
+This module exists for callers who want more control over *where*
+log records end up. May be a file for bug reports, `stderr`/`stdout`
+explicitly, or a fully custom destination, without having to hand-roll `
+logging.Handler` boilerplate themselves.
 
 ```python
 from slb_glossary.logging import FileSink, configure_logging
@@ -13,11 +12,6 @@ from slb_glossary.logging import FileSink, configure_logging
 # Route every slb_glossary log record to a file for this run.
 configure_logging(sinks=FileSink("slb-glossary.log"), level="DEBUG")
 ```
-
-The CLI exposes this via `--log-to`/`--log-sink` (see
-`slb_glossary.cli.session_options`), and `slb_glossary.browser.open_session`
-accepts a `log_sink` argument so library users get the same control over a
-single `BrowserSession` without reaching into `logging` themselves.
 """
 
 import contextlib
@@ -50,11 +44,11 @@ class LogSink(typing.Protocol):
     """
     Protocol for a destination formatted log lines can be written to.
 
-    Implement this (no base class required, just the three methods) to
-    route `slb_glossary`'s logging anywhere: a file, a socket, a queue for
-    an in-app log viewer, a bug-report buffer, etc. Pass an instance (or
-    the class itself, for a no-argument constructor) to `configure_logging`,
-    `resolve_sink`, `--log-to`/`--log-sink`, or `open_session(log_sink=...)`.
+    Implement this interface to route `slb_glossary`'s logging anywhere:
+    a file, a socket, a queue for an in-app log viewer, a bug-report buffer,
+    etc. Pass an instance (or the class itself, for a no-argument constructor)
+    to `configure_logging`, `resolve_sink`, `--log-to`/`--log-sink`, or
+    `open_session(log_sink=...)`.
     """
 
     def write(self, message: str) -> None:
@@ -256,7 +250,6 @@ def resolve_sink(
     if _looks_like_import_path(text):
         target = import_sink(text)
         return target() if isinstance(target, type) else target
-
     return FileSink(text)
 
 
@@ -290,7 +283,7 @@ def configure_logging(
         records to its own ancestor loggers (e.g. the root logger) after
         also sending them to `sinks`. Defaults to `False` to avoid
         duplicate output alongside the root handler `logging.basicConfig`
-        sets up in `slb_glossary.__init__`.
+        sets up on package initialization.
     :return: The `SinkHandler` now attached to `logger_name`'s logger.
     """
     if sinks is None:

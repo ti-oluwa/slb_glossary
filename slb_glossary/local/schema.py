@@ -105,7 +105,7 @@ async def initialize(connection: aiosqlite.Connection) -> None:
         raise DatabaseError(
             "The installed SQLite build has no FTS5 extension, which "
             "`slb_glossary.local` requires for full-text search. Rebuild "
-            "Python's sqlite3 module against a SQLite build with FTS5 enabled."
+            "Python's `sqlite3` module against a SQLite build with FTS5 enabled."
         ) from exc
 
     for statement in CREATE_FTS_TRIGGERS:

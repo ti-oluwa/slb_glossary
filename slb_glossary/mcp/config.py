@@ -24,7 +24,7 @@ from collections.abc import Iterable, Mapping
 
 from fastmcp.server.auth import AuthProvider
 
-from slb_glossary.config import BrowserSessionConfig, DatabaseConfig
+from slb_glossary.config import BrowserSessionOptions, DatabaseOptions
 from slb_glossary.logging import LogSink
 from slb_glossary.mcp.auth import AuthBackend
 from slb_glossary.mcp.errors import MCPConfigError
@@ -216,11 +216,11 @@ class SessionAccess:
     concurrent tool calls can each want their own session.
     """
 
-    browser: BrowserSessionConfig = dataclasses.field(default_factory=BrowserSessionConfig)
+    browser: BrowserSessionOptions = dataclasses.field(default_factory=BrowserSessionOptions)
     """
     Options forwarded to `slb_glossary.live.browser.open_session` -
     language, browser type, headless, resource blocking, retry policy, and so on.
-    See `slb_glossary.config.BrowserSessionConfig`.
+    See `slb_glossary.config.BrowserSessionOptions`.
     """
 
 
@@ -245,10 +245,10 @@ class LocalAccess:
     run explicit syncs.
     """
 
-    database: DatabaseConfig = dataclasses.field(default_factory=DatabaseConfig)
+    database: DatabaseOptions = dataclasses.field(default_factory=DatabaseOptions)
     """
     Options for the local database itself: storage location, filename,
-    staleness threshold. See `slb_glossary.config.DatabaseConfig`.
+    staleness threshold. See `slb_glossary.config.DatabaseOptions`.
     """
 
 
@@ -503,7 +503,7 @@ class ServerInfo:
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class MCPConfig:
     """
-    Top-level, fully composable configuration for `slb_glossary.mcp.api.MCPApp`.
+    Top-level configuration for `slb_glossary.mcp.api.MCPApp`.
 
     ```python
     from slb_glossary.mcp.config import MCPConfig, LocalAccess, Tool

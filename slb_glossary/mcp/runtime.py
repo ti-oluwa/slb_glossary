@@ -7,7 +7,7 @@ import pathlib
 import time
 from collections.abc import AsyncIterator
 
-from slb_glossary.config import DatabaseConfig
+from slb_glossary.config import DatabaseOptions
 from slb_glossary.live.browser import BrowserSession, close_session, open_session
 from slb_glossary.local.connection import close_db, open_db
 from slb_glossary.local.models import Database
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["Runtime"]
 
 
-def get_db_path(database_config: DatabaseConfig) -> str | None:
+def get_db_path(database_config: DatabaseOptions) -> str | None:
     """Extract the configured local database path, or `None` for the OS default."""
     if not database_config.data_dir:
         return None

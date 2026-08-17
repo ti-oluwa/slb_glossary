@@ -16,7 +16,7 @@ Or reach for the underlying `fastmcp.FastMCP` server directly (e.g. to
 mount it inside a larger ASGI app, or drive it from `fastmcp`'s own CLI):
 
 ```python
-server = app.to_server()
+server = app.server()
 ```
 """
 
@@ -29,9 +29,9 @@ import logging
 import sys
 import typing
 
-from fastmcp import Context, FastMCP
+from fastmcp.server.context import Context
+from fastmcp.server.server import FastMCP
 
-from slb_glossary import __version__
 from slb_glossary.logging import DEFAULT_LOG_FORMAT, configure_logging, resolve_sink
 from slb_glossary.mcp.config import MCPConfig
 from slb_glossary.mcp.middleware import MCPMiddleware
@@ -56,7 +56,7 @@ class MCPApp(NamedComponent):
 
     Construction (`MCPApp(config)`) is cheap and does no I/O; the
     underlying `FastMCP` server and its tools are assembled lazily on first
-    `to_server()`/`run()`/`run_async()` call.
+    `server()`/`run()`/`run_async()` call.
 
     Resource startup happens in `run_async`/`run`, or explicitly via `start()`
     for callers embedding the server in their own event loop / lifespan management.
@@ -78,7 +78,7 @@ class MCPApp(NamedComponent):
         """Build an `MCPApp` from `config`. Equivalent to `MCPApp(config)`."""
         return cls(config)
 
-    def to_server(self) -> FastMCP:
+    def server(self) -> FastMCP:
         """
         Build (if not already built) and return the underlying `fastmcp.FastMCP` server.
 
@@ -91,6 +91,8 @@ class MCPApp(NamedComponent):
             return self._server
 
         self._resolve_default_rate_limiter()
+
+        from slb_glossary import __version__
 
         server = FastMCP(
             name=self.config.server.name,
@@ -193,14 +195,14 @@ class MCPApp(NamedComponent):
             e.g. `transport="http", host="0.0.0.0", port=8000`. Defaults
             to FastMCP's own default (stdio) when omitted.
         """
-        server = self.to_server()
+        server = self.server()
         await self.start()
         async with contextlib.aclosing(self):
             await server.run_async(**transport_kwargs)
 
     def run(self, **transport_kwargs: typing.Any) -> None:
         """
-        Synchronous convenience wrapper around `run_async`, for simple entry points.
+        Synchronous convenience wrapper around `MCPApp.run_async`, for simple entry points.
 
         :param transport_kwargs: Forwarded to `fastmcp.FastMCP.run_async` - see `run_async`.
         """

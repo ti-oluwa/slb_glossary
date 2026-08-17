@@ -11,9 +11,10 @@ import json
 import logging
 import pathlib
 import typing
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from slb_glossary.errors import ConfigError
+from slb_glossary.logging import LogSink
 from slb_glossary.models import Language
 from slb_glossary.paths import default_config_path
 from slb_glossary.retries import BackoffType, RetryPolicy
@@ -22,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "Config",
-    "DatabaseConfig",
-    "OutputConfig",
-    "RetryConfig",
-    "BrowserSessionConfig",
+    "DatabaseOptions",
+    "OutputOptions",
+    "RetryOptions",
+    "BrowserSessionOptions",
 ]
 
 
@@ -33,7 +34,7 @@ T = typing.TypeVar("T")
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class RetryConfig:
+class RetryOptions:
     """Serializable counterpart of `slb_glossary.retries.RetryPolicy`."""
 
     attempts: int = 3
@@ -74,7 +75,7 @@ class RetryConfig:
 
     @classmethod
     def from_retry_policy(cls, policy: RetryPolicy) -> typing.Self:
-        """Build a `RetryConfig` from an existing `RetryPolicy`."""
+        """Build a `RetryOptions` from an existing `RetryPolicy`."""
         return cls(
             attempts=policy.attempts,
             base_delay=policy.base_delay,
@@ -86,7 +87,7 @@ class RetryConfig:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class BrowserSessionConfig:
+class BrowserSessionOptions:
     """Serializable counterpart of the options `slb_glossary.browser.open_session` takes."""
 
     language: str = "en"
@@ -101,7 +102,7 @@ class BrowserSessionConfig:
     block: bool = True
     """Whether to block images/media/fonts/stylesheets for faster page loads."""
 
-    block_resources: list[str] = dataclasses.field(default_factory=list)
+    block_resources: Sequence[str] = dataclasses.field(default_factory=list)
     """Specific request resource types to block, e.g. `["image", "font"]`.
     Overrides `block` when non-empty."""
 
@@ -129,9 +130,9 @@ class BrowserSessionConfig:
     use_stealth: bool = True
     """Whether to apply Playwright stealth patches to the browser context."""
 
-    log_sink: str | None = None
+    log_sink: LogSink | type[LogSink] | str | pathlib.Path | None = None
     """
-    Where to route `slb_glossary`'s logging for this run: a file path,
+    Where to route the application's logging for this run. Can be a file path,
     `"stderr"`/`"stdout"`, or a `"module:ClassName"` import path to a
     custom `slb_glossary.logging.LogSink`. `None` (the default) leaves
     whatever logging setup is already in place untouched. See
@@ -139,7 +140,7 @@ class BrowserSessionConfig:
     CLI's `--log-to`/`--log-sink` options.
     """
 
-    retry: RetryConfig = dataclasses.field(default_factory=RetryConfig)
+    retry: RetryOptions = dataclasses.field(default_factory=RetryOptions)
     """Policy for retrying a flaky initial page load."""
 
     def to_session_kwargs(self) -> dict[str, typing.Any]:
@@ -188,7 +189,7 @@ class BrowserSessionConfig:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class DatabaseConfig:
+class DatabaseOptions:
     """Configuration for `slb_glossary.local`'s local search database."""
 
     enabled: bool = True
@@ -213,7 +214,7 @@ class DatabaseConfig:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class OutputConfig:
+class OutputOptions:
     """Default CLI/print output formatting."""
 
     default_format: str | None = None
@@ -313,7 +314,7 @@ def _strip_none(data: typing.Any) -> typing.Any:
     TOML has no null type, so `tomlkit.dumps` raises on any `None` value
     anywhere in the structure. `Config.to_dict()` includes several
     `Optional` fields that default to `None` (e.g.
-    `BrowserSessionConfig.executable_path`, `DatabaseConfig.data_dir`), so those
+    `BrowserSessionOptions.executable_path`, `DatabaseOptions.data_dir`), so those
     need to be dropped rather than written before a TOML dump can succeed.
 
     A dropped key round-trips safely: `_dataclass_from_mapping` falls back
@@ -386,13 +387,13 @@ class Config:
     ```
     """
 
-    session: BrowserSessionConfig = dataclasses.field(default_factory=BrowserSessionConfig)
+    session: BrowserSessionOptions = dataclasses.field(default_factory=BrowserSessionOptions)
     """Browser/session options."""
 
-    local: DatabaseConfig = dataclasses.field(default_factory=DatabaseConfig)
+    local: DatabaseOptions = dataclasses.field(default_factory=DatabaseOptions)
     """Local search database options."""
 
-    output: OutputConfig = dataclasses.field(default_factory=OutputConfig)
+    output: OutputOptions = dataclasses.field(default_factory=OutputOptions)
     """Default output formatting options."""
 
     @classmethod

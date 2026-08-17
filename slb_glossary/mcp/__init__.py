@@ -1,5 +1,5 @@
 """
-MCP (Model Context Protocol) server for the SLB Energy Glossary.
+MCP (Model Context Protocol) API for the SLB Energy Glossary.
 
 Exposes `slb_glossary.query`'s search/lookup functions as MCP tools an LLM
 agent can call directly, backed by [FastMCP](https://gofastmcp.com).
@@ -10,12 +10,12 @@ local writes are allowed, which tools are built, timeouts, auth, rate
 limiting, hooks, logging, and streaming - see `slb_glossary.mcp.config`.
 
 ```python
-import asyncio
-
 from slb_glossary.mcp import MCPApp, MCPConfig
 
 app = MCPApp(MCPConfig.default())
-asyncio.run(app.run_async())
+
+if __name__ == "__main_":
+    app.run()
 ```
 
 Or from the command line: `slb mcp serve` (see `slb_glossary.cli.commands.mcp`).

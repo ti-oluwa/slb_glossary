@@ -1,0 +1,20 @@
+import slb_glossary as slb
+import slb_glossary.mcp as slb_mcp
+
+config = slb_mcp.MCPConfig(
+    server=slb_mcp.ServerInfo(name="example-mcp", version="0.0.1"),
+    session=slb_mcp.SessionAccess(
+        enabled=True,
+        max_concurrent=3,
+        browser=slb.config.BrowserSessionOptions(
+            use_stealth=False, log_sink=slb.log.FileSink("example.mcp.log")
+        ),
+    ),
+    local=slb_mcp.LocalAccess(allow_write=True),
+    tools=slb_mcp.Tool.SEARCH | slb_mcp.Tool.SYNC,
+    streaming=slb_mcp.Streaming(allow_override=False),
+)
+app = slb_mcp.MCPApp(config)
+
+if __name__ == "__main__":
+    app.run(transport="http")

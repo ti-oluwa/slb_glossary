@@ -1,5 +1,5 @@
 """
-Local vector store: bring-your-own-embedding similarity search over stored terms.
+Local vector store: *bring-your-own-embedding* similarity search over stored terms.
 
 `slb_glossary.local` deliberately doesn't bundle an embedding model as
 that would drag in a heavy ML dependency for something most callers won't
