@@ -47,11 +47,11 @@ async def fetch_topics(
     started_at = time.monotonic()
     logger.info("Loading glossary topics from %s", base_url)
 
-    async def _load_facet_header() -> str:
+    async def _get_facet_header() -> str:
         await page.goto(base_url, wait_until="domcontentloaded")
         return await get_element_text(page, FACET_HEADER_SELECTOR)
 
-    header_text = await retry_func(_load_facet_header, policy=retry, until=bool)
+    header_text = await retry_func(_get_facet_header, policy=retry, until=bool)
     if not header_text:
         logger.warning(
             "Topics did not load after %d attempts (%.3fs)",

@@ -358,10 +358,10 @@ topics = await slb.local.get_topics(db)  # {topic: term_count}
 total = await slb.local.count(db)
 ```
 
-`search` ranks results best match first: SQLite FTS5 picks candidates, then each one is scored directly against your query so an actual term-name match always beats a word that just happens to show up in a definition. Need the scores themselves - to decide if the results are good enough to trust, say - use `search_scored` instead, which returns `(result, score)` pairs, `score` from `0.0` to `1.0`:
+`search` ranks results best match first: SQLite FTS5 picks candidates, then each one is scored directly against your query so an actual term-name match always beats a word that just happens to show up in a definition. Need the scores themselves - to decide if the results are good enough to trust, say - use `scored_search` instead, which returns `(result, score)` pairs, `score` from `0.0` to `1.0`:
 
 ```python
-for result, score in await slb.local.search_scored(db, "porosity", limit=10):
+for result, score in await slb.local.scored_search(db, "porosity", limit=10):
     print(f"{score:.2f}", result.term)
 ```
 
@@ -431,7 +431,7 @@ At least one of `db` or `session` must be given to every function here - there's
 | `LIVE`           | The live glossary only. Never touches the local database. Requires `session`.                   |
 | `AUTO`    | (Default when both `db` and `session` are given.) Try `db` first. `get_term`, `get_terms_on`, `get_terms_urls`, `get_topics`, `related_terms`, `get_random_term`, and `compare` fall back to `session` if `db` came back with nothing at all. `search` is scored instead of just checked for emptiness - see below. Pass `persist=True` to cache whatever came back live. |
 
-`search`'s `AUTO` behavior goes a step further than the rest: each local result is scored against the query (`local.search_scored`), and if even the best of them isn't a confident match, `session` is queried too and its results are added on rather than replacing the local ones - `relevance_threshold` (`0.0`-`1.0`, default `0.55`) sets how confident is confident enough. This is what lets a search stay accurate without silently trusting a weak local match just because it happened to return something.
+`search`'s `AUTO` behavior goes a step further than the rest: each local result is scored against the query (`local.scored_search`), and if even the best of them isn't a confident match, `session` is queried too and its results are added on rather than replacing the local ones - `relevance_threshold` (`0.0`-`1.0`, default `0.55`) sets how confident is confident enough. This is what lets a search stay accurate without silently trusting a weak local match just because it happened to return something.
 
 When only one of `db`/`session` is given, `AUTO` simply behaves like whichever of `LOCAL`/`LIVE` that one supports. The available functions mirror `slb_glossary.live`/`slb_glossary.local`'s own shapes: `search`, `get_terms_on`, `get_terms_urls`, and `get_topics` stream/return several results; `get_term`, `related_terms`, and `get_random_term` return one; `compare` looks up several terms at once. Each accepts a `fuzzy=True` flag that, for any local read, tolerates minor misspellings/partial names in `topic` (see [Fuzzy topic matching](#fuzzy-topic-matching) - live reads already fuzzy-match topics unconditionally).
 

@@ -227,9 +227,9 @@ async def get_term_detail_blocks(page: Page) -> list[list[TermParagraph]]:
         TERM_DETAIL_SELECTOR,
         """
         (elements) => elements.map((element) =>
-            Array.from(element.querySelectorAll("p")).map((paragraph) => ({
-                text: paragraph.textContent.trim(),
-                links: Array.from(paragraph.querySelectorAll("a"))
+            Array.from(element.querySelectorAll("p, ul, li")).map((block) => ({
+                text: block.textContent.trim(),
+                links: Array.from(block.querySelectorAll("a"))
                     .map((anchor) => ({
                         term: anchor.textContent.trim(),
                         url: anchor.getAttribute("href") || "",

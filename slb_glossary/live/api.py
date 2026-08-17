@@ -35,15 +35,14 @@ __all__ = [
 ]
 
 
+RELATED_KEYWORDS = ("related term", "see related", "synonyms", "alternate form")
+
+
 def _find_related_links(
     paragraphs: typing.Sequence[TermParagraph],
 ) -> tuple[RelatedTerm, ...]:
     """
     Return the related-term links from a definition block's paragraphs.
-
-    Looks for the paragraph that introduces a "See related terms:" (or
-    plain "See:") list and returns the terms it links to; most definition
-    blocks have at most one such paragraph.
 
     :param paragraphs: A definition block's `TermParagraph`s, as returned
         by `slb_glossary.parsers.get_term_detail_blocks`.
@@ -52,8 +51,9 @@ def _find_related_links(
     """
     for paragraph in paragraphs:
         text_lower = paragraph.text.lower()
-        if paragraph.links and ("related term" in text_lower or "see:" in text_lower):
+        if paragraph.links and any(keyword in text_lower for keyword in RELATED_KEYWORDS):
             return paragraph.links
+
     # Fall back to any paragraph with links at all, in case the site's
     # wording of the "related terms" lead-in ever changes.
     for paragraph in paragraphs:
@@ -116,6 +116,7 @@ async def _wait_for_settle(
                 url,
             )
             return current_links, current_header
+
         if time.monotonic() >= deadline:
             logger.debug(
                 "Results panel did not change within %.2fs of loading %s",
@@ -209,6 +210,7 @@ async def get_terms_urls(
             if total_terms is None:
                 logger.debug("Could not read a total term count on tab %d, stopping", tab)
                 return
+
             if max_tabs is None:
                 max_tabs = math.ceil(total_terms / session.terms_per_tab)
                 logger.debug("Search matched %d terms across %d tabs", total_terms, max_tabs)
@@ -219,6 +221,7 @@ async def get_terms_urls(
                 yielded += 1
                 if limit is not None and yielded >= limit:
                     return
+
             logger.debug(
                 "Yielded %d url(s) from tab %d/%d in %.3fs",
                 len(links),
@@ -417,6 +420,7 @@ async def get_results_from_urls(
             url = await url_queue.get()
             if url is None:
                 break
+
             try:
                 async for result in get_results_from_url(worker_session, url, topic=topic):
                     await result_queue.put(result)
@@ -443,9 +447,11 @@ async def get_results_from_urls(
         producer_task.cancel()
         for task in worker_tasks:
             task.cancel()
+
         await asyncio.gather(producer_task, *worker_tasks, return_exceptions=True)
         for page in extra_pages:
             await page.close()
+
         elapsed = time.monotonic() - started_at
         logger.debug(
             "`get_results_from_urls` (concurrency=%d) done: %d result(s) in %.3fs (avg %.3fs/result)",
@@ -488,7 +494,11 @@ async def search(
     logger.info("Searching glossary for %r (limit=%r, concurrency=%r)", query, limit, concurrency)
     started_at = time.monotonic()
     urls = get_terms_urls(
-        session, query=query, topic=topic, start_letter=start_letter, limit=limit
+        session,
+        query=query,
+        topic=topic,
+        start_letter=start_letter,
+        limit=limit,
     )
     count = 0
     async for result in log_timed_yields(
@@ -498,6 +508,7 @@ async def search(
     ):
         count += 1
         yield result
+
     elapsed = time.monotonic() - started_at
     logger.info(
         "Search for %r yielded %d result(s) in %.3fs (avg %.3fs/result)",
@@ -541,17 +552,27 @@ async def get_terms_on(
         concurrency,
     )
     started_at = time.monotonic()
-    urls = get_terms_urls(session, topic=topic, start_letter=start_letter, limit=limit)
+    urls = get_terms_urls(
+        session,
+        topic=topic,
+        start_letter=start_letter,
+        limit=limit,
+    )
     count = 0
     async for result in log_timed_yields(
         get_results_from_urls(
-            session, urls, topic=topic, concurrency=concurrency, first_only=True
+            session,
+            urls,
+            topic=topic,
+            concurrency=concurrency,
+            first_only=True,
         ),
         logger=logger,
         label=f"get_terms_on({topic!r})",
     ):
         count += 1
         yield result
+
     elapsed = time.monotonic() - started_at
     logger.info(
         "Fetched %d term(s) under topic %r in %.3fs (avg %.3fs/term)",

@@ -18,7 +18,7 @@ __all__ = [
     "upsert_results",
     "upsert_results_incrementally",
     "search",
-    "search_scored",
+    "scored_search",
     "get_terms_on",
     "get_term",
     "get_random_term",
@@ -36,18 +36,12 @@ FTS_COLUMN_WEIGHTS: tuple[float, float, float] = (10.0, 1.0, 3.0)
 in that order. FTS5's default is `1.0` for every column, which lets a
 result whose *definition* happens to repeat the query outrank one whose
 *term name* actually matches it. Weighting `term` well above the others
-fixes the common case; `search_scored`'s second pass handles the rest.
+still doesn't fully fix it - bm25 also rewards a column for how *often*
+the query appears in it, so a term whose definition just says the query
+word a lot can still out-score the term actually named that. `scored_search`
+sidesteps this with an exact/prefix name-match tier computed directly in
+SQL, ahead of bm25 entirely - see its docstring.
 """
-
-RERANK_POOL_MULTIPLIER = 4
-"""
-`search_scored` pulls `limit * RERANK_POOL_MULTIPLIER` bm25 candidates
-(floored at `RERANK_POOL_MINIMUM`) before re-scoring and truncating to
-`limit`, so there's actually something for the second pass to reorder.
-"""
-
-RERANK_POOL_MINIMUM = 25
-"""Floor on `search_scored`'s candidate pool size - see `RERANK_POOL_MULTIPLIER`."""
 
 
 def _dump_related(related: tuple[RelatedTerm, ...] | None) -> str | None:
@@ -328,60 +322,8 @@ def _to_fts_query(query: str) -> str:
 
 
 def _normalize(text: str) -> str:
-    """Lowercase `text` and collapse its whitespace, for score comparisons."""
+    """Lowercase `text` and collapse its whitespace, for the exact/prefix-match SQL params."""
     return " ".join(text.strip().lower().split())
-
-
-def _score_result(query: str, result: SearchResult) -> float:
-    """
-    Score how well `result` actually matches `query`, from `0.0` to `1.0`.
-
-    `search_scored` uses `bm25()` to pick candidates fast, but bm25 alone
-    doesn't know a match against the *term itself* should almost always
-    beat one that only matches a stray word buried in a definition. This
-    re-scores each candidate directly against `query` so that distinction
-    can be re-sorted on afterward:
-
-    * An exact (case/whitespace-insensitive) match against `term` scores `1.0`.
-    * `term` starting with `query` scores `0.9`.
-    * Otherwise, scores by how much of `query`'s tokens were found, and
-      where. A token found in `term` counts for more than one found only
-      in `definition`/`topic` and is capped at `0.85` so a loose match never
-      outranks a real one.
-
-    :param query: The free-text query originally searched for.
-    :param result: A candidate result to score against it.
-    :return: A relevance score in `[0.0, 1.0]`.
-    """
-    query_norm = _normalize(query)
-    if not query_norm:
-        return 0.0
-
-    term_norm = _normalize(result.term or "")
-    if term_norm == query_norm:
-        return 1.0
-    if term_norm and term_norm.startswith(query_norm):
-        return 0.9
-
-    tokens = query_norm.split()
-    if not tokens:
-        return 0.0
-
-    term_tokens = set(term_norm.split())
-    definition_norm = _normalize(result.definition or "")
-    topic_norm = _normalize(result.topic or "")
-
-    matched = 0.0
-    for token in tokens:
-        if any(word == token or word.startswith(token) for word in term_tokens):
-            matched += 1.0
-        elif token in topic_norm:
-            matched += 0.6
-        elif token in definition_norm:
-            matched += 0.35
-
-    coverage = min(matched / len(tokens), 1.0)
-    return round(coverage * 0.85, 4)
 
 
 def fuzzy_match_topics(
@@ -458,53 +400,76 @@ async def _resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | 
     return fuzzy_match_topics(stored_topics, topic) or None
 
 
-async def search_scored(
+async def scored_search(
     db: Database,
     query: str,
     *,
     topic: str | None = None,
+    start_letter: str | None = None,
     limit: int | None = 20,
     fuzzy: bool = False,
 ) -> list[tuple[SearchResult, float]]:
     """
-    Full-text search the local database for `query`, ranked, scored, and re-sorted, best match first.
+    Full-text search the local database for `query`, ranked, scored, best match first.
 
-    Two passes. First, SQLite FTS5's `bm25()` - weighted toward the `term`
-    column, see `FTS_COLUMN_WEIGHTS` - picks a pool of candidates fast.
-    Then each candidate is scored directly against `query` (`_score_result`)
-    and re-sorted on that score, which catches cases bm25's column
-    weighting alone still gets wrong, like an exact term-name match losing
-    to a longer, unrelated result whose definition happens to repeat the
-    query's words more often.
+    Ranking happens entirely in SQL, in two tiers:
 
-    `search` is a thin wrapper around this for callers that just want
-    results, best match first, without the scores themselves. Reach for
-    this instead when the score matters - `slb_glossary.query.search`'s
-    `Source.AUTO` uses it to decide whether the local database's results
-    are good enough to serve alone, or worth augmenting with a live search.
+    1. An exact (case/whitespace-insensitive) match against `term` scores
+       `1.0`; `term` starting with `query` scores `0.9`. Computed directly
+       against `terms.term`, so this tier is never affected by how often
+       `query` happens to appear elsewhere.
+    2. Everything else is ordered by `bm25()`, weighted toward the `term`
+       column, see `FTS_COLUMN_WEIGHTS`, and scored by normalizing that
+       result set's own bm25 spread into `(0.0, 0.85]`, worst match to
+       best. bm25 isn't comparable *across* different queries, only within
+       one, which is exactly what this needs it for.
+
+    Tier 1 is always ordered ahead of tier 2, so a term named after the
+    query is never outranked by an unrelated term whose definition just
+    happens to mention it a lot (e.g. searching "mud" surfacing "Drilling
+    fluid" ahead of "Mud" itself, because "mud" is repeated throughout
+    that definition) - the failure mode a purely bm25/word-count-driven
+    ranking is prone to.
+
+    `search` is a thin wrapper around this. Pass `scored=True` to it
+    instead if you want results and scores together without a second call.
+    Reach for this function directly when you only need the scores. For example,
+    `slb_glossary.query.search`'s `Source.AUTO` uses it to decide whether
+    the local database's results are good enough to serve alone, or worth
+    augmenting with a live search.
 
     :param db: The local database to search.
     :param query: Free-text query, matched against term, definition, and topic.
     :param topic: Restrict results to this topic, or several
         comma-separated topics (case-insensitive exact match by default).
-    :param limit: Maximum number of results to return. `None` for unlimited
-        (every bm25 match gets re-scored and re-sorted, with no pooling).
+    :param start_letter: Restrict results to terms starting with this letter.
+    :param limit: Maximum number of results to return. `None` for unlimited.
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
-        `topic` by resolving it against locally stored topic names first -
-        see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
-    :return: `(result, score)` pairs, best match first. `score` is in
-        `[0.0, 1.0]` - see `_score_result`.
+        `topic` by resolving it against locally stored topic names first.
+        Has no effect if `topic` is falsy.
+    :return: `(result, score)` pairs, best match first. `score` is in `[0.0, 1.0]`.
     """
     logger.debug(
-        "Local `search` (scored): query=%r topic=%r limit=%r fuzzy=%r", query, topic, limit, fuzzy
+        "Local `search` (scored): query=%r topic=%r start_letter=%r limit=%r fuzzy=%r",
+        query,
+        topic,
+        start_letter,
+        limit,
+        fuzzy,
     )
     started_at = time.monotonic()
-    sql = """
-        SELECT terms.* FROM terms
+    query_norm = _normalize(query)
+    weights = ", ".join(str(weight) for weight in FTS_COLUMN_WEIGHTS)
+    sql = f"""
+        SELECT terms.*,
+            (LOWER(terms.term) = ?) AS is_exact,
+            (? != '' AND LOWER(terms.term) LIKE ? || '%') AS is_prefix,
+            bm25(terms_fts, {weights}) AS bm25_score
+        FROM terms
         JOIN terms_fts ON terms.rowid = terms_fts.rowid
         WHERE terms_fts MATCH ?
     """
-    params: list[typing.Any] = [_to_fts_query(query)]
+    params: list[typing.Any] = [query_norm, query_norm, query_norm, _to_fts_query(query)]
 
     resolved_topic = await _resolve_topic(db, topic, fuzzy)
     if resolved_topic:
@@ -514,67 +479,135 @@ async def search_scored(
             sql += f" AND terms.topic COLLATE NOCASE IN ({placeholders})"
             params.extend(topics)
 
-    weights = ", ".join(str(weight) for weight in FTS_COLUMN_WEIGHTS)
-    sql += f" ORDER BY bm25(terms_fts, {weights})"
+    if start_letter:
+        sql += " AND terms.term COLLATE NOCASE LIKE ?"
+        params.append(f"{start_letter}%")
 
-    pool_size = None
+    sql += " ORDER BY is_exact DESC, is_prefix DESC, bm25_score ASC"
     if limit:
-        pool_size = max(limit * RERANK_POOL_MULTIPLIER, RERANK_POOL_MINIMUM)
         sql += " LIMIT ?"
-        params.append(pool_size)
+        params.append(limit)
 
     async with db.connection.execute(sql, params) as cursor:
         rows = await cursor.fetchall()
 
-    # `rows` is already in bm25 order; a *stable* sort on score below only
-    # ever promotes results within that order, never shuffles same-score ties.
-    results = [_row_to_result(row) for row in rows]
-    scored = [(result, _score_result(query, result)) for result in results]
-    scored.sort(key=lambda pair: pair[1], reverse=True)
-    if limit:
-        scored = scored[:limit]
+    # Rows already come back best-first (exact, then prefix, then bm25); no
+    # further sorting needed, we only need to turn that order into `[0.0, 1.0]` scores.
+    others_bm25 = [
+        row["bm25_score"] for row in rows if not row["is_exact"] and not row["is_prefix"]
+    ]
+    worst = max(others_bm25, default=0.0)  # bm25 is negative-is-better; less negative is worse.
+    best = min(others_bm25, default=0.0)
+    spread = (worst - best) or 1.0
+
+    scored: list[tuple[SearchResult, float]] = []
+    for row in rows:
+        if row["is_exact"]:
+            score = 1.0
+        elif row["is_prefix"]:
+            score = 0.9
+        else:
+            score = round(0.85 * (worst - row["bm25_score"]) / spread, 4)
+        scored.append((_row_to_result(row), score))
 
     elapsed = time.monotonic() - started_at
     logger.debug(
-        "Local `search` (scored) for %r yielded %d/%d candidate(s) in %.3fs (best score %.3f)",
+        "Local `search` (scored) for %r yielded %d candidate(s) in %.3fs (best score %.3f)",
         query,
         len(scored),
-        len(results),
         elapsed,
         scored[0][1] if scored else 0.0,
     )
     return scored
 
 
-async def search(
+async def _search(
+    db: Database,
+    query: str,
+    *,
+    topic: str | None,
+    start_letter: str | None,
+    limit: int | None,
+    fuzzy: bool,
+    scored: bool,
+) -> typing.AsyncIterator[typing.Any]:
+    results = await scored_search(
+        db, query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+    )
+    for result, score in results:
+        yield (result, score) if scored else result
+
+
+@typing.overload
+def search(
     db: Database,
     query: str,
     *,
     topic: str | None = None,
+    start_letter: str | None = None,
     limit: int | None = 20,
     fuzzy: bool = False,
-) -> typing.AsyncIterator[SearchResult]:
+    scored: typing.Literal[False] = False,
+) -> typing.AsyncIterator[SearchResult]: ...
+
+
+@typing.overload
+def search(
+    db: Database,
+    query: str,
+    *,
+    topic: str | None = None,
+    start_letter: str | None = None,
+    limit: int | None = 20,
+    fuzzy: bool = False,
+    scored: typing.Literal[True],
+) -> typing.AsyncIterator[tuple[SearchResult, float]]: ...
+
+
+def search(
+    db: Database,
+    query: str,
+    *,
+    topic: str | None = None,
+    start_letter: str | None = None,
+    limit: int | None = 20,
+    fuzzy: bool = False,
+    scored: bool = False,
+) -> typing.AsyncIterator[SearchResult] | typing.AsyncIterator[tuple[SearchResult, float]]:
     """
     Full-text search the local database for `query`, best match first.
 
-    A thin wrapper around `search_scored` that drops each result's score -
-    use that directly if you need the scores themselves. Unlike
-    `slb_glossary.live.search`, this never touches the live glossary site;
-    results are only as fresh as the last `slb_glossary.local.sync` or import.
+    Built on `scored_search`. Pass `scored=True` to get each result's
+    `[0.0, 1.0]` relevance score alongside it, as `(result, score)` pairs,
+    instead of calling `scored_search` separately.
+
+    Unlike `slb_glossary.live.search`, this never touches the live
+    glossary site; results are only as fresh as the last
+    `slb_glossary.local.sync` or import.
 
     :param db: The local database to search.
     :param query: Free-text query, matched against term, definition, and topic.
     :param topic: Restrict results to this topic, or several
         comma-separated topics (case-insensitive exact match by default).
+    :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of results. `None` for unlimited.
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
-        `topic` by resolving it against locally stored topic names first -
-        see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
-    :yield: Matching `SearchResult`s, best match first.
+        `topic` by resolving it against locally stored topic names first.
+        Has no effect if `topic` is falsy.
+    :param scored: If `True`, yield `(result, score)` pairs instead of
+        bare results - see `scored_search`.
+    :yield: Matching `SearchResult`s, or `(SearchResult, float)` pairs if
+        `scored=True`, best match first either way.
     """
-    scored = await search_scored(db, query, topic=topic, limit=limit, fuzzy=fuzzy)
-    for result, _ in scored:
-        yield result
+    return _search(
+        db,
+        query,
+        topic=topic,
+        start_letter=start_letter,
+        limit=limit,
+        fuzzy=fuzzy,
+        scored=scored,
+    )
 
 
 async def get_terms_on(
@@ -599,8 +632,7 @@ async def get_terms_on(
     :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of results. `None` for unlimited.
     :param fuzzy: If `True`, resolve `topic` against locally stored topic
-        names first - see `fuzzy_match_topics` - instead of requiring an
-        exact (case-insensitive) match.
+        names first, instead of requiring an exact (case-insensitive) match.
     :yield: `SearchResult`s filed under `topic`, ordered by term name.
     """
     logger.debug(
@@ -626,6 +658,7 @@ async def get_terms_on(
     if start_letter:
         sql += " AND term COLLATE NOCASE LIKE ?"
         params.append(f"{start_letter}%")
+
     sql += " ORDER BY term"
     if limit:
         sql += " LIMIT ?"
@@ -660,6 +693,7 @@ async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
         (term_or_url, term_or_url),
     ) as cursor:
         row = await cursor.fetchone()
+
     if row is None:
         logger.debug("No local term found for %r", term_or_url)
         return None
@@ -676,8 +710,8 @@ async def get_random_term(
     :param topic: Restrict the pick to this topic, or several
         comma-separated topics. `None` picks from every locally stored term.
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
-        `topic` by resolving it against locally stored topic names first -
-        see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
+        `topic` by resolving it against locally stored topic names first.
+        Has no effect if `topic` is falsy.
     :return: A random `SearchResult`, or `None` if the local database (or
         the given topic within it) has no terms stored yet.
     """
@@ -696,6 +730,7 @@ async def get_random_term(
 
     async with db.connection.execute(sql, params) as cursor:
         row = await cursor.fetchone()
+
     if row is None:
         logger.debug("No local term available for random pick (topic=%r)", topic)
         return None
@@ -721,8 +756,8 @@ async def get_terms_urls(
     :param start_letter: Restrict to terms starting with this letter.
     :param limit: Maximum number of URLs. `None` for unlimited.
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
-        `topic` by resolving it against locally stored topic names first -
-        see `fuzzy_match_topics`. Has no effect if `topic` is falsy.
+        `topic` by resolving it against locally stored topic names first.
+        Has no effect if `topic` is falsy.
     :yield: Matching term URLs.
     """
     logger.debug(
@@ -736,12 +771,13 @@ async def get_terms_urls(
     yielded = 0
 
     if query:
-        async for result in search(db, query, topic=topic, limit=limit, fuzzy=fuzzy):
-            if start_letter and not (result.term or "").lower().startswith(start_letter.lower()):
-                continue
+        async for result in search(
+            db, query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+        ):
             if url := result.url:
                 yielded += 1
                 yield url
+
         logger.debug(
             "Local `get_terms_urls(query=%r)` yielded %d url(s) in %.3fs",
             query,
@@ -763,6 +799,7 @@ async def get_terms_urls(
     if start_letter:
         sql += " AND term COLLATE NOCASE LIKE ?"
         params.append(f"{start_letter}%")
+
     sql += " ORDER BY term"
     if limit:
         sql += " LIMIT ?"
@@ -798,6 +835,7 @@ async def get_topics(db: Database) -> dict[str, int]:
     async with db.connection.execute(sql) as cursor:
         async for row in cursor:
             counts[row["topic"]] = row["term_count"]
+
     logger.debug("Local database has %d topic(s) stored", len(counts))
     return counts
 
@@ -811,6 +849,7 @@ async def count(db: Database) -> int:
     """
     async with db.connection.execute("SELECT COUNT(*) AS n FROM terms") as cursor:
         row = await cursor.fetchone()
+
     total = row["n"] if row is not None else 0
     logger.debug("Local database has %d term(s) stored", total)
     return total

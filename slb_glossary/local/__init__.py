@@ -13,7 +13,7 @@ again when you're done with it.
 
 `search` ranks results *best-match-first* using SQLite FTS5 plus a second,
 in-process scoring pass (so a real match against a term's name always
-beats an incidental one buried in its definition). Use `search_scored`
+beats an incidental one buried in its definition). Use `scored_search`
 instead if you need each result's `0.0`-`1.0` score, e.g. to decide
 whether the local database's results are good enough to serve alone.
 
@@ -42,8 +42,8 @@ from slb_glossary.local.api import (
     get_terms_on,
     get_terms_urls,
     get_topics,
+    scored_search,
     search,
-    search_scored,
     upsert_results,
 )
 from slb_glossary.local.connection import close_db, database, open_db
@@ -69,7 +69,7 @@ __all__ = [
     "database",
     "upsert_results",
     "search",
-    "search_scored",
+    "scored_search",
     "get_terms_on",
     "get_term",
     "get_random_term",

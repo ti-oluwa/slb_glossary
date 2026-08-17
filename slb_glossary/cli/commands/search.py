@@ -20,7 +20,7 @@ from slb_glossary.cli.source_options import (
     source_options,
 )
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.local import search_scored as search_scored
+from slb_glossary.local import scored_search as scored_search
 from slb_glossary.local.models import Database
 from slb_glossary.models import SearchResult
 from slb_glossary.query import DEFAULT_RELEVANCE_THRESHOLD, Source
@@ -86,8 +86,13 @@ async def _stream_auto_search(
                 yield result  # noqa: ASYNC119
         return
 
-    scored = await search_scored(
-        db, query, topic=params["topic"], limit=limit, fuzzy=params["fuzzy"]
+    scored = await scored_search(
+        db,
+        query,
+        topic=params["topic"],
+        start_letter=params["start_letter"],
+        limit=limit,
+        fuzzy=params["fuzzy"],
     )
     best_score = scored[0][1] if scored else 0.0
     if scored and best_score >= relevance_threshold:
@@ -281,6 +286,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                         db=db,
                         source=Source.LOCAL,
                         topic=params["topic"],
+                        start_letter=params["start_letter"],
                         limit=limit,
                         fuzzy=params["fuzzy"],
                     ),

@@ -34,7 +34,7 @@ behaves like whichever of `Source.LOCAL`/`Source.LIVE` that one supports.
 
 `search` narrows `Source.AUTO` further than the other functions here: a
 local hit doesn't automatically end the search. Each local result is
-scored against the query (see `slb_glossary.local.search_scored`), and if
+scored against the query (see `slb_glossary.local.scored_search`), and if
 even the best of them isn't a confident match, the live glossary is
 queried too and its results are added on - the local results aren't
 thrown away, just no longer treated as the whole answer. `relevance_threshold`
@@ -86,7 +86,7 @@ live results to buffer before writing an incremental upsert batch.
 DEFAULT_RELEVANCE_THRESHOLD = 0.55
 """
 Default `relevance_threshold` for `search`'s `Source.AUTO` behavior:
-below this score (see `slb_glossary.local.search_scored`), the local
+below this score (see `slb_glossary.local.scored_search`), the local
 database's best match isn't trusted alone and a live search is added on.
 """
 
@@ -238,15 +238,11 @@ async def search(
 
     With `source=Source.AUTO` (the default when both `db` and `session`
     are given), the local database is searched first and scored (see
-    `slb_glossary.local.search_scored`). If its best result meets
+    `slb_glossary.local.scored_search`). If its best result meets
     `relevance_threshold`, those local results are served alone. Otherwise
     the live glossary is queried too, and its results are added on after
     the local ones. Local results aren't thrown away just because they
     weren't confident, they're just not trusted as the *whole* answer.
-
-    Note that `start_letter` filtering against the local database is
-    best-effort: unlike the live site, the local search only has whatever's
-    already been cached.
 
     :param query: Free-text query.
     :param db: An open local `Database`. Required for `Source.LOCAL`, and
@@ -276,7 +272,7 @@ async def search(
         fuzzy-match topics unconditionally, so this has no effect on them.
     :param relevance_threshold: Only used by `Source.AUTO`. The local
         database's best-scoring result must meet this (`0.0`-`1.0`, see
-        `slb_glossary.local.search_scored`) for its results to be served
+        `slb_glossary.local.scored_search`) for its results to be served
         without also querying the live glossary. Lower it to trust local
         results more readily (fewer live fetches); raise it to augment
         with live results more often.
@@ -289,7 +285,9 @@ async def search(
     count = 0
     if resolved is Source.LOCAL:
         assert db is not None
-        async for result in local_api.search(db, query, topic=topic, limit=limit, fuzzy=fuzzy):
+        async for result in local_api.search(
+            db, query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+        ):
             count += 1
             yield result
         logger.debug(
@@ -330,13 +328,9 @@ async def search(
 
     # source is Source.AUTO, resolved started as LOCAL: score it, then decide.
     assert db is not None
-    scored = await local_api.search_scored(db, query, topic=topic, limit=limit, fuzzy=fuzzy)
-    if start_letter:
-        scored = [
-            (result, score)
-            for result, score in scored
-            if (result.term or "").lower().startswith(start_letter.lower())
-        ]
+    scored = await local_api.scored_search(
+        db, query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+    )
     results = [result for result, _ in scored]
     best_score = scored[0][1] if scored else 0.0
 
