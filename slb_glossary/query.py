@@ -286,7 +286,12 @@ async def search(
     if resolved is Source.LOCAL:
         assert db is not None
         async for result in local_api.search(
-            db, query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+            db,
+            query,
+            topic=topic,
+            start_letter=start_letter,
+            limit=limit,
+            fuzzy=fuzzy,
         ):
             count += 1
             yield result
@@ -541,7 +546,11 @@ async def get_terms_on(
         "Local database had nothing for topic %r; falling back to the live glossary", topic
     )
     live_stream = live.get_terms_on(
-        session, topic, start_letter=start_letter, limit=limit, concurrency=concurrency
+        session,
+        topic,
+        start_letter=start_letter,
+        limit=limit,
+        concurrency=concurrency,
     )
     live_count = 0
     async for result in _persist_incrementally(
@@ -601,7 +610,12 @@ async def get_terms_urls(
     if resolved is Source.LOCAL:
         assert db is not None
         async for url in local_api.get_terms_urls(
-            db, query=query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+            db,
+            query=query,
+            topic=topic,
+            start_letter=start_letter,
+            limit=limit,
+            fuzzy=fuzzy,
         ):
             yield url
         return
@@ -609,7 +623,11 @@ async def get_terms_urls(
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         async for url in live.get_terms_urls(
-            session, query=query, topic=topic, start_letter=start_letter, limit=limit
+            session,
+            query=query,
+            topic=topic,
+            start_letter=start_letter,
+            limit=limit,
         ):
             yield url
         return
@@ -643,7 +661,11 @@ async def get_terms_urls(
         "Local database had nothing for `get_terms_urls(...)`; falling back to the live glossary"
     )
     async for url in live.get_terms_urls(
-        session, query=query, topic=topic, start_letter=start_letter, limit=limit
+        session,
+        query=query,
+        topic=topic,
+        start_letter=start_letter,
+        limit=limit,
     ):
         yield url
 
@@ -753,7 +775,7 @@ async def get_term(
 
 
 async def _fetch_live_term(session: BrowserSession, term_or_url: str) -> SearchResult | None:
-    """Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched."""
+    """Resolvauth_config = Auth()e `term_or_url` against the live glossary: a URL fetches directly, else it's searched."""
     if term_or_url.startswith(("http://", "https://")):
         async for result in live.get_results_from_url(session, term_or_url):
             return result

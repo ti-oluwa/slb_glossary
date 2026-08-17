@@ -127,7 +127,7 @@ def mcp() -> None:
     "--log-level",
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
     default=None,
-    help="Verbosity of slb_glossary's own logging output.",
+    help="Verbosity of `slb_glossary`'s own logging output.",
 )
 @cli_command
 @click.pass_context
@@ -196,7 +196,6 @@ def serve(
         raise click.UsageError("--auth-token and --auth-backend are mutually exclusive.")
 
     glossary_config = Config.load(config_path) if config_path is not None else Config()
-
     session = SessionAccess(enabled=not no_live, browser=glossary_config.session)
     local = LocalAccess(
         enabled=not no_local, allow_write=allow_write, database=glossary_config.local
@@ -204,26 +203,29 @@ def serve(
     allowed_sources = frozenset(Source(value) for value in source) or None
     source_policy = SourcePolicy(allowed=allowed_sources)
 
-    auth_config = Auth()
     if auth_tokens:
         token_map: dict[str, str] = {}
         for entry in auth_tokens:
             token, _, principal_id = entry.partition(":")
             token_map[token] = principal_id or token
+
         auth_config = Auth(backend=StaticTokenAuth(token_map), required=True)
     elif auth_backend_path:
         auth_config = Auth(backend=import_backend(auth_backend_path), required=True)
+    else:
+        auth_config = Auth()
 
-    rate_limit = RateLimit()
     if limit is not None:
         rate_limit = RateLimit(enabled=True, limit=limit)
+    else:
+        rate_limit = RateLimit()
 
     config = MCPConfig(
         session=session,
         local=local,
         source_policy=source_policy,
         tools=resolve_tools(tools.split(",")),
-        timeouts=Timeout(global_=timeout or None),
+        timeouts=Timeout(default=timeout or None),
         auth=auth_config,
         rate_limit=rate_limit,
         logging=dataclasses.replace(MCPConfig.default().logging, level=log_level),

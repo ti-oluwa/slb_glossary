@@ -28,6 +28,7 @@ def read_json_rows(path: pathlib.Path) -> list[dict[str, typing.Any]]:
             if isinstance(value, list):
                 data = value
                 break
+
     if not isinstance(data, list):
         raise DatabaseError(
             f"{path}: expected a JSON array of records (or an object containing one)."

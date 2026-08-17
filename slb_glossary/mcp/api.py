@@ -1,22 +1,21 @@
 """
-The main entry point of `slb_glossary.mcp`. Holds `MCPApp`, which turns an
-`MCPConfig` into a ready-to-serve `fastmcp.FastMCP` server for the SLB
-Energy Glossary.
+The main entry point of `slb_glossary` MCP API.
+
+Holds `MCPApp`, which turns an `MCPConfig` into a ready-to-serve `fastmcp.FastMCP`
+server for the SLB Energy Glossary.
 
 ```python
-import asyncio
-
 from slb_glossary.mcp import MCPApp, MCPConfig
 
 app = MCPApp(MCPConfig.default())
-asyncio.run(app.run_async())  # stdio by default
+app.run(...)  # stdio by default
 ```
 
 Or reach for the underlying `fastmcp.FastMCP` server directly (e.g. to
-mount it inside a larger ASGI app, or drive it from `fastmcp`'s own CLI):
+mount it inside a larger ASGI app, or drive it from `FastMCP`'s own CLI):
 
 ```python
-server = app.server()
+server = app.server(...)
 ```
 """
 
@@ -26,7 +25,6 @@ import dataclasses
 import importlib
 import inspect
 import logging
-import sys
 import typing
 
 from fastmcp.server.context import Context
@@ -39,11 +37,6 @@ from slb_glossary.mcp.ratelimit import SlidingWindowRateLimiter
 from slb_glossary.mcp.runtime import Runtime
 from slb_glossary.mcp.tools import DEFAULT_INSTRUCTIONS, ToolSpec, build_tool_specs
 from slb_glossary.mcp.types import NamedComponent
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +66,7 @@ class MCPApp(NamedComponent):
         self.runtime = Runtime(self.config)
         self._server: FastMCP | None = None
 
-    @classmethod
-    def from_config(cls, config: MCPConfig) -> Self:
-        """Build an `MCPApp` from `config`. Equivalent to `MCPApp(config)`."""
-        return cls(config)
-
-    def server(self) -> FastMCP:
+    def server(self, **server_kwargs: typing.Any) -> FastMCP:
         """
         Build (if not already built) and return the underlying `fastmcp.FastMCP` server.
 
@@ -90,25 +78,27 @@ class MCPApp(NamedComponent):
         if self._server is not None:
             return self._server
 
-        self._resolve_default_rate_limiter()
+        self._ensure_rate_limiter()
 
         from slb_glossary import __version__
 
-        server = FastMCP(
-            name=self.config.server.name,
-            version=self.config.server.version or __version__,
-            instructions=self.config.server.instructions or DEFAULT_INSTRUCTIONS,
-            auth=self.config.auth.provider,
-            middleware=[MCPMiddleware(self.config)],
-        )
+        kwargs = {
+            "name": self.config.server.name,
+            "version": self.config.server.version or __version__,
+            "instructions": self.config.server.instructions or DEFAULT_INSTRUCTIONS,
+            "auth": self.config.auth.provider,
+            "middleware": [MCPMiddleware(self.config)],
+            **server_kwargs,
+        }
+        server = FastMCP(**kwargs)
 
         for spec in build_tool_specs(self.config):
-            self._register_tool(server, spec)
+            self._add_tool(server, spec)
 
         self._server = server
         return server
 
-    def _resolve_default_rate_limiter(self) -> None:
+    def _ensure_rate_limiter(self) -> None:
         """Fill in `RateLimit.limiter` with a default in-memory limiter if left unset."""
         rate_limit = self.config.rate_limit
         if rate_limit.enabled and rate_limit.limiter is None:
@@ -118,8 +108,8 @@ class MCPApp(NamedComponent):
             )
             self.runtime.config = self.config
 
-    def _register_tool(self, server: FastMCP, spec: ToolSpec) -> None:
-        """Wrap `spec.handler` into a `fastmcp` tool function and register it on `server`."""
+    def _add_tool(self, server: FastMCP, spec: ToolSpec) -> None:
+        """Wrap `spec.handler` into a `FastMCP` tool function and register it on `server`."""
         args_type = spec.args_type
         timeout = self.config.timeouts.for_tool(spec.name)
         annotations = {"readOnlyHint": not spec.writes, "destructiveHint": spec.writes}
@@ -246,14 +236,14 @@ def load_app(dotted_path: str) -> MCPApp | FastMCP:
             raise TypeError(
                 f"{dotted_path!r} resolved to an async factory ({target!r}); "
                 f"only synchronous zero-argument factories are supported. Build the "
-                f"MCPApp/FastMCP instance at import time instead (e.g. module-level "
+                f"`MCPApp`/`FastMCP` instance at import time instead (e.g. module-level "
                 f"`app = MCPApp(...)`), or call your async setup yourself and expose "
                 f"the already-built instance as the target attribute."
             )
 
     if not isinstance(app, (MCPApp, FastMCP)):
         raise TypeError(
-            f"{dotted_path!r} resolved to {app!r}, which is neither an MCPApp, a "
-            f"FastMCP, nor a zero-argument factory returning one."
+            f"{dotted_path!r} resolved to {app!r}, which is neither an `MCPApp`, a "
+            f"`FastMCP`, nor a zero-argument factory returning one."
         )
     return app

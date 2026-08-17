@@ -514,6 +514,7 @@ class Config:
             if not dataclasses.is_dataclass(target) or not hasattr(target, part):
                 raise ConfigError(f"Unknown config key {key!r} (failed at {part!r}).")
             target = getattr(target, part)
+        
         if not dataclasses.is_dataclass(target) or not hasattr(target, leaf):
             raise ConfigError(f"Unknown config key {key!r} (failed at {leaf!r}).")
 

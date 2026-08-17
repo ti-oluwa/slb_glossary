@@ -290,7 +290,7 @@ class SourcePolicy:
 class Timeout:
     """Per-call execution time caps, enforced by FastMCP's own tool `timeout=`."""
 
-    global_: float | None = 60.0
+    default: float | None = 60.0
     """
     The default number of seconds a foreground tool call may run before being
     cancelled. `None` means tools run with no cap unless overridden per-tool
@@ -300,7 +300,7 @@ class Timeout:
     per_tool: Mapping[str, float | None] = dataclasses.field(default_factory=dict)
     """
     Tool name (e.g. `"glossary_search"`) to timeout override in
-    seconds, taking precedence over `global_` for that tool. A value of
+    seconds, taking precedence over `default` for that tool. A value of
     `None` here explicitly disables the timeout for that tool.
     """
 
@@ -308,12 +308,12 @@ class Timeout:
         """Resolve the effective timeout, in seconds, for tool `name`."""
         if name in self.per_tool:
             return self.per_tool[name]
-        return self.global_
+        return self.default
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class Auth:
-    """Controls authentication/authorization for tool calls."""
+    """Controls authentication/authorization (*mainly authorization*) for tool calls."""
 
     backend: AuthBackend | None = None
     """

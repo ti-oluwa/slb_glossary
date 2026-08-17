@@ -1,5 +1,5 @@
 """
-Search the SLB Energy Glossary (https://glossary.slb.com/).
+Search the SLB Energy Glossary (<https://glossary.slb.com/>).
 
 All rights to the data and content on the SLB Energy Glossary website are owned by SLB.
 This package is not affiliated with or endorsed by SLB.
@@ -61,7 +61,7 @@ from .retries import BackoffType, RetryPolicy
 from .utils import async_print_results, get_topic_match, print_results
 
 py_logging.basicConfig(
-    format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s", level=py_logging.INFO
+    format="%(levelname)s  %(asctime)s: [%(name)s] - %(message)s", level=py_logging.INFO
 )
 
 __version__ = "0.1.0"

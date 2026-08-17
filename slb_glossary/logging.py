@@ -21,6 +21,8 @@ import pathlib
 import sys
 import typing
 
+from rich.logging import RichHandler
+
 __all__ = [
     "LogSink",
     "ConsoleSink",
@@ -35,8 +37,8 @@ __all__ = [
 ]
 
 
-DEFAULT_LOG_FORMAT = "%(asctime)s - [%(name)s] - %(levelname)s - %(message)s"
-"""Format string used for every sink, matching `slb_glossary`'s `logging.basicConfig` default."""
+DEFAULT_LOG_FORMAT = "%(levelname)s  %(asctime)s  [%(name)s]:  %(message)s"
+"""Default format string used for every sink."""
 
 
 @typing.runtime_checkable
@@ -143,11 +145,16 @@ class FileSink:
         return f"{type(self).__name__}({str(self.path)!r})"
 
 
-class SinkHandler(logging.Handler):
-    """A `logging.Handler` that formats records and forwards them to one or more `LogSink`s."""
+class SinkHandler(RichHandler):
+    """
+    A logging handler (`rich.logging.RichHandler`) that formats records
+    and forwards them to one or more `LogSink`s.
+    """
 
-    def __init__(self, sinks: typing.Iterable[LogSink], *, level: int = logging.NOTSET) -> None:
-        super().__init__(level=level)
+    def __init__(
+        self, sinks: typing.Iterable[LogSink], *, level: int = logging.NOTSET, **kwargs: typing.Any
+    ) -> None:
+        super().__init__(level=level, **kwargs)
         self.sinks: list[LogSink] = list(sinks)
 
     def emit(self, record: logging.LogRecord) -> None:

@@ -6,8 +6,10 @@ config = slb_mcp.MCPConfig(
     session=slb_mcp.SessionAccess(
         enabled=True,
         max_concurrent=3,
+        mode=slb_mcp.SessionMode.EAGER,
         browser=slb.config.BrowserSessionOptions(
-            use_stealth=False, log_sink=slb.log.FileSink("./example.mcp.browser.log")
+            use_stealth=False,
+            log_sink=slb.log.FileSink("./example.mcp.browser.log"),
         ),
     ),
     local=slb_mcp.LocalAccess(allow_write=True),
