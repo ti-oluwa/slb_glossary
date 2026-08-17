@@ -7,9 +7,9 @@ import typing
 
 from slb_glossary.errors import DatabaseError
 from slb_glossary.local.api import upsert_results
-from slb_glossary.local.models import Database
+from slb_glossary.local.types import Database
 from slb_glossary.local.vectors import upsert_vector
-from slb_glossary.models import SearchResult
+from slb_glossary.types import SearchResult
 
 __all__ = ["load_file"]
 

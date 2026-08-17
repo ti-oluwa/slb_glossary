@@ -27,8 +27,8 @@ from slb_glossary.local.api import (
     upsert_results_incrementally,
 )
 from slb_glossary.local.api import count as count_terms
-from slb_glossary.local.models import Database, Metadata
-from slb_glossary.models import SearchResult
+from slb_glossary.local.types import Database, Metadata
+from slb_glossary.types import SearchResult
 
 logger = logging.getLogger(__name__)
 

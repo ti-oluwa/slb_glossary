@@ -26,7 +26,7 @@ __all__ = ["urls"]
 
 
 class UrlRecord(typing.NamedTuple):
-    """A single glossary term detail-page URL, saveable via `slb_glossary.store`."""
+    """A single glossary term detail-page URL."""
 
     url: str
     """The term detail-page URL."""

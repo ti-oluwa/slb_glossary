@@ -59,8 +59,8 @@ from slb_glossary import live
 from slb_glossary.errors import QueryError
 from slb_glossary.live.browser import BrowserSession
 from slb_glossary.local import api as local_api
-from slb_glossary.local.models import Database
-from slb_glossary.models import RelatedTerm, SearchResult
+from slb_glossary.local.types import Database
+from slb_glossary.types import RelatedTerm, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -775,18 +775,21 @@ async def get_term(
 
 
 async def _fetch_live_term(session: BrowserSession, term_or_url: str) -> SearchResult | None:
-    """Resolvauth_config = Auth()e `term_or_url` against the live glossary: a URL fetches directly, else it's searched."""
+    """Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched."""
     if term_or_url.startswith(("http://", "https://")):
         async for result in live.get_results_from_url(session, term_or_url):
             return result
         return None
 
-    async for result in live.search(session, term_or_url, limit=1):
-        if result.term and result.term.strip().lower() == term_or_url.strip().lower():
+    # The correct definition should at least be in the first 5 results, searching atleast 2 at a time
+    term = term_or_url.strip().lower()
+    async for result in live.search(session, term, limit=5, concurrency=2):
+        if result.term and result.term.strip().lower() == term:
             return result
+
     # No exact (case-insensitive) match among the top result's definitions;
     # fall back to whatever ranked first, if anything did.
-    async for result in live.search(session, term_or_url, limit=1):
+    async for result in live.search(session, term, limit=1):
         return result
     return None
 

@@ -6,12 +6,11 @@ import logging
 import math
 import time
 import typing
-from collections.abc import AsyncIterable
 
 from slb_glossary.live.browser import BrowserSession
 from slb_glossary.live.grammar import resolve_grammatical_label
 from slb_glossary.live.parsers import (
-    TermParagraph,
+    TermBlock,
     get_result_links,
     get_results_header_text,
     get_term_detail_blocks,
@@ -20,8 +19,8 @@ from slb_glossary.live.parsers import (
     get_total_term_count,
 )
 from slb_glossary.live.urls import build_pager_query, build_search_url
-from slb_glossary.models import RelatedTerm, SearchResult
-from slb_glossary.utils import get_topic_match, log_timed_yields
+from slb_glossary.types import RelatedTerm, SearchResult
+from slb_glossary.utils import as_async_iterator, get_topic_match, log_timed_yields
 
 logger = logging.getLogger(__name__)
 
@@ -39,26 +38,26 @@ RELATED_KEYWORDS = ("related term", "see related", "synonyms", "alternate form")
 
 
 def _find_related_links(
-    paragraphs: typing.Sequence[TermParagraph],
+    blocks: typing.Sequence[TermBlock],
 ) -> tuple[RelatedTerm, ...]:
     """
-    Return the related-term links from a definition block's paragraphs.
+    Return the related-term links from a definition section's blocks.
 
-    :param paragraphs: A definition block's `TermParagraph`s, as returned
+    :param blocks: A definition section's `TermBlock`s, as returned
         by `slb_glossary.parsers.get_term_detail_blocks`.
     :return: The related terms found, in the order they're linked. Empty
-        if no paragraph in the block links to any related terms.
+        if no block in the block links to any related terms.
     """
-    for paragraph in paragraphs:
-        text_lower = paragraph.text.lower()
-        if paragraph.links and any(keyword in text_lower for keyword in RELATED_KEYWORDS):
-            return paragraph.links
+    for block in blocks:
+        text_lower = block.text.lower()
+        if block.links and any(keyword in text_lower for keyword in RELATED_KEYWORDS):
+            return block.links
 
-    # Fall back to any paragraph with links at all, in case the site's
+    # Fall back to any block with links at all, in case the site's
     # wording of the "related terms" lead-in ever changes.
-    for paragraph in paragraphs:
-        if paragraph.links:
-            return paragraph.links
+    for block in blocks:
+        if block.links:
+            return block.links
     return ()
 
 
@@ -274,26 +273,30 @@ async def get_results_from_url(
     started_at = time.monotonic()
     await session.page.goto(url, wait_until="domcontentloaded")
     term_name = await get_term_name(session.page)
-    detail_blocks = await get_term_detail_blocks(session.page)
-    if not term_name or not detail_blocks:
+    detail_sections = await get_term_detail_blocks(session.page)
+    if not term_name or not detail_sections:
         logger.debug("No definitions found at %s (%.3fs)", url, time.monotonic() - started_at)
         return
 
     # A term page carries at most one illustrative image, shared across
-    # every definition block on it (not one image per topic/definition).
+    # every definition section on it (not one image per topic/definition).
     term_image = await get_term_image(session.page)
     image_url, image_caption = (
         (term_image.url, term_image.caption) if term_image is not None else (None, None)
     )
 
     yielded = 0
-    for block in detail_blocks:
-        if len(block) < 2:
+    for section_blocks in detail_sections:
+        if len(section_blocks) < 2:
             continue
 
-        summary_line = block[0].text
-        definition = block[2].text if len(block) > 2 and block[1].text == "" else block[1].text
-        related = _find_related_links(block) or None
+        summary_line = section_blocks[0].text
+        definition = (
+            section_blocks[2].text
+            if len(section_blocks) > 2 and section_blocks[1].text == ""
+            else section_blocks[1].text
+        )
+        related = _find_related_links(section_blocks) or None
 
         summary_words = summary_line.split()
         label_abbreviation = summary_words[1] if len(summary_words) > 1 else ""
@@ -323,20 +326,6 @@ async def get_results_from_url(
         url,
         time.monotonic() - started_at,
     )
-
-
-def _as_async_iter(
-    urls: typing.Iterable[str] | typing.AsyncIterable[str],
-) -> typing.AsyncIterator[str]:
-    """Normalize a sync or async iterable of URLs into an async iterator."""
-
-    async def _wrap_sync(sync_urls: typing.Iterable[str]) -> typing.AsyncIterator[str]:
-        for url in sync_urls:
-            yield url
-
-    if isinstance(urls, AsyncIterable):
-        return urls.__aiter__()
-    return _wrap_sync(urls)
 
 
 async def get_results_from_urls(
@@ -378,7 +367,7 @@ async def get_results_from_urls(
 
     started_at = time.monotonic()
     yielded = 0
-    url_iter = _as_async_iter(urls)
+    url_iter = as_async_iterator(urls)
 
     if concurrency == 1:
         try:

@@ -7,8 +7,8 @@ import typing
 
 import aiosqlite
 
-from slb_glossary.local.models import Database, Metadata
 from slb_glossary.local.schema import initialize
+from slb_glossary.local.types import Database, Metadata
 from slb_glossary.paths import default_db_path, default_metadata_path
 
 logger = logging.getLogger(__name__)

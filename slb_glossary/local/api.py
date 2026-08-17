@@ -9,8 +9,9 @@ from difflib import get_close_matches
 
 import aiosqlite
 
-from slb_glossary.local.models import Database
-from slb_glossary.models import RelatedTerm, SearchResult
+from slb_glossary.local.types import Database
+from slb_glossary.types import RelatedTerm, SearchResult
+from slb_glossary.utils import as_async_iterator
 
 logger = logging.getLogger(__name__)
 
@@ -180,22 +181,6 @@ async def upsert_results(
     return len(rows)
 
 
-def _as_async_iterator(
-    results: typing.Iterable[SearchResult] | typing.AsyncIterable[SearchResult],
-) -> typing.AsyncIterator[SearchResult]:
-    """Normalize a sync or async iterable of results into an async iterator."""
-
-    async def _wrap_sync(
-        sync_results: typing.Iterable[SearchResult],
-    ) -> typing.AsyncIterator[SearchResult]:
-        for result in sync_results:
-            yield result
-
-    if isinstance(results, typing.AsyncIterable):
-        return results.__aiter__()
-    return _wrap_sync(results)
-
-
 async def upsert_results_incrementally(
     db: Database,
     results: typing.Iterable[SearchResult] | typing.AsyncIterable[SearchResult],
@@ -270,7 +255,7 @@ async def upsert_results_incrementally(
         )
 
     try:
-        async for result in _as_async_iterator(results):
+        async for result in as_async_iterator(results):
             buffer.append(result)
             yield result
             if len(buffer) >= batch_size:

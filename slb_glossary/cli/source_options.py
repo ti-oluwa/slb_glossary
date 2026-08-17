@@ -18,7 +18,7 @@ from slb_glossary.config import Config
 from slb_glossary.live.browser import BrowserSession
 from slb_glossary.live.browser import session as browser_session
 from slb_glossary.local.connection import database
-from slb_glossary.local.models import Database
+from slb_glossary.local.types import Database
 from slb_glossary.paths import get_data_dir
 from slb_glossary.query import Source, TermLookup
 

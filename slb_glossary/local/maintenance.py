@@ -2,7 +2,7 @@
 
 import logging
 
-from slb_glossary.local.models import Database, Metadata
+from slb_glossary.local.types import Database, Metadata
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 from patchright.async_api import Page
 
 from slb_glossary.live.urls import BASE_URL
-from slb_glossary.models import RelatedTerm
+from slb_glossary.types import RelatedTerm
 from slb_glossary.utils import parse_int
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ __all__ = [
     "TOPIC_VALUE_SELECTOR",
     "TOTAL_COUNT_SELECTOR",
     "TermImage",
-    "TermParagraph",
+    "TermBlock",
     "get_element_text",
     "get_facet_topics",
     "get_glossary_size",
@@ -196,7 +196,7 @@ async def get_term_name(page: Page) -> str | None:
     return text or None
 
 
-class TermParagraph(typing.NamedTuple):
+class TermBlock(typing.NamedTuple):
     """One paragraph of a term detail block, with any terms it links to."""
 
     text: str
@@ -209,7 +209,7 @@ class TermParagraph(typing.NamedTuple):
     """
 
 
-async def get_term_detail_blocks(page: Page) -> list[list[TermParagraph]]:
+async def get_term_detail_blocks(page: Page) -> list[list[TermBlock]]:
     """
     Return the paragraphs (text and links) of every definition block on a term page.
 
@@ -218,16 +218,16 @@ async def get_term_detail_blocks(page: Page) -> list[list[TermParagraph]]:
     returned in document order; the first paragraph carries the grammatical
     label and source topic, the definition text follows in the next
     non-empty paragraph, and a later paragraph may link out to related
-    terms (see `TermParagraph.links`).
+    terms (see `TermBlock.links`).
 
     :param page: A page currently showing a term detail page.
-    :return: One list of `TermParagraph`s per definition block.
+    :return: One list of `TermBlock`s per definition block.
     """
-    raw_blocks = await page.eval_on_selector_all(
+    sections = await page.eval_on_selector_all(
         TERM_DETAIL_SELECTOR,
         """
         (elements) => elements.map((element) =>
-            Array.from(element.querySelectorAll("p, ul, li")).map((block) => ({
+            Array.from(element.querySelectorAll("p,ul")).map((block) => ({
                 text: block.textContent.trim(),
                 links: Array.from(block.querySelectorAll("a"))
                     .map((anchor) => ({
@@ -241,15 +241,15 @@ async def get_term_detail_blocks(page: Page) -> list[list[TermParagraph]]:
     )
     return [
         [
-            TermParagraph(
-                text=paragraph["text"],
+            TermBlock(
+                text=block["text"],
                 links=tuple(
-                    RelatedTerm(term=link["term"], url=link["url"]) for link in paragraph["links"]
+                    RelatedTerm(term=link["term"], url=link["url"]) for link in block["links"]
                 ),
             )
-            for paragraph in block
+            for block in section
         ]
-        for block in raw_blocks
+        for section in sections
     ]
 
 

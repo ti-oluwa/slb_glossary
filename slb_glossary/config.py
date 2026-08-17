@@ -16,9 +16,9 @@ from collections.abc import Mapping, Sequence
 
 from slb_glossary.errors import ConfigError
 from slb_glossary.logging import LogSink
-from slb_glossary.models import Language
 from slb_glossary.paths import default_config_path
 from slb_glossary.retries import BackoffType, RetryPolicy
+from slb_glossary.types import Language
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -514,7 +514,7 @@ class Config:
             if not dataclasses.is_dataclass(target) or not hasattr(target, part):
                 raise ConfigError(f"Unknown config key {key!r} (failed at {part!r}).")
             target = getattr(target, part)
-        
+
         if not dataclasses.is_dataclass(target) or not hasattr(target, leaf):
             raise ConfigError(f"Unknown config key {key!r} (failed at {leaf!r}).")
 

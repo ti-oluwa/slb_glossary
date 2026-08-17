@@ -18,8 +18,8 @@ from slb_glossary.cli.source_options import (
     source_options,
 )
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.models import SearchResult
 from slb_glossary.query import Source
+from slb_glossary.types import SearchResult
 
 __all__ = ["random_term"]
 

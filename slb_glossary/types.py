@@ -1,9 +1,42 @@
-"""Core data structures."""
+"""Core data types and structures."""
 
 import enum
 import typing
+from collections.abc import AsyncIterable, Iterable, Sequence
 
-__all__ = ["Language", "RelatedTerm", "SearchResult"]
+__all__ = ["RecordLike", "materialize_records", "Language", "RelatedTerm", "SearchResult"]
+
+
+@typing.runtime_checkable
+class RecordLike(typing.Protocol):
+    """Interface for a record like datastructure."""
+
+    @property
+    def fields(self) -> Sequence[str]:
+        """Return a list of the field names in this record."""
+        ...
+
+    def asdict(self) -> dict[str, typing.Any]:
+        """Return a dict mapping each field name to its value in this record."""
+        ...
+
+
+RecordT = typing.TypeVar("RecordT", bound=RecordLike)
+
+
+async def materialize_records(
+    records: Iterable[RecordT] | AsyncIterable[RecordT],
+) -> list[RecordT]:
+    """
+    Collect `records` into a list, consuming it if it is a lazy iterable.
+
+    :param records: A sync iterable, or an async iterable such as the
+        generators `slb_glossary.search` yields results from.
+    :return: `records` as a plain list.
+    """
+    if isinstance(records, AsyncIterable):
+        return [record async for record in records]
+    return list(records)
 
 
 class Language(enum.Enum):

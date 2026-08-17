@@ -14,8 +14,8 @@ import math
 import typing
 
 from slb_glossary.local.api import _row_to_result
-from slb_glossary.local.models import Database
-from slb_glossary.models import SearchResult
+from slb_glossary.local.types import Database
+from slb_glossary.types import SearchResult
 
 __all__ = ["upsert_vector", "delete_vectors", "vector_search"]
 

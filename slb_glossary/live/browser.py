@@ -16,8 +16,8 @@ from slb_glossary.config import Config
 from slb_glossary.errors import BrowserError, LoggingError, NetworkError
 from slb_glossary.live.urls import get_glossary_base_url
 from slb_glossary.logging import LogSink, configure_logging, resolve_sink
-from slb_glossary.models import Language
 from slb_glossary.retries import DEFAULT_RETRY_POLICY, RetryPolicy
+from slb_glossary.types import Language
 
 logger = logging.getLogger(__name__)
 

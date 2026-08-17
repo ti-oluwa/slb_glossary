@@ -49,7 +49,6 @@ from slb_glossary.local.api import (
 from slb_glossary.local.connection import close_db, database, open_db
 from slb_glossary.local.loaders import load_file
 from slb_glossary.local.maintenance import flush, reset
-from slb_glossary.local.models import Database, Metadata
 from slb_glossary.local.sync import (
     SyncSummary,
     sync_all,
@@ -58,6 +57,7 @@ from slb_glossary.local.sync import (
     sync_topic,
     sync_topics,
 )
+from slb_glossary.local.types import Database, Metadata
 from slb_glossary.local.vectors import delete_vectors, upsert_vector, vector_search
 
 __all__ = [

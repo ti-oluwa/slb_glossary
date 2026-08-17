@@ -17,7 +17,7 @@ retention, refresh, and deletion in compliance with SLB's terms of use linked ab
 
 import logging as py_logging
 
-from . import live, local, query, store
+from . import live, local, query
 from . import logging as log
 from .config import Config
 from .errors import (
@@ -44,7 +44,6 @@ from .live.browser import (
     session_from_config,
 )
 from .live.topics import refresh_topics
-from .models import Language, SearchResult
 from .query import (
     Source,
     TermLookup,
@@ -58,7 +57,9 @@ from .query import (
     search,
 )
 from .retries import BackoffType, RetryPolicy
-from .utils import async_print_results, get_topic_match, print_results
+from .types import Language, SearchResult
+from .utils import get_topic_match, print_async_records, print_records
+from .writers import WRITERS, Writer, records_to_dicts, save, supported_formats, writer
 
 py_logging.basicConfig(
     format="%(levelname)s  %(asctime)s: [%(name)s] - %(message)s", level=py_logging.INFO
@@ -70,7 +71,6 @@ __all__ = [
     "local",
     "log",
     "query",
-    "store",
     "open_session",
     "open_session_from_config",
     "browser_session",
@@ -81,8 +81,8 @@ __all__ = [
     "Config",
     "Language",
     "SearchResult",
-    "print_results",
-    "async_print_results",
+    "print_records",
+    "print_async_records",
     "get_topic_match",
     "refresh_topics",
     "RetryPolicy",
@@ -109,4 +109,10 @@ __all__ = [
     "related_terms",
     "get_random_term",
     "compare",
+    "Writer",
+    "writer",
+    "records_to_dicts",
+    "save",
+    "supported_formats",
+    "WRITERS",
 ]

@@ -11,9 +11,9 @@ from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
-from slb_glossary.models import SearchResult
+from slb_glossary.types import RecordLike, SearchResult
 
-__all__ = ["parse_int", "print_results", "async_print_results", "log_timed_yields"]
+__all__ = ["parse_int", "print_records", "print_async_records", "log_timed_yields"]
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def humanize_field(field: str) -> str:
 
 
 async def log_timed_yields(
-    iterable: typing.AsyncIterator[T],
+    iterable: typing.AsyncIterable[T],
     *,
     logger: logging.Logger,
     label: str,
@@ -122,6 +122,22 @@ async def log_timed_yields(
         yield item
 
 
+def as_async_iterator(
+    results: typing.Iterable[T] | typing.AsyncIterable[T],
+) -> typing.AsyncIterator[T]:
+    """Normalize a sync or async iterable of items `T` into an async iterator."""
+
+    async def _wrap_sync(
+        sync_results: typing.Iterable[T],
+    ) -> typing.AsyncIterator[T]:
+        for result in sync_results:
+            yield result
+
+    if isinstance(results, typing.AsyncIterable):
+        return results.__aiter__()
+    return _wrap_sync(results)
+
+
 def _format_cell(value: typing.Any, *, max_related_shown: int = 6) -> str:
     """
     Render an arbitrary record field value as printable table cell text.
@@ -138,27 +154,31 @@ def _format_cell(value: typing.Any, *, max_related_shown: int = 6) -> str:
     """
     if value is None:
         return "-"
+
     if isinstance(value, (list, tuple)):
         if not value:
             return "-"
+
         names = [_format_cell(item) for item in value]
         if len(names) > max_related_shown:
             shown = ", ".join(names[:max_related_shown])
             return f"{shown}, +{len(names) - max_related_shown} more"
         return ", ".join(names)
-    if hasattr(value, "asdict"):
+
+    if isinstance(value, RecordLike) or hasattr(value, "asdict"):
         record_dict = value.asdict()
         fallback = next(iter(record_dict.values()), "-")
         return str(record_dict.get("term") or record_dict.get("name") or fallback)
+
     text = str(value).strip()
     return text or "-"
 
 
 DEFAULT_RESULT_TABLE_TITLE = "Search Results"
-"""Default table title used by `print_results`/`async_print_results` for `SearchResult`s."""
+"""Default table title used by `print_records`/`print_async_records` for `SearchResult`s."""
 
 DEFAULT_GENERIC_TABLE_TITLE = "Results"
-"""Default table title used by `print_results`/`async_print_results` for non-`SearchResult` records."""
+"""Default table title used by `print_records`/`print_async_records` for non-`SearchResult` records."""
 
 
 def _make_result_table(
@@ -242,8 +262,11 @@ def _format_generic_row(record: typing.Any, fields: typing.Sequence[str]) -> lis
     return [_format_cell(record_dict.get(field)) for field in fields]
 
 
+RecordT = typing.TypeVar("RecordT", bound=RecordLike)
+
+
 def _make_table_and_formatter(
-    sample: typing.Any,
+    sample: RecordT,
     *,
     title: str | None,
     show_url: bool,
@@ -251,7 +274,7 @@ def _make_table_and_formatter(
     show_grammar: bool,
     show_image: bool,
     show_related: bool,
-) -> tuple[Table, typing.Callable[[typing.Any], list[str]]]:
+) -> tuple[Table, typing.Callable[[RecordT], list[str]]]:
     """
     Choose a table layout and row formatter suited to `sample`'s record type.
 
@@ -287,19 +310,19 @@ def _make_table_and_formatter(
                 show_related=show_related,
             )
 
-        return table, _result_formatter
+        return table, typing.cast(typing.Callable[[RecordT], list[str]], _result_formatter)
 
     fields = list(getattr(sample, "fields", None) or sample.asdict().keys())
     table = _make_generic_table(fields, title=title)
 
-    def _generic_formatter(record: typing.Any) -> list[str]:
+    def _generic_formatter(record: RecordT) -> list[str]:
         return _format_generic_row(record, fields)
 
     return table, _generic_formatter
 
 
-def print_results(
-    results: typing.Iterable[typing.Any],
+def print_records(
+    results: typing.Iterable[RecordLike],
     *,
     title: str | None = None,
     out: typing.TextIO | None = None,
@@ -313,7 +336,7 @@ def print_results(
     """
     Pretty-print a sequence of records to `out` as a table.
 
-    Works with any `slb_glossary.store.RecordLike` (`SearchResult`s get a
+    Works with any `slb_glossary.types.RecordLike` (`SearchResult`s get a
     specialized layout with `show_*` column toggles; any other record type
     gets a generic table with one column per field), and with any iterable,
     including lazily produced generators.
@@ -353,7 +376,7 @@ def print_results(
         show_related=show_related,
     )
 
-    def _records() -> typing.Iterator[typing.Any]:
+    def _records() -> typing.Iterator[RecordLike]:
         yield first
         yield from iterator
 
@@ -378,8 +401,8 @@ def print_results(
     return count
 
 
-async def async_print_results(
-    results: typing.AsyncIterable[typing.Any],
+async def print_async_records(
+    results: typing.AsyncIterable[RecordLike],
     *,
     title: str | None = None,
     out: typing.TextIO | None = None,
@@ -390,7 +413,7 @@ async def async_print_results(
     show_image: bool = False,
     show_related: bool = False,
 ) -> int:
-    """Pretty-print an async stream of records as they are yielded. See `print_results`."""
+    """Pretty-print an async stream of records as they are yielded. See `print_records`."""
     if out is None:
         out = sys.stdout
     console = Console(file=out)
@@ -412,7 +435,7 @@ async def async_print_results(
         show_related=show_related,
     )
 
-    async def _records() -> typing.AsyncIterator[typing.Any]:
+    async def _records() -> typing.AsyncIterator[RecordLike]:
         yield first
         async for record in iterator:
             yield record

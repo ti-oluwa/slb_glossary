@@ -21,9 +21,9 @@ from slb_glossary.cli.source_options import (
 )
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.local import scored_search as scored_search
-from slb_glossary.local.models import Database
-from slb_glossary.models import SearchResult
+from slb_glossary.local.types import Database
 from slb_glossary.query import DEFAULT_RELEVANCE_THRESHOLD, Source
+from slb_glossary.types import SearchResult
 
 __all__ = ["search"]
 

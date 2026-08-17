@@ -10,8 +10,8 @@ from slb_glossary.local import sync as sync_api
 from slb_glossary.mcp.config import MCPConfig, Streaming, Tool
 from slb_glossary.mcp.errors import MCPError
 from slb_glossary.mcp.runtime import Runtime
-from slb_glossary.models import SearchResult
 from slb_glossary.query import Source, TermLookup
+from slb_glossary.types import SearchResult
 
 __all__ = [
     "ToolSpec",

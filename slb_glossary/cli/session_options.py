@@ -7,8 +7,8 @@ import click
 
 from slb_glossary.config import Config
 from slb_glossary.live.browser import BrowserType, ResourceType
-from slb_glossary.models import Language
 from slb_glossary.retries import BackoffType
+from slb_glossary.types import Language
 
 logger = logging.getLogger(__name__)
 

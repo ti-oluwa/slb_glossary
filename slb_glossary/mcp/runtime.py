@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from slb_glossary.config import DatabaseOptions
 from slb_glossary.live.browser import BrowserSession, close_session, open_session
 from slb_glossary.local.connection import close_db, open_db
-from slb_glossary.local.models import Database
+from slb_glossary.local.types import Database
 from slb_glossary.mcp.config import MCPConfig, SessionMode
 from slb_glossary.mcp.errors import MCPError
 from slb_glossary.mcp.types import NamedComponent

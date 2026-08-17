@@ -6,8 +6,8 @@ import click
 
 from slb_glossary import local
 from slb_glossary.live.browser import BrowserSession
-from slb_glossary.local.models import Database
 from slb_glossary.local.sync import SyncSummary
+from slb_glossary.local.types import Database
 
 __all__ = [
     "sync_filter_options",

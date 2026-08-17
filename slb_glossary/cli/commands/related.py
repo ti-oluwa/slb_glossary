@@ -24,7 +24,7 @@ __all__ = ["related"]
 
 
 class RelatedTermRecord(typing.NamedTuple):
-    """A single related-term link, saveable via `slb_glossary.store`."""
+    """A single related-term link"""
 
     term: str
     """The related term's display name."""

@@ -26,7 +26,7 @@ __all__ = ["topics"]
 
 
 class TopicRecord(typing.NamedTuple):
-    """A single glossary topic (discipline) and its term count, saveable via `slb_glossary.store`."""
+    """A single glossary topic (discipline) and its term count."""
 
     topic: str
     """The topic's display name."""
