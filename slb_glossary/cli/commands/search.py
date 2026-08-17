@@ -12,6 +12,7 @@ from slb_glossary.cli.session_options import config_option, session_options
 from slb_glossary.cli.source_options import (
     database_option,
     get_loaded_config,
+    live_session,
     open_configured_db,
     persist_kwargs,
     resolve_source,
@@ -19,7 +20,10 @@ from slb_glossary.cli.source_options import (
     source_options,
 )
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.query import Source
+from slb_glossary.local import search_scored as local_search_scored
+from slb_glossary.local.models import Database
+from slb_glossary.models import SearchResult
+from slb_glossary.query import DEFAULT_RELEVANCE_THRESHOLD, Source
 
 __all__ = ["search"]
 
@@ -33,6 +37,79 @@ def _validate_query(
             "Missing search query. Provide a query string to look up in the glossary."
         )
     return value
+
+
+async def _stream_auto_search(
+    ctx: click.Context,
+    params: typing.Mapping[str, typing.Any],
+    db: Database | None,
+    *,
+    query: str,
+    limit: int | None,
+    concurrency: int,
+    relevance_threshold: float,
+) -> typing.AsyncIterator[SearchResult]:
+    """
+    Stream `Source.AUTO` results for the `search` command, opening a live
+    session only if the local database doesn't have a confident match.
+
+    A `search`-specific alternative to `resolve_stream`'s generic
+    `Source.AUTO` handling (shared with `terms`/`urls`, which have no
+    notion of result relevance): this peeks at the local database's best
+    score first with no browser involved, and only opens a live session if
+    that score is below `relevance_threshold`. The actual local+live merge
+    then happens inside `slb_glossary.query.search` itself, so that logic
+    stays in one place rather than being duplicated here.
+
+    :param ctx: The current click context.
+    :param params: The command's parsed parameters.
+    :param db: An already-open local `Database`, or `None` if local
+        storage is disabled for this run.
+    :param query: The free-text query to search for.
+    :param limit: Maximum number of terms to look up. `None` for unlimited.
+    :param concurrency: Concurrent term-page fetches, if a live fetch happens.
+    :param relevance_threshold: See `slb_glossary.query.search`'s parameter of the same name.
+    :yield: Matching `SearchResult`s, local results first if a live fetch also happens.
+    """
+    if db is None:
+        async with live_session(ctx, params) as session:
+            async for result in glossary_query.search(
+                query,
+                session=session,
+                source=Source.LIVE,
+                topic=params["topic"],
+                start_letter=params["start_letter"],
+                limit=limit,
+                concurrency=concurrency,
+                **persist_kwargs(params),
+            ):
+                yield result  # noqa: ASYNC119
+        return
+
+    local_scored = await local_search_scored(
+        db, query, topic=params["topic"], limit=limit, fuzzy=params["fuzzy"]
+    )
+    best_score = local_scored[0][1] if local_scored else 0.0
+    if local_scored and best_score >= relevance_threshold:
+        for result, _ in local_scored:
+            yield result
+        return
+
+    async with live_session(ctx, params) as session:
+        async for result in glossary_query.search(
+            query,
+            db=db,
+            session=session,
+            source=Source.AUTO,
+            topic=params["topic"],
+            start_letter=params["start_letter"],
+            limit=limit,
+            concurrency=concurrency,
+            fuzzy=params["fuzzy"],
+            relevance_threshold=relevance_threshold,
+            **persist_kwargs(params),
+        ):
+            yield result  # noqa: ASYNC119
 
 
 @click.command("search")
@@ -56,6 +133,21 @@ def _validate_query(
     default=3,
     show_default=True,
     help="Maximum number of terms to look up. Use 0 for unlimited.",
+)
+@click.option(
+    "--relevance-threshold",
+    "relevance_threshold",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=DEFAULT_RELEVANCE_THRESHOLD,
+    show_default=True,
+    help=(
+        "Only used with --auto (the default). The local database's best "
+        "match must score at least this well (0.0-1.0) to be served alone; "
+        "below it, the live glossary is also searched and its results are "
+        "added after the local ones, rather than replacing them. Lower it "
+        "to trust local results more readily (fewer live fetches); raise "
+        "it to augment with live results more often."
+    ),
 )
 @click.option(
     "--url/--no-url",
@@ -129,9 +221,11 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     number of terms looked up, not the number of definitions returned.
 
     Reads from the local database, the live glossary, or both, depending on
-    --local/--live/--auto (--auto is the default): with a
-    local database available, cached results are used first and the live
-    site is only visited if the local database has nothing for QUERY.
+    --local/--live/--auto (--auto is the default): with a local database
+    available, its results are ranked and scored, and used alone if the
+    best of them meets --relevance-threshold; otherwise the live site is
+    also searched and its results are added on rather than replacing the
+    local ones.
 
     With --cache (the default), live results are saved to the local
     database as they arrive, --cache-batch-size at a time, rather than all
@@ -148,6 +242,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
       slb-glossary search porosity --local --fuzzy --topic Petrophysics
       slb-glossary search porosity --live --cache
       slb-glossary search porosity --live --limit 0 --cache-batch-size 5
+      slb-glossary search porosity --relevance-threshold 0.8
       slb-glossary search porosity --config ~/my-config.toml
       slb-glossary search porosity --config none --headed
     """
@@ -165,31 +260,42 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
 
     async def _run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
-            results = resolve_stream(
-                ctx,
-                params,
-                db,
-                source=source,
-                local_call=lambda db: glossary_query.search(
-                    query,
-                    db=db,
-                    source=Source.LOCAL,
-                    topic=params["topic"],
-                    limit=limit,
-                    fuzzy=params["fuzzy"],
-                ),
-                live_call=lambda session: glossary_query.search(
-                    query,
-                    db=db,
-                    session=session,
-                    source=Source.LIVE,
-                    topic=params["topic"],
-                    start_letter=params["start_letter"],
+            if source is Source.AUTO:
+                results: typing.AsyncIterator[SearchResult] = _stream_auto_search(
+                    ctx,
+                    params,
+                    db,
+                    query=query,
                     limit=limit,
                     concurrency=concurrency,
-                    **persist_kwargs(params),
-                ),
-            )
+                    relevance_threshold=params["relevance_threshold"],
+                )
+            else:
+                results = resolve_stream(
+                    ctx,
+                    params,
+                    db,
+                    source=source,
+                    local_call=lambda db: glossary_query.search(
+                        query,
+                        db=db,
+                        source=Source.LOCAL,
+                        topic=params["topic"],
+                        limit=limit,
+                        fuzzy=params["fuzzy"],
+                    ),
+                    live_call=lambda session: glossary_query.search(
+                        query,
+                        db=db,
+                        session=session,
+                        source=Source.LIVE,
+                        topic=params["topic"],
+                        start_letter=params["start_letter"],
+                        limit=limit,
+                        concurrency=concurrency,
+                        **persist_kwargs(params),
+                    ),
+                )
             return await output_results(
                 results,
                 title=title,

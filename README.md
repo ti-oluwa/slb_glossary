@@ -54,14 +54,13 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
 - **Pure async.** Every glossary lookup is an `async` function; nothing blocks the event loop.
 - **Lazy by default.** Search functions are async generators - they `yield` results as they're found instead of building a list up front, so you can `break` out early without paying for work you don't need.
 - **No browser install headaches.** Built on [patchright](https://pypi.org/project/patchright/), a stealth-patched Chromium automation driver, plus [playwright-stealth](https://pypi.org/project/playwright-stealth/) for extra fingerprint hardening. No manual driver management, no separate browser-driver toolchain to babysit. Chromium, Firefox and WebKit are all supported.
-- **An optional local cache.** `slb_glossary.local` keeps a SQLite (FTS5) copy of terms you've already looked up, complete with fuzzy topic matching and an optional bring-your-own-embedding vector store, so repeat lookups don't need the browser at all.
-- **One API for local, live, or both.** `slb_glossary.query` reads local-first and falls back to the live site only when needed, optionally caching whatever it fetches live for next time - or pin it to `local`-only or `live`-only when you know which you want.
+- **An optional local cache with real ranking.** `slb_glossary.local` keeps a SQLite (FTS5) copy of terms you've already looked up, scored so an actual term match beats a word that just happens to show up in a definition, plus fuzzy topic matching and an optional bring-your-own-embedding vector store - so repeat lookups don't need the browser at all.
+- **One API for local, live, or both.** `slb_glossary.query` reads local first and only goes live when the local database doesn't have a confident answer, optionally caching whatever it fetches for next time - or pin it to `local`-only or `live`-only when you know which you want.
 - **File-based configuration.** Browser-session, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
 - **Mostly a functional API.** Open a session, get back a plain `BrowserSession` value, and pass it to whichever function you need - most of what you'll call is a function, not a method on some stateful object.
-- **A full-featured CLI.** Every capability above - search, local caching, config, sync - is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
-- **An MCP server for LLM agents.** `slb_glossary.mcp` exposes the same search/lookup functions as MCP tools, via `slb mcp serve` or `slb_glossary.mcp.MCPApp` - with granular config for sources, local write access, auth, rate limiting, timeouts, and hooks. See [MCP server](#mcp-server-slb_glossarymcp).
+- **A CLI that covers the same ground as the library.** Search, local caching, config, sync - all of it is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
+- **An MCP server for LLM agents.** `slb_glossary.mcp` exposes the same search/lookup functions as MCP tools, via `slb mcp serve` or `slb_glossary.mcp.MCPApp`, with config for sources, local write access, auth, rate limiting, timeouts, and hooks. See [MCP server](#mcp-server-slb_glossarymcp).
 - **Configurable retries.** Flaky page loads are retried with a pluggable backoff policy - constant, linear, exponential or logarithmic.
-- **Reasonably complete on the API front.** Nearly everything the CLI can do, the library can do too - search, caching, config, sync, saving to a file - so you're not stuck shelling out just to get at a feature.
 
 ## Installation
 
@@ -133,6 +132,14 @@ Whichever method you use, finish with the one-time browser install - `sync` does
 
 ```bash
 slb-glossary install "chromium" # Or "firefox"/"webkit"
+```
+
+Browser builds are a large download from a single CDN, so on a slow or congested connection the install can time out partway through. If that happens, `install` takes a few flags to make it more forgiving:
+
+```bash
+slb-glossary install --timeout 120000                                        # allow 2 min per download, instead of the ~30s default
+slb-glossary install --download-host https://playwright.download.prss.microsoft.com  # use a mirror if the default CDN is slow/unreachable
+slb-glossary install --retries 5                                             # retry a failed download more times, with backoff
 ```
 
 ## Quick start
@@ -265,7 +272,7 @@ class SearchResult(typing.NamedTuple):
     related: tuple[RelatedTerm, ...] | None = None
 ```
 
-It's a plain `NamedTuple` underneath, so `result._asdict()`, `result._replace(...)`, indexing, and unpacking all work as you'd expect. It also adds `result.fields` and `result.asdict()` - the shape [`slb_glossary.store`](#saving-results-to-a-file-slb_glossarystore) and the CLI's output actually use - so you rarely need to reach for the underscore-prefixed versions yourself. `related` holds `RelatedTerm(term, url)` pairs parsed from a definition's "See related terms" list, when present.
+It's a plain `NamedTuple` underneath - indexing and unpacking work as you'd expect, and if you already know a namedtuple's own methods, those work too. It also adds `result.fields` and `result.asdict()`, which is what [`slb_glossary.store`](#saving-results-to-a-file-slb_glossarystore) and the CLI's output actually use. `related` holds `RelatedTerm(term, url)` pairs parsed from a definition's "See related terms" list, when present.
 
 ### Live search: `slb_glossary.live`
 
@@ -351,6 +358,13 @@ topics = await slb.local.get_topics(db)  # {topic: term_count}
 total = await slb.local.count(db)
 ```
 
+`search` ranks results best match first: SQLite FTS5 picks candidates, then each one is scored directly against your query so an actual term-name match always beats a word that just happens to show up in a definition. Need the scores themselves - to decide if the results are good enough to trust, say - use `search_scored` instead, which returns `(result, score)` pairs, `score` from `0.0` to `1.0`:
+
+```python
+for result, score in await slb.local.search_scored(db, "porosity", limit=10):
+    print(f"{score:.2f}", result.term)
+```
+
 `flush(db)` deletes every stored term (keeping sync history); `reset(db)` also forgets the sync history.
 
 ### Fuzzy topic matching
@@ -415,7 +429,9 @@ At least one of `db` or `session` must be given to every function here - there's
 | --------------- | ------------------------------------------------------------------------------------------------ |
 | `LOCAL`          | The local database only. Never touches the network. Requires `db`.                              |
 | `LIVE`           | The live glossary only. Never touches the local database. Requires `session`.                   |
-| `AUTO`    | (Default when both `db` and `session` are given.) Try `db` first; only fall back to `session` if the local database has nothing. Pass `persist=True` to cache whatever came back live. |
+| `AUTO`    | (Default when both `db` and `session` are given.) Try `db` first. `get_term`, `get_terms_on`, `get_terms_urls`, `get_topics`, `related_terms`, `get_random_term`, and `compare` fall back to `session` if `db` came back with nothing at all. `search` is scored instead of just checked for emptiness - see below. Pass `persist=True` to cache whatever came back live. |
+
+`search`'s `AUTO` behavior goes a step further than the rest: each local result is scored against the query (`local.search_scored`), and if even the best of them isn't a confident match, `session` is queried too and its results are added on rather than replacing the local ones - `relevance_threshold` (`0.0`-`1.0`, default `0.55`) sets how confident is confident enough. This is what lets a search stay accurate without silently trusting a weak local match just because it happened to return something.
 
 When only one of `db`/`session` is given, `AUTO` simply behaves like whichever of `LOCAL`/`LIVE` that one supports. The available functions mirror `slb_glossary.live`/`slb_glossary.local`'s own shapes: `search`, `get_terms_on`, `get_terms_urls`, and `get_topics` stream/return several results; `get_term`, `related_terms`, and `get_random_term` return one; `compare` looks up several terms at once. Each accepts a `fuzzy=True` flag that, for any local read, tolerates minor misspellings/partial names in `topic` (see [Fuzzy topic matching](#fuzzy-topic-matching) - live reads already fuzzy-match topics unconditionally).
 
@@ -451,7 +467,7 @@ On the CLI, `slb-glossary config` opens a guided, section-by-section wizard; `co
 
 ## Saving results to a file: `slb_glossary.store`
 
-`slb_glossary.store` is a self-contained package with no dependency on the rest of `slb_glossary` - it doesn't know a browser or a glossary exists. `save` works with anything that satisfies `RecordLike`: a `.fields` property and an `.asdict()` method (`SearchResult` already has both - see [`SearchResult`](#searchresult)). That's it, so it happily saves `SearchResult`s, your own records, or the async generators the search functions return directly, without you collecting them first:
+`slb_glossary.store` has no dependency on the rest of `slb_glossary` - you can use it to save any data, glossary-related or not. `save` works with anything that satisfies `RecordLike`: a `.fields` property and an `.asdict()` method (`SearchResult` already has both - see [`SearchResult`](#searchresult)). That's it, so it happily saves `SearchResult`s, your own records, or the async generators the search functions return directly, without you collecting them first:
 
 ```python
 results = slb.live.search(session, "gas lift")
@@ -674,7 +690,7 @@ slb define porosity --auto            # local first, live as a fallback (the def
 slb define porosity --source live     # equivalent, spelled out
 ```
 
-`--db-path PATH` overrides the local database file for that run (see `local path`/`Config.local`). With `--auto` (the default), a local hit never launches a browser at all - so a search you've already cached comes back instantly, and only a genuine cache miss pays for opening a page.
+`--db-path PATH` overrides the local database file for that run (see `local path`/`Config.local`). With `--auto` (the default), a local hit never launches a browser at all - so a search you've already cached comes back instantly, and only a genuine cache miss pays for opening a page. For `search` specifically, "hit" means a *confident* one: `--relevance-threshold` (default `0.55`) sets how good the local database's best match needs to be before a browser is skipped entirely; a weak match still gets served, but topped up with a live search rather than trusted on its own.
 
 ### Saving and formatting output
 
@@ -711,14 +727,11 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
 
 ## Performance notes
 
-- Image, font and media requests are blocked at the network layer by default (`block=True`) - the glossary is a JavaScript app, so scripts and stylesheets are always loaded, but nothing else needs to be.
-- Page data (topic lists, result links, definition text) is read with single `evaluate`-style JavaScript calls rather than one round-trip per DOM element.
-- Because live search is lazy, `async for result in live.search(session, "x"): break` after the first result does the minimum work needed to produce it.
-- Reuse one `BrowserSession` for every live search you need instead of opening a new one per query - most of the cost of a session is the one-time browser launch and topic fetch.
-- A `BrowserSession` drives a single browser page and isn't safe to share across concurrent coroutines. For parallel searches, open one session per concurrent task, or use a function's `concurrency` argument to open extra pages on the same session.
-- A local-database read never launches a browser; `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) takes advantage of this by trying the local database first. On the CLI, this means `slb search "gas lift"` costs nothing beyond an SQLite read on a repeat run, and only touches the network the first time.
-- `--concurrency` (on `search`/`terms`, and the equivalent `concurrency=` argument in the library) fetches several term detail pages in parallel on a live search - useful for a first-time sync of a large query, but keep it modest, since it's still one site being asked for more work at once.
-- `slb-glossary local sync`/`update` (or their `slb_glossary.local.sync` counterparts) let you build up the local cache ahead of time, in one batch, so day-to-day lookups afterward stay entirely local.
+A few things `slb_glossary` does on its own to keep things fast: image, font, and media requests are blocked at the network layer by default (`block=True`) - the glossary is a JavaScript app, so scripts and stylesheets still load, but nothing else needs to. Page data (topic lists, result links, definition text) is read with single `evaluate`-style JavaScript calls instead of one round-trip per DOM element. Search functions are lazy async generators, so `async for result in live.search(session, "x"): break` only does the work needed to produce that first result. And a local-database read never launches a browser - `local.search`/`search_scored` rank and score results in one FTS5 pass, no network involved either way.
+
+The rest is on you, and it's mostly about not paying for a browser more than once. Open one `BrowserSession` and reuse it for every live search you need instead of opening a new one per query - most of a session's cost is the one-time browser launch and topic fetch. A session drives a single browser page, though, so it isn't safe to share across concurrent coroutines - for parallel searches, either open one session per task, or use a function's `concurrency` argument to open extra pages on the same session (keep this modest; it's still one site being asked for more at once).
+
+Past that, lean on the local database. `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) tries the local database first, so a search you've already cached costs nothing beyond an SQLite read on a repeat run and only touches the network the first time. `search` specifically only trusts that local read alone if its best match is actually a good one (see `relevance_threshold` in [Source-aware queries](#source-aware-queries-slb_glossaryquery)) - if it isn't, it augments with a live search instead of pretending the network step isn't needed, but the results still favor whatever's already local. If you know you'll need a topic or query a lot, `slb-glossary local sync`/`update` (or `slb_glossary.local.sync`) let you build up the cache ahead of time in one batch, so day-to-day lookups afterward stay entirely local.
 
 ## Exceptions
 

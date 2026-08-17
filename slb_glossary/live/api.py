@@ -235,7 +235,7 @@ async def get_terms_urls(
     finally:
         elapsed = time.monotonic() - started_at
         logger.debug(
-            "get_terms_urls done: %d url(s) across %d tab(s) in %.3fs (avg %.3fs/url)",
+            "`get_terms_urls` done: %d url(s) across %d tab(s) in %.3fs (avg %.3fs/url)",
             yielded,
             tab,
             elapsed,
@@ -388,7 +388,7 @@ async def get_results_from_urls(
         finally:
             elapsed = time.monotonic() - started_at
             logger.debug(
-                "get_results_from_urls (sequential) done: %d result(s) in %.3fs (avg %.3fs/result)",
+                "`get_results_from_urls` (sequential) done: %d result(s) in %.3fs (avg %.3fs/result)",
                 yielded,
                 elapsed,
                 elapsed / yielded if yielded else 0.0,
@@ -448,7 +448,7 @@ async def get_results_from_urls(
             await page.close()
         elapsed = time.monotonic() - started_at
         logger.debug(
-            "get_results_from_urls (concurrency=%d) done: %d result(s) in %.3fs (avg %.3fs/result)",
+            "`get_results_from_urls` (concurrency=%d) done: %d result(s) in %.3fs (avg %.3fs/result)",
             concurrency,
             yielded,
             elapsed,

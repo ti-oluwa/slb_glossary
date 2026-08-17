@@ -7,7 +7,10 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import time
 import typing
+
+from slb_glossary.retries import RetryPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,13 @@ class BrowserInstallError(RuntimeError):
 
 KNOWN_BROWSERS: tuple[str, ...] = ("chromium", "firefox", "webkit")
 """Browser families patchright's driver knows how to install."""
+
+DEFAULT_INSTALL_RETRY_POLICY = RetryPolicy.exponential(base_delay=2.0, attempts=3, max_delay=15.0)
+"""
+Default retry policy for a browser download that times out or drops.
+Allows a handful of attempts with a short exponential backoff, since a slow or
+flaky connection is often fine a few seconds later.
+"""
 
 
 @dataclasses.dataclass(slots=True, kw_only=True, frozen=True)
@@ -79,14 +89,28 @@ def get_directory_size(path: pathlib.Path) -> int:
     return total
 
 
-def run_driver(args: typing.Sequence[str]) -> None:
+def run_driver(
+    args: typing.Sequence[str],
+    *,
+    env_overrides: typing.Mapping[str, str] | None = None,
+    retry: RetryPolicy | None = None,
+) -> None:
     """
     Run `python -m patchright <args>`, streaming its output live.
 
     :param args: Arguments to pass after `patchright` on the command line,
         e.g. `["install", "chromium", "--with-deps"]`.
-    :raises BrowserInstallError: If patchright isn't importable, or the
-        driver process exits with a non-zero status.
+    :param env_overrides: Extra environment variables for the subprocess,
+        layered on top of the current environment - e.g.
+        `PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT`/`PLAYWRIGHT_DOWNLOAD_HOST`,
+        which is how patchright's driver actually takes a download timeout
+        and an alternate CDN host; neither is a real CLI flag on `install`.
+    :param retry: If given, retry a failing run per this policy (a fresh
+        subprocess each attempt) instead of raising on the first failure.
+        `None` (the default) tries exactly once, matching the previous
+        behavior of this function.
+    :raises BrowserInstallError: If patchright isn't importable, or every
+        attempt's driver process exits with a non-zero status.
     """
     try:
         import patchright  # noqa: F401
@@ -97,14 +121,38 @@ def run_driver(args: typing.Sequence[str]) -> None:
         ) from exc
 
     command = [sys.executable, "-m", "patchright", *args]
-    logger.debug("Running: %s", " ".join(command))
-    try:
-        result = subprocess.run(command, check=False)
-    except OSError as exc:
-        raise BrowserInstallError(f"Could not run the patchright driver: {exc}") from exc
+    env = {**os.environ, **env_overrides} if env_overrides else None
+    if env_overrides:
+        logger.debug("Running with extra env: %s", ", ".join(sorted(env_overrides)))
 
-    if result.returncode != 0:
-        raise BrowserInstallError(f"`{' '.join(command)}` exited with status {result.returncode}.")
+    policy = retry or RetryPolicy(attempts=1)
+    last_error: BrowserInstallError | None = None
+    for attempt in range(1, policy.attempts + 1):
+        logger.debug("Running (attempt %d/%d): %s", attempt, policy.attempts, " ".join(command))
+        try:
+            result = subprocess.run(command, check=False, env=env)
+        except OSError as exc:
+            last_error = BrowserInstallError(f"Could not run the patchright driver: {exc}")
+        else:
+            if result.returncode == 0:
+                return
+            last_error = BrowserInstallError(
+                f"`{' '.join(command)}` exited with status {result.returncode}."
+            )
+
+        if attempt < policy.attempts:
+            delay = policy.delay_for_attempt(attempt)
+            logger.warning(
+                "Attempt %d/%d failed (%s); retrying in %.1fs",
+                attempt,
+                policy.attempts,
+                last_error,
+                delay,
+            )
+            time.sleep(delay)
+
+    assert last_error is not None
+    raise last_error
 
 
 def install_browsers(
@@ -113,9 +161,20 @@ def install_browsers(
     with_deps: bool = False,
     force: bool = False,
     only_shell: bool = False,
+    timeout_ms: int | None = None,
+    download_host: str | None = None,
+    retry: RetryPolicy | None = DEFAULT_INSTALL_RETRY_POLICY,
 ) -> None:
     """
     Install one or more browser engines via patchright's driver.
+
+    Browser builds are large (100-400MB) downloads from a single CDN, so on
+    a slow or congested connection, the default ~30s-per-request timeout
+    patchright/Playwright ships with can trip before a build finishes -
+    this shows up as the install just failing partway through with a
+    timeout error and nothing installed. `timeout_ms`/`download_host`/`retry`
+    exist to make that recoverable without editing your shell's environment
+    by hand.
 
     :param browsers: Browser family names to install, e.g. `["chromium"]`.
         An empty sequence installs patchright's default set of browsers.
@@ -124,6 +183,17 @@ def install_browsers(
     :param force: Reinstall even if the browser is already present.
     :param only_shell: For Chromium, install the headless-shell build
         instead of the full browser. Ignored for other browsers.
+    :param timeout_ms: Milliseconds to wait per download before giving up,
+        sets `PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT` for this run only.
+        Raise this (e.g. to `120_000`) if installs keep timing out on a
+        slow connection. `None` leaves patchright's own default in place.
+    :param download_host: Alternate host to download browser builds from,
+        sets `PLAYWRIGHT_DOWNLOAD_HOST` for this run only. Useful if the
+        default CDN is slow or unreachable from your network - point this
+        at a mirror, or a caching proxy you control.
+    :param retry: Retry policy for a failed download - see
+        `DEFAULT_INSTALL_RETRY_POLICY`. Pass `None` to try exactly once
+        (the previous behavior), or `RetryPolicy(attempts=1)` explicitly.
     :raises BrowserInstallError: If the install fails for any reason,
         including patchright not being installed.
     """
@@ -134,7 +204,14 @@ def install_browsers(
         args.append("--force")
     if only_shell:
         args.append("--only-shell")
-    run_driver(args)
+
+    env_overrides: dict[str, str] = {}
+    if timeout_ms is not None:
+        env_overrides["PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT"] = str(timeout_ms)
+    if download_host:
+        env_overrides["PLAYWRIGHT_DOWNLOAD_HOST"] = download_host
+
+    run_driver(args, env_overrides=env_overrides or None, retry=retry)
 
 
 def remove_browsers(browsers: typing.Sequence[str]) -> list[str]:

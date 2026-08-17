@@ -32,6 +32,14 @@ in what order) is controlled by `source`:
 When only one of `db`/`session` is given, `Source.AUTO` simply
 behaves like whichever of `Source.LOCAL`/`Source.LIVE` that one supports.
 
+`search` narrows `Source.AUTO` further than the other functions here: a
+local hit doesn't automatically end the search. Each local result is
+scored against the query (see `slb_glossary.local.search_scored`), and if
+even the best of them isn't a confident match, the live glossary is
+queried too and its results are added on - the local results aren't
+thrown away, just no longer treated as the whole answer. `relevance_threshold`
+controls how confident is confident enough; see `search`'s own docstring.
+
 `search`/`get_terms_on` write live results to `db` incrementally, in
 batches, rather than buffering the whole stream and writing it in one shot
 at the end - see `slb_glossary.local.upsert_results_incrementally`'s
@@ -70,8 +78,17 @@ __all__ = [
 ]
 
 DEFAULT_PERSIST_BATCH_SIZE = local_api.DEFAULT_UPSERT_BATCH_SIZE
-"""Default `persist_batch_size` for `search`/`get_terms_on`: how many
-live results to buffer before writing an incremental upsert batch."""
+"""
+Default `persist_batch_size` for `search`/`get_terms_on`: how many
+live results to buffer before writing an incremental upsert batch.
+"""
+
+DEFAULT_RELEVANCE_THRESHOLD = 0.55
+"""
+Default `relevance_threshold` for `search`'s `Source.AUTO` behavior:
+below this score (see `slb_glossary.local.search_scored`), the local
+database's best match isn't trusted alone and a live search is added on.
+"""
 
 
 class Source(enum.Enum):
@@ -104,8 +121,10 @@ class TermLookup(typing.Generic[T]):
     """Which source actually served this lookup: `Source.LOCAL` or `Source.LIVE`"""
 
     persisted: bool
-    """Whether this lookup's result was written to `db` as part of the call
-    (only ever `True` for a live result fetched with `persist=True`)."""
+    """
+    Whether this lookup's result was written to `db` as part of the call
+    (only ever `True` for a live result fetched with `persist=True`).
+    """
 
 
 def _validate_source(db: Database | None, session: BrowserSession | None, source: Source) -> None:
@@ -133,7 +152,8 @@ def _resolve_source(db: Database | None, session: BrowserSession | None, source:
 async def _maybe_persist(
     db: Database | None, results: typing.Sequence[SearchResult], *, persist: bool, language: str
 ) -> bool:
-    """Upsert `results` into `db` in one shot, for single-value lookups (`get_term` et al).
+    """
+    Upsert `results` into `db` in one shot, for single-value lookups (`get_term` et al).
 
     `search`/`get_terms_on` use `_persist_incrementally` instead, since
     they stream potentially many results and shouldn't hold them all in
@@ -218,16 +238,21 @@ async def search(
     persist_batch_size: int = DEFAULT_PERSIST_BATCH_SIZE,
     persist_on_error: bool = True,
     fuzzy: bool = False,
+    relevance_threshold: float = DEFAULT_RELEVANCE_THRESHOLD,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Search for `query`, reading from `db`/`session` according to `source`.
 
-    With `source=Source.AUTO` (the default when both `db` and
-    `session` are given), the local database is searched first; the live
-    glossary is only queried if that search comes back empty. Note that
-    `start_letter` filtering against the local database is best-effort:
-    unlike the live site, the local search only has whatever's already
-    been cached.
+    With `source=Source.AUTO` (the default when both `db` and `session`
+    are given), the local database is searched first and scored (see
+    `slb_glossary.local.search_scored`). If its best result meets
+    `relevance_threshold`, those local results are served alone. Otherwise
+    the live glossary is queried too, and its results are added on after
+    the local ones. Local results aren't thrown away just because they
+    weren't confident, they're just not trusted as the *whole* answer.
+    Note that `start_letter` filtering against the local database is
+    best-effort: unlike the live site, the local search only has whatever's
+    already been cached.
 
     :param query: Free-text query.
     :param db: An open local `Database`. Required for `Source.LOCAL`, and
@@ -253,9 +278,14 @@ async def search(
         through, instead of losing it.
     :param fuzzy: If `True`, any local-database read (a `Source.LOCAL` read,
         or `Source.AUTO`'s local-first attempt) tolerates minor
-        misspellings/partial names in `topic` - see
-        `slb_glossary.local.fuzzy_match_topics`. Live reads already
+        misspellings/partial names in `topic`. Live reads already
         fuzzy-match topics unconditionally, so this has no effect on them.
+    :param relevance_threshold: Only used by `Source.AUTO`. The local
+        database's best-scoring result must meet this (`0.0`-`1.0`, see
+        `slb_glossary.local.search_scored`) for its results to be served
+        without also querying the live glossary. Lower it to trust local
+        results more readily (fewer live fetches); raise it to augment
+        with live results more often.
     :yield: Matching `SearchResult`s.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
@@ -269,7 +299,7 @@ async def search(
             count += 1
             yield result
         logger.debug(
-            "query.search(%r, source=LOCAL) yielded %d result(s) in %.3fs",
+            "`query.search(%r, source=LOCAL)` yielded %d result(s) in %.3fs",
             query,
             count,
             time.monotonic() - started_at,
@@ -297,30 +327,33 @@ async def search(
             count += 1
             yield result
         logger.debug(
-            "query.search(%r, source=LIVE) yielded %d result(s) in %.3fs",
+            "`query.search(%r, source=LIVE)` yielded %d result(s) in %.3fs",
             query,
             count,
             time.monotonic() - started_at,
         )
         return
 
-    # source is Source.AUTO, resolved started as LOCAL: try it, then fall back.
+    # source is Source.AUTO, resolved started as LOCAL: score it, then decide.
     assert db is not None
-    local_results = [
-        result
-        async for result in local_api.search(db, query, topic=topic, limit=limit, fuzzy=fuzzy)
-    ]
+    local_scored = await local_api.search_scored(db, query, topic=topic, limit=limit, fuzzy=fuzzy)
     if start_letter:
-        local_results = [
-            result
-            for result in local_results
+        local_scored = [
+            (result, score)
+            for result, score in local_scored
             if (result.term or "").lower().startswith(start_letter.lower())
         ]
-    if local_results:
+    local_results = [result for result, _score in local_scored]
+    best_score = local_scored[0][1] if local_scored else 0.0
+
+    if local_results and best_score >= relevance_threshold:
         logger.debug(
-            "Serving search(%r) from the local database (%d result(s) in %.3fs)",
+            "Serving `search(%r)` from the local database alone "
+            "(%d result(s), best score %.3f >= threshold %.3f, in %.3fs)",
             query,
             len(local_results),
+            best_score,
+            relevance_threshold,
             time.monotonic() - started_at,
         )
         for result in local_results:
@@ -329,22 +362,48 @@ async def search(
 
     if session is None:
         logger.debug(
-            "Local database had nothing for search(%r); no session to fall back to", query
+            "`search(%r)`: local database's best score %.3f is below threshold %.3f "
+            "(or empty), but no session to augment with; serving local results as-is",
+            query,
+            best_score,
+            relevance_threshold,
         )
+        for result in local_results:
+            yield result
         return
 
     logger.debug(
-        "Local database had nothing for search(%r); falling back to the live glossary", query
+        "`search(%r)`: local database's best score %.3f is below threshold %.3f "
+        "(or empty); augmenting with the live glossary",
+        query,
+        best_score,
+        relevance_threshold,
     )
+    for result in local_results:
+        count += 1
+        yield result
+
+    remaining = None if limit is None else max(limit - len(local_results), 0)
+    if remaining == 0:
+        logger.debug(
+            "`query.search(%r, source=AUTO)` yielded %d result(s) in %.3fs total "
+            "(local quota already filled; not augmenting further)",
+            query,
+            count,
+            time.monotonic() - started_at,
+        )
+        return
+
+    seen_urls = {result.url for result in local_results if result.url}
+    seen_terms = {(result.term or "").strip().lower() for result in local_results}
     live_stream = live.search(
         session,
         query,
         topic=topic,
         start_letter=start_letter,
-        limit=limit,
+        limit=remaining if remaining is not None else limit,
         concurrency=concurrency,
     )
-    live_count = 0
     async for result in _persist_incrementally(
         db,
         live_stream,
@@ -353,12 +412,20 @@ async def search(
         batch_size=persist_batch_size,
         persist_on_error=persist_on_error,
     ):
-        live_count += 1
+        url = result.url
+        term_key = (result.term or "").strip().lower()
+        if (url and url in seen_urls) or term_key in seen_terms:
+            # Already covered by a local result; don't yield it twice.
+            continue
+        seen_urls.add(url or "")
+        seen_terms.add(term_key)
+        count += 1
         yield result
+
     logger.debug(
-        "query.search(%r, source=AUTO->LIVE) yielded %d result(s) in %.3fs total",
+        "`query.search(%r, source=AUTO->LOCAL+LIVE)` yielded %d result(s) in %.3fs total",
         query,
-        live_count,
+        count,
         time.monotonic() - started_at,
     )
 
@@ -418,7 +485,7 @@ async def get_terms_on(
             count += 1
             yield result
         logger.debug(
-            "query.get_terms_on(%r, source=LOCAL) yielded %d result(s) in %.3fs",
+            "`query.get_terms_on(%r, source=LOCAL)` yielded %d result(s) in %.3fs",
             topic,
             count,
             time.monotonic() - started_at,
@@ -442,7 +509,7 @@ async def get_terms_on(
             count += 1
             yield result
         logger.debug(
-            "query.get_terms_on(%r, source=LIVE) yielded %d result(s) in %.3fs",
+            "`query.get_terms_on(%r, source=LIVE)` yielded %d result(s) in %.3fs",
             topic,
             count,
             time.monotonic() - started_at,
@@ -458,7 +525,7 @@ async def get_terms_on(
     ]
     if local_results:
         logger.debug(
-            "Serving get_terms_on(%r) from the local database (%d result(s) in %.3fs)",
+            "Serving `get_terms_on(%r)` from the local database (%d result(s) in %.3fs)",
             topic,
             len(local_results),
             time.monotonic() - started_at,
@@ -488,7 +555,7 @@ async def get_terms_on(
         live_count += 1
         yield result
     logger.debug(
-        "query.get_terms_on(%r, source=AUTO->LIVE) yielded %d result(s) in %.3fs total",
+        "`query.get_terms_on(%r, source=AUTO->LIVE)` yielded %d result(s) in %.3fs total",
         topic,
         live_count,
         time.monotonic() - started_at,
@@ -757,7 +824,7 @@ async def get_random_term(
     :param persist: If `True`, and a live pick happens, cache it into `db`.
         A single-value lookup, so batching doesn't apply.
     :param fuzzy: If `True`, a local pick tolerates minor misspellings/
-        partial names in `topic` - see `slb_glossary.local.fuzzy_match_topics`.
+        partial names in `topic`.
         Live picks already fuzzy-match topics unconditionally, so this has
         no effect on them.
     :return: A `TermLookup` wrapping the picked `SearchResult`, or `None` if
@@ -875,7 +942,7 @@ async def compare(
         )
     elapsed = time.monotonic() - started_at
     logger.debug(
-        "compare(%d term(s)) done in %.3fs (avg %.3fs/term)",
+        "`compare(%d term(s))` done in %.3fs (avg %.3fs/term)",
         len(terms),
         elapsed,
         elapsed / len(terms),

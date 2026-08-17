@@ -1,5 +1,5 @@
 """
-Local search database: a SQLite (FTS5) cache of glossary terms, plus an
+Local search database. A SQLite (FTS5) cache of glossary terms, plus an
 optional custom embedding vector store, so repeat lookups don't
 have to keep re-visiting the live site.
 
@@ -10,6 +10,12 @@ it with `search`/`get_terms_on`/`get_term`/`get_terms_urls`/`iter_topics`
 which all have the same shapes `slb_glossary.live`'s live functions return, so code
 written against one works against the other. `flush`/`reset` clear it out
 again when you're done with it.
+
+`search` ranks results *best-match-first* using SQLite FTS5 plus a second,
+in-process scoring pass (so a real match against a term's name always
+beats an incidental one buried in its definition). Use `search_scored`
+instead if you need each result's `0.0`-`1.0` score, e.g. to decide
+whether the local database's results are good enough to serve alone.
 
 Topic filters on `search`/`get_terms_on`/`random_term`/`get_terms_urls`
 match locally stored topic names exactly (case-insensitively) by default;
@@ -37,6 +43,7 @@ from slb_glossary.local.api import (
     get_terms_urls,
     get_topics,
     search,
+    search_scored,
     upsert_results,
 )
 from slb_glossary.local.connection import close_db, database, open_db
@@ -62,6 +69,7 @@ __all__ = [
     "database",
     "upsert_results",
     "search",
+    "search_scored",
     "get_terms_on",
     "get_term",
     "get_random_term",
