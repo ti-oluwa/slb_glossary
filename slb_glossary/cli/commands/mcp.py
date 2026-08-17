@@ -10,6 +10,7 @@ from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.runtime import run_async
 from slb_glossary.config import Config
 from slb_glossary.query import Source
+from slb_glossary.types import Language
 
 __all__ = ["mcp"]
 
@@ -24,6 +25,7 @@ _APP_PATH_IGNORED_OPTIONS = (
     "auth_tokens",
     "auth_backend_path",
     "limit",
+    "language",
 )
 """
 Option names that only make sense when *building* an `MCPConfig` from
@@ -124,6 +126,16 @@ def mcp() -> None:
     help="Enable rate limiting: max requests per client per tool per minute.",
 )
 @click.option(
+    "--language",
+    "-L",
+    "language",
+    type=click.Choice([lang.value for lang in Language], case_sensitive=False),
+    default=None,
+    help="Glossary language edition the server's live session searches. "
+    "Overrides session.language from --config (or the built-in default, 'en') "
+    "for this run only.",
+)
+@click.option(
     "--log-level",
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
     default=None,
@@ -147,6 +159,7 @@ def serve(
     auth_tokens: tuple[str, ...],
     auth_backend_path: str | None,
     limit: int | None,
+    language: str | None,
     log_level: str | None,
 ) -> None:
     """
@@ -196,7 +209,11 @@ def serve(
         raise click.UsageError("--auth-token and --auth-backend are mutually exclusive.")
 
     glossary_config = Config.load(config_path) if config_path is not None else Config()
-    session = SessionAccess(enabled=not no_live, browser=glossary_config.session)
+    session_browser = glossary_config.session
+    if language is not None:
+        session_browser = dataclasses.replace(session_browser, language=Language(language).value)
+
+    session = SessionAccess(enabled=not no_live, browser=session_browser)
     local = LocalAccess(
         enabled=not no_local, allow_write=allow_write, database=glossary_config.local
     )

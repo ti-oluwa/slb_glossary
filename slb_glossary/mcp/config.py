@@ -31,6 +31,7 @@ from slb_glossary.mcp.errors import MCPConfigError
 from slb_glossary.mcp.ratelimit import RateLimiter
 from slb_glossary.mcp.types import AfterToolHook, BeforeToolHook, LifecycleHook, ToolErrorHook
 from slb_glossary.query import Source
+from slb_glossary.types import Language
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -628,6 +629,55 @@ class MCPConfig:
         return tools
 
     @classmethod
-    def default(cls) -> Self:
-        """Return a fresh, all-defaults `MCPConfig`. Equivalent to `MCPConfig()`."""
-        return cls()
+    def default(cls, *, language: str | Language | None = None) -> Self:
+        """
+        Return a fresh, all-defaults `MCPConfig`.
+
+        Equivalent to `MCPConfig()` when `language` is omitted. `language`
+        exists as a shortcut for the one setting that's awkward to reach
+        through `dataclasses.replace` alone, since it's nested three
+        levels down (`session.browser.language`):
+
+        ```python
+        config = MCPConfig.default(language="es")
+        # instead of:
+        config = dataclasses.replace(
+            MCPConfig.default(),
+            session=dataclasses.replace(
+                SessionAccess(),
+                browser=dataclasses.replace(BrowserSessionOptions(), language="es"),
+            ),
+        )
+        ```
+
+        :param language: Glossary language edition the default session
+            should search - `"en"`/`"es"`, or a `Language` member. `None`
+            (the default) leaves `SessionAccess.browser.language` at its
+            own default (`"en"`).
+        :return: A fresh `MCPConfig`, defaults throughout except for
+            `session.browser.language` if `language` was given.
+        :raises MCPConfigError: If `language` is a string that isn't a
+            valid `Language` value.
+        """
+        config = cls()
+        if language is None:
+            return config
+
+        if isinstance(language, Language):
+            language_value = language.value
+        else:
+            try:
+                language_value = Language(language).value
+            except ValueError as exc:
+                choices = ", ".join(lang.value for lang in Language)
+                raise MCPConfigError(
+                    f"Unknown language {language!r}. Expected one of: {choices}."
+                ) from exc
+
+        return dataclasses.replace(
+            config,
+            session=dataclasses.replace(
+                config.session,
+                browser=dataclasses.replace(config.session.browser, language=language_value),
+            ),
+        )
