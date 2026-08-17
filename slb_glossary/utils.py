@@ -111,7 +111,7 @@ async def log_timed_yields(
         elapsed = now - start
         logger.log(
             level,
-            "%s: yield #%d took %.3fs (avg %.3fs/yield so far, %.3fs elapsed total)",
+            "`%s`: yield #%d took %.3fs (avg %.3fs/yield so far, %.3fs elapsed total)",
             label,
             count,
             now - previous,

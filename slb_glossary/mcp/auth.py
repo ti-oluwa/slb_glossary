@@ -1,7 +1,7 @@
 """
 Pluggable, request-aware authentication/authorization for `slb_glossary.mcp`.
 
-This is deliberately independent of FastMCP's own OAuth-flavored
+This is independent of `FastMCP`'s own OAuth-flavored
 `fastmcp.server.auth.AuthProvider` machinery, which secures the
 *transport* (e.g. rejecting an unauthenticated HTTP request before it ever
 reaches a tool). `AuthBackend` here resolves each tool call into a
@@ -162,6 +162,7 @@ def import_backend(dotted_path: str) -> AuthBackend:
             f"{dotted_path!r} is not a valid auth-backend import path. Use "
             f"'module:ClassName' or 'package.module.ClassName'."
         )
+
     module = importlib.import_module(module_path)
     try:
         target = getattr(module, attr)
@@ -172,6 +173,6 @@ def import_backend(dotted_path: str) -> AuthBackend:
     if not isinstance(backend, AuthBackend):
         raise TypeError(
             f"{dotted_path!r} resolved to {backend!r}, which doesn't implement "
-            f"AuthBackend (an `authenticate(self, request)` coroutine method)."
+            f"`AuthBackend` (an `authenticate(self, request)` coroutine method)."
         )
     return backend

@@ -358,7 +358,7 @@ def resolve_session_kwargs(
                 continue
         resolved.set(config_key, value)
 
-    kwargs = resolved.to_session_kwargs()
+    kwargs = resolved.session_kwargs()
     if kwargs.get("log_sink"):
         logger.debug("Resolved session log sink: %r", kwargs["log_sink"])
     return kwargs

@@ -4,7 +4,7 @@ import typing
 
 import click
 
-from slb_glossary import query as glossary_query
+from slb_glossary import query as query
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
@@ -161,7 +161,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
                 params,
                 db,
                 source=source,
-                local_call=lambda db: glossary_query.get_terms_on(
+                local_call=lambda db: query.get_terms_on(
                     topic,
                     db=db,
                     source=Source.LOCAL,
@@ -169,7 +169,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
                     limit=limit,
                     fuzzy=params["fuzzy"],
                 ),
-                live_call=lambda session: glossary_query.get_terms_on(
+                live_call=lambda session: query.get_terms_on(
                     topic,
                     db=db,
                     session=session,

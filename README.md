@@ -528,8 +528,7 @@ Both do the same thing: build an MCP server from an `MCPConfig` and serve it. `M
 import dataclasses
 from slb_glossary.mcp import MCPConfig, LocalAccess, Tool
 
-config = dataclasses.replace(
-    MCPConfig.default(),
+config = MCPConfig(
     local=LocalAccess(allow_write=True),
     tools=Tool.ALL,
 )
@@ -727,11 +726,11 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
 
 ## Performance notes
 
-A few things `slb_glossary` does on its own to keep things fast: image, font, and media requests are blocked at the network layer by default (`block=True`) - the glossary is a JavaScript app, so scripts and stylesheets still load, but nothing else needs to. Page data (topic lists, result links, definition text) is read with single `evaluate`-style JavaScript calls instead of one round-trip per DOM element. Search functions are lazy async generators, so `async for result in live.search(session, "x"): break` only does the work needed to produce that first result. And a local-database read never launches a browser - `local.search`/`search_scored` rank and score results in one FTS5 pass, no network involved either way.
+A few things `slb_glossary` does on its own to keep things fast: image, font, and media requests are blocked at the network layer by default (`block=True`). The glossary is a JavaScript app, so scripts and stylesheets still load, but nothing else needs to. Page data (topic lists, result links, definition text) is read with single `evaluate`-style JavaScript calls instead of one round-trip per DOM element. Search functions are lazy async generators, so `async for result in live.search(session, "x"): break` only does the work needed to produce that first result. And a local-database read never launches a browser.
 
-The rest is on you, and it's mostly about not paying for a browser more than once. Open one `BrowserSession` and reuse it for every live search you need instead of opening a new one per query - most of a session's cost is the one-time browser launch and topic fetch. A session drives a single browser page, though, so it isn't safe to share across concurrent coroutines - for parallel searches, either open one session per task, or use a function's `concurrency` argument to open extra pages on the same session (keep this modest; it's still one site being asked for more at once).
+The rest is on you, and it's mostly about not paying for a browser more than once. Open one `BrowserSession` and reuse it for every live search you need instead of opening a new one per query. Most of a session's cost is the one-time browser launch and topic fetch. A session drives a single browser page, though, so it isn't safe to share across concurrent coroutines - for parallel searches, either open one session per task, or use a function's `concurrency` argument to open extra pages on the same session (keep this modest; it's still one site being asked for more at once).
 
-Past that, lean on the local database. `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) tries the local database first, so a search you've already cached costs nothing beyond an SQLite read on a repeat run and only touches the network the first time. `search` specifically only trusts that local read alone if its best match is actually a good one (see `relevance_threshold` in [Source-aware queries](#source-aware-queries-slb_glossaryquery)) - if it isn't, it augments with a live search instead of pretending the network step isn't needed, but the results still favor whatever's already local. If you know you'll need a topic or query a lot, `slb-glossary local sync`/`update` (or `slb_glossary.local.sync`) let you build up the cache ahead of time in one batch, so day-to-day lookups afterward stay entirely local.
+Past that, lean on the local database. `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) tries the local database first, so a search you've already cached costs nothing beyond an SQLite read on a repeat run and only touches the network the first time. `search` specifically only trusts that local read alone if its best match is actually a good one (see `relevance_threshold` in [Source-aware queries](#source-aware-queries-slb_glossaryquery)). If it isn't, it augments with a live search instead of pretending the network step isn't needed, but the results still favor whatever's already local. If you know you'll need a topic or query a lot, `slb-glossary local sync`/`update` (or `slb_glossary.local.sync`) let you build up the cache ahead of time in one batch, so day-to-day lookups afterward stay entirely local.
 
 ## Exceptions
 
@@ -754,7 +753,7 @@ Past that, lean on the local database. `slb_glossary.query`'s `Source.AUTO` (the
 This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting:
 
 ```bash
-uv run ruff check .
+uv run ruff check . --fix
 uv run ruff format .
 ```
 

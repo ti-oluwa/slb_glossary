@@ -18,8 +18,7 @@ import logging
 import time
 import typing
 
-from slb_glossary.live.api import get_results_from_urls, get_terms_urls
-from slb_glossary.live.api import get_terms_on as fetch_terms_on
+from slb_glossary.live.api import get_results_from_urls, get_terms_on, get_terms_urls
 from slb_glossary.live.api import search as live_search
 from slb_glossary.live.browser import BrowserSession
 from slb_glossary.local.api import (
@@ -208,7 +207,10 @@ async def sync_query(
         persist_on_error=persist_on_error,
     )
     summary = await _record_sync(
-        db, terms_written=written, language=session.language.value, interrupted=interrupted
+        db,
+        terms_written=written,
+        language=session.language.value,
+        interrupted=interrupted,
     )
     logger.info(
         "Synced query %r: %d term(s) written in %.3fs",
@@ -247,7 +249,7 @@ async def sync_topic(
     """
     started_at = time.monotonic()
     logger.info("Syncing topic %r to the local database", topic)
-    results = fetch_terms_on(session, topic, limit=limit, concurrency=concurrency)
+    results = get_terms_on(session, topic, limit=limit, concurrency=concurrency)
     written, interrupted = await _drain_and_upsert(
         db,
         results,
@@ -256,7 +258,10 @@ async def sync_topic(
         persist_on_error=persist_on_error,
     )
     summary = await _record_sync(
-        db, terms_written=written, language=session.language.value, interrupted=interrupted
+        db,
+        terms_written=written,
+        language=session.language.value,
+        interrupted=interrupted,
     )
     logger.info(
         "Synced topic %r: %d term(s) written in %.3fs",
@@ -304,7 +309,11 @@ async def sync_letter(
     logger.info("Syncing letter %r (topic=%r) to the local database", start_letter, topic)
     urls = get_terms_urls(session, topic=topic, start_letter=start_letter, limit=limit)
     results = get_results_from_urls(
-        session, urls, topic=topic, concurrency=concurrency, first_only=True
+        session,
+        urls,
+        topic=topic,
+        concurrency=concurrency,
+        first_only=True,
     )
     written, interrupted = await _drain_and_upsert(
         db,
@@ -314,7 +323,10 @@ async def sync_letter(
         persist_on_error=persist_on_error,
     )
     summary = await _record_sync(
-        db, terms_written=written, language=session.language.value, interrupted=interrupted
+        db,
+        terms_written=written,
+        language=session.language.value,
+        interrupted=interrupted,
     )
     logger.info(
         "Synced letter %r: %d term(s) written in %.3fs",
@@ -374,7 +386,7 @@ async def sync_all(
     try:
         for index, topic_name in enumerate(topic_names, start=1):
             topic_started_at = time.monotonic()
-            results = fetch_terms_on(session, topic_name, concurrency=concurrency)
+            results = get_terms_on(session, topic_name, concurrency=concurrency)
             written, _ = await _drain_and_upsert(
                 db,
                 results,

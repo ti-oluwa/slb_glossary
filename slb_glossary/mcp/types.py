@@ -49,8 +49,10 @@ class ToolRunContext:
     """The MCP tool name being called, e.g. `\"glossary_search\"`."""
 
     principal: Principal
-    """The resolved caller identity - `slb_glossary.mcp.auth.ANONYMOUS` if
-    no auth backend is configured or the call carried no token."""
+    """
+    The resolved caller identity. Defaults to `slb_glossary.mcp.auth.ANONYMOUS` if
+    no auth backend is configured or the call carried no token.
+    """
 
     arguments: Mapping[str, typing.Any]
     """The tool call's raw arguments, as a plain mapping."""

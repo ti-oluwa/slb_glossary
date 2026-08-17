@@ -157,7 +157,7 @@ class BrowserSession:
             cleanup via `async with`.
         """
         resolved_config = config if isinstance(config, Config) else Config.from_file(config)
-        kwargs = resolved_config.to_session_kwargs()
+        kwargs = resolved_config.session_kwargs()
         kwargs.update(overrides)
         return await open_session(**kwargs)
 
@@ -563,7 +563,7 @@ async def open_session_from_config(
         prefer `session_from_config` for automatic cleanup.
     """
     resolved_config = config if isinstance(config, Config) else Config.from_file(config)
-    kwargs = resolved_config.to_session_kwargs()
+    kwargs = resolved_config.session_kwargs()
     kwargs.update(overrides)
     return await open_session(**kwargs)
 

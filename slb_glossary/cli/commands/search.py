@@ -4,7 +4,7 @@ import typing
 
 import click
 
-from slb_glossary import query as glossary_query
+from slb_glossary import query as query_api
 from slb_glossary.cli.errors import cli_command
 from slb_glossary.cli.output_options import output_options, output_results
 from slb_glossary.cli.runtime import run_async
@@ -20,7 +20,7 @@ from slb_glossary.cli.source_options import (
     source_options,
 )
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.local import search_scored as local_search_scored
+from slb_glossary.local import search_scored as search_scored
 from slb_glossary.local.models import Database
 from slb_glossary.models import SearchResult
 from slb_glossary.query import DEFAULT_RELEVANCE_THRESHOLD, Source
@@ -73,7 +73,7 @@ async def _stream_auto_search(
     """
     if db is None:
         async with live_session(ctx, params) as session:
-            async for result in glossary_query.search(
+            async for result in query_api.search(
                 query,
                 session=session,
                 source=Source.LIVE,
@@ -86,17 +86,17 @@ async def _stream_auto_search(
                 yield result  # noqa: ASYNC119
         return
 
-    local_scored = await local_search_scored(
+    scored = await search_scored(
         db, query, topic=params["topic"], limit=limit, fuzzy=params["fuzzy"]
     )
-    best_score = local_scored[0][1] if local_scored else 0.0
-    if local_scored and best_score >= relevance_threshold:
-        for result, _ in local_scored:
+    best_score = scored[0][1] if scored else 0.0
+    if scored and best_score >= relevance_threshold:
+        for result, _ in scored:
             yield result
         return
 
     async with live_session(ctx, params) as session:
-        async for result in glossary_query.search(
+        async for result in query_api.search(
             query,
             db=db,
             session=session,
@@ -276,7 +276,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                     params,
                     db,
                     source=source,
-                    local_call=lambda db: glossary_query.search(
+                    local_call=lambda db: query_api.search(
                         query,
                         db=db,
                         source=Source.LOCAL,
@@ -284,7 +284,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                         limit=limit,
                         fuzzy=params["fuzzy"],
                     ),
-                    live_call=lambda session: glossary_query.search(
+                    live_call=lambda session: query_api.search(
                         query,
                         db=db,
                         session=session,

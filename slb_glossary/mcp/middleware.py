@@ -1,7 +1,8 @@
 """
-`FastMCP` middleware for `slb_glossary.mcp`. Incorporates authentication, rate limiting,
-call hooks, and call logging. Basically everything that wraps *every* tool call
-regardless of which tool it is.
+`FastMCP` middleware for `slb_glossary` MCP API.
+
+Incorporates authentication, rate limiting, call hooks, and call logging.
+Basically everything that wraps *every* tool call regardless of which tool it is.
 """
 
 import logging
@@ -91,7 +92,7 @@ class MCPMiddleware(Middleware):
         call_next: Callable[[MiddlewareContext], Awaitable[ToolResult]],
     ) -> ToolResult:
         tool_name: str = getattr(context.message, "name", "<unknown>")
-        arguments: dict = dict(getattr(context.message, "arguments", None) or {})
+        arguments = dict(getattr(context.message, "arguments", None) or {})
 
         principal = await self.authenticate(tool_name, arguments)
         if self.config.rate_limit.enabled:
@@ -104,18 +105,7 @@ class MCPMiddleware(Middleware):
             source=get_source_from_arguments(arguments),
         )
         if context.fastmcp_context is not None:
-            # The full ToolRunContext is a superset of just the principal (it
-            # also carries the tool name, arguments, resolved source, and call
-            # start time), so tool bodies that pull state back out via
-            # ctx.get_state get everything in one read. The bare principal is
-            # kept alongside it too, for the common case of only wanting "who
-            # is calling" without needing to know/import ToolRunContext's shape.
-            await context.fastmcp_context.set_state(
-                "glossary_run_context", run_context, serializable=False
-            )
-            await context.fastmcp_context.set_state(
-                "glossary_principal", principal, serializable=False
-            )
+            await context.fastmcp_context.set_state("run_context", run_context, serializable=False)
 
         for hook in self.config.hooks.before_tool:
             await hook(run_context)
@@ -173,8 +163,8 @@ class MCPMiddleware(Middleware):
     async def enforce_rate_limit(self, principal: Principal, tool_name: str) -> None:
         limiter = self.config.rate_limit.limiter
         if limiter is None:
-            # slb_glossary.mcp.api.MCPApp always resolves a default limiter
-            # before this middleware can run whenever rate_limit.enabled is True;
+            # `slb_glossary.mcp.api.MCPApp` always resolves a default limiter
+            # before this middleware can run whenever `rate_limit.enabled` is True;
             # reaching this branch means that wiring was bypassed somehow.
             logger.warning(
                 "RateLimit.enabled is True but no limiter was resolved; "

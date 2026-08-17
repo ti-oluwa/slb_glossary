@@ -265,7 +265,7 @@ def configure_logging(
     Route every `logger_name` (and descendant) log record to `sinks`.
 
     Intended for the CLI (`--log-to`/`--log-sink`) and for library callers
-    who want `slb_glossary`'s entire logging output funneled to one place -
+    who want the library's entire logging output funneled to one place;
     a file for bug reports, an in-memory sink for a test harness, several
     sinks at once, etc. Calling this again (e.g. because `--log-to`
     changed mid-process) cleanly tears down the handler it previously set

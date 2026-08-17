@@ -33,20 +33,8 @@ ProgressReporter = Callable[[int, int | None], Awaitable[None]]
 """`async def report(count: int, total: int | None) -> None`.
 
 A thin callback tools use to report incremental progress, so this module doesn't
-need to import FastMCP's `Context` to stream. `slb_glossary.mcp.api` adapts
+need to import FastMCP's `Context` to stream. `slb_glossary.mcp.api.MCPApp` adapts
 a real `Context.report_progress` into this shape when wiring tools up.
-
-This is progress *notification*, not partial result streaming: MCP's
-`tools/call` still delivers one `CallToolResult` at the end, and FastMCP
-itself materializes a tool that returns/yields an async generator into a
-plain list before sending it (see `fastmcp.tools.function_tool.FunctionTool
-._materialize_generator`) - so there's no way for a tool to hand the
-client individual results as they're found. `ctx.report_progress` (what
-this callback wraps) is the closest available thing: it sends interim
-`notifications/progress` messages with a running count/total while the
-call is still in flight, which is enough for a client to show "3 of 10
-found..." live, even though the actual result payload only shows up once,
-complete, at the end.
 """
 
 

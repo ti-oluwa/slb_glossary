@@ -23,8 +23,8 @@ def local() -> None:
     """
     Inspect, search, and maintain the local search database directly.
 
-    Every command here talks only to the local database - never the live
-    site - regardless of any --local/--live/--auto flag elsewhere.
+    Every command here talks only to the local database,
+    regardless of any --local/--live/--auto flag elsewhere.
     `local sync`/`local update` are the exception (and the only ones here
     that go live): they're the same commands as top-level `sync`/`update`,
     grouped here too for discoverability.
@@ -276,7 +276,7 @@ def reset(**params: typing.Any) -> None:
 
 
 # `sync`/`update` are the same commands registered at the CLI root, added
-# here too under `local` for discoverability. Both go live, unlike
-# everything else in this group.
+# here too under `local` for discoverability.
+# Both go live, unlike everything else in this group.
 local.add_command(sync_command, name="sync")
 local.add_command(update_command, name="update")

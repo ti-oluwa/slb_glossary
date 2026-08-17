@@ -154,10 +154,6 @@ async def _maybe_persist(
 ) -> bool:
     """
     Upsert `results` into `db` in one shot, for single-value lookups (`get_term` et al).
-
-    `search`/`get_terms_on` use `_persist_incrementally` instead, since
-    they stream potentially many results and shouldn't hold them all in
-    memory (or lose them all on an error) before writing anything.
     """
     if not persist or db is None or not results:
         return False
@@ -184,11 +180,8 @@ def _persist_incrementally(
     """
     Wrap a live result stream, upserting into `db` in batches as results arrive.
 
-    A thin `search`/`get_terms_on`-facing wrapper around
-    `slb_glossary.local.upsert_results_incrementally`, which does the
-    actual batching/flush-on-error work (and is also what
-    `slb_glossary.local.sync`'s `sync_*` functions use, so both
-    live-persisting code paths share one implementation).
+    A thin wrapper around `slb_glossary.local.upsert_results_incrementally`,
+    which does batching/flush-on-error work.
 
     :param db: The local database to write to. `results` is passed through
         unchanged (no persistence attempted) if this is `None`.
@@ -250,6 +243,7 @@ async def search(
     the live glossary is queried too, and its results are added on after
     the local ones. Local results aren't thrown away just because they
     weren't confident, they're just not trusted as the *whole* answer.
+
     Note that `start_letter` filtering against the local database is
     best-effort: unlike the live site, the local search only has whatever's
     already been cached.
@@ -267,8 +261,8 @@ async def search(
         live fetch happens. See `slb_glossary.live.search`.
     :param persist: If `True`, and a live fetch happens, write its results
         into `db` (if given) so the next matching call can be served
-        locally. Written incrementally as results arrive - see
-        `slb_glossary.local.upsert_results_incrementally`, and not all at
+        locally. Written incrementally as results arrive (see
+        `slb_glossary.local.upsert_results_incrementally`), and not all at
         once at the end.
     :param persist_batch_size: Number of live results to buffer before each
         incremental write to `db`. Only relevant when `persist=True` and a
@@ -336,27 +330,27 @@ async def search(
 
     # source is Source.AUTO, resolved started as LOCAL: score it, then decide.
     assert db is not None
-    local_scored = await local_api.search_scored(db, query, topic=topic, limit=limit, fuzzy=fuzzy)
+    scored = await local_api.search_scored(db, query, topic=topic, limit=limit, fuzzy=fuzzy)
     if start_letter:
-        local_scored = [
+        scored = [
             (result, score)
-            for result, score in local_scored
+            for result, score in scored
             if (result.term or "").lower().startswith(start_letter.lower())
         ]
-    local_results = [result for result, _score in local_scored]
-    best_score = local_scored[0][1] if local_scored else 0.0
+    results = [result for result, _ in scored]
+    best_score = scored[0][1] if scored else 0.0
 
-    if local_results and best_score >= relevance_threshold:
+    if results and best_score >= relevance_threshold:
         logger.debug(
             "Serving `search(%r)` from the local database alone "
             "(%d result(s), best score %.3f >= threshold %.3f, in %.3fs)",
             query,
-            len(local_results),
+            len(results),
             best_score,
             relevance_threshold,
             time.monotonic() - started_at,
         )
-        for result in local_results:
+        for result in results:
             yield result
         return
 
@@ -368,7 +362,7 @@ async def search(
             best_score,
             relevance_threshold,
         )
-        for result in local_results:
+        for result in results:
             yield result
         return
 
@@ -379,11 +373,11 @@ async def search(
         best_score,
         relevance_threshold,
     )
-    for result in local_results:
+    for result in results:
         count += 1
         yield result
 
-    remaining = None if limit is None else max(limit - len(local_results), 0)
+    remaining = None if limit is None else max(limit - len(results), 0)
     if remaining == 0:
         logger.debug(
             "`query.search(%r, source=AUTO)` yielded %d result(s) in %.3fs total "
@@ -394,8 +388,8 @@ async def search(
         )
         return
 
-    seen_urls = {result.url for result in local_results if result.url}
-    seen_terms = {(result.term or "").strip().lower() for result in local_results}
+    seen_urls = {result.url for result in results if result.url}
+    seen_terms = {(result.term or "").strip().lower() for result in results}
     live_stream = live.search(
         session,
         query,
@@ -480,7 +474,11 @@ async def get_terms_on(
         assert db is not None
         count = 0
         async for result in local_api.get_terms_on(
-            db, topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+            db,
+            topic,
+            start_letter=start_letter,
+            limit=limit,
+            fuzzy=fuzzy,
         ):
             count += 1
             yield result
@@ -495,7 +493,11 @@ async def get_terms_on(
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         live_stream = live.get_terms_on(
-            session, topic, start_letter=start_letter, limit=limit, concurrency=concurrency
+            session,
+            topic,
+            start_letter=start_letter,
+            limit=limit,
+            concurrency=concurrency,
         )
         count = 0
         async for result in _persist_incrementally(
@@ -517,20 +519,24 @@ async def get_terms_on(
         return
 
     assert db is not None
-    local_results = [
+    results = [
         result
         async for result in local_api.get_terms_on(
-            db, topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+            db,
+            topic,
+            start_letter=start_letter,
+            limit=limit,
+            fuzzy=fuzzy,
         )
     ]
-    if local_results:
+    if results:
         logger.debug(
             "Serving `get_terms_on(%r)` from the local database (%d result(s) in %.3fs)",
             topic,
-            len(local_results),
+            len(results),
             time.monotonic() - started_at,
         )
-        for result in local_results:
+        for result in results:
             yield result
         return
 
@@ -616,15 +622,20 @@ async def get_terms_urls(
 
     # source is Source.AUTO, resolved started as LOCAL: try it, then fall back.
     assert db is not None
-    local_urls = [
+    urls = [
         url
         async for url in local_api.get_terms_urls(
-            db, query=query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+            db,
+            query=query,
+            topic=topic,
+            start_letter=start_letter,
+            limit=limit,
+            fuzzy=fuzzy,
         )
     ]
-    if local_urls:
+    if urls:
         logger.debug("Serving `get_terms_urls(...)` from the local database")
-        for url in local_urls:
+        for url in urls:
             yield url
         return
 
@@ -677,9 +688,9 @@ async def get_topics(
         return dict(session.topics)
 
     assert db is not None
-    local_topics = await local_api.get_topics(db)
-    if local_topics:
-        return local_topics
+    topics = await local_api.get_topics(db)
+    if topics:
+        return topics
 
     if session is None:
         return {}
@@ -730,21 +741,21 @@ async def get_term(
         return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
 
     assert db is not None
-    local_result = await local_api.get_term(db, term_or_url)
-    if local_result is not None:
-        return TermLookup(value=local_result, source=Source.LOCAL, persisted=False)
+    result = await local_api.get_term(db, term_or_url)
+    if result is not None:
+        return TermLookup(value=result, source=Source.LOCAL, persisted=False)
 
     if session is None:
         return TermLookup(value=None, source=Source.LOCAL, persisted=False)
 
-    live_result = await _fetch_live_term(session, term_or_url)
+    result = await _fetch_live_term(session, term_or_url)
     persisted = await _maybe_persist(
         db,
-        results=[live_result] if live_result else [],
+        results=[result] if result else [],
         persist=persist,
         language=session.language.value,
     )
-    return TermLookup(value=live_result, source=Source.LIVE, persisted=persisted)
+    return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
 
 
 async def _fetch_live_term(session: BrowserSession, term_or_url: str) -> SearchResult | None:
@@ -852,18 +863,18 @@ async def get_random_term(
     # AUTO: prefer a local pick when the local database actually has
     # something to pick from; only go live when it doesn't.
     assert db is not None
-    local_result = await local_api.get_random_term(db, topic=topic, fuzzy=fuzzy)
-    if local_result is not None:
-        return TermLookup(value=local_result, source=Source.LOCAL, persisted=False)
+    result = await local_api.get_random_term(db, topic=topic, fuzzy=fuzzy)
+    if result is not None:
+        return TermLookup(value=result, source=Source.LOCAL, persisted=False)
 
     if session is None:
         return TermLookup(value=None, source=Source.LOCAL, persisted=False)
 
-    live_result = await _fetch_live_get_random_term(session, topic=topic, sample_size=25)
+    result = await _fetch_live_get_random_term(session, topic=topic, sample_size=25)
     persisted = await _maybe_persist(
-        db, [live_result] if live_result else [], persist=persist, language=session.language.value
+        db, results=[result] if result else [], persist=persist, language=session.language.value
     )
-    return TermLookup(value=live_result, source=Source.LIVE, persisted=persisted)
+    return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
 
 
 LETTERS = list(string.ascii_lowercase)

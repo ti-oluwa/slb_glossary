@@ -743,7 +743,7 @@ async def get_terms_urls(
                 yielded += 1
                 yield url
         logger.debug(
-            "Local get_terms_urls(query=%r) yielded %d url(s) in %.3fs",
+            "Local `get_terms_urls(query=%r)` yielded %d url(s) in %.3fs",
             query,
             yielded,
             time.monotonic() - started_at,

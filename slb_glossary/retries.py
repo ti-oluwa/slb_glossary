@@ -6,8 +6,14 @@ import enum
 import logging
 import math
 import random
+import sys
 import time
 import typing
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 T = typing.TypeVar("T")
 
@@ -82,19 +88,19 @@ class RetryPolicy:
         return max(delay, 0.0)
 
     @classmethod
-    def constant(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> typing.Self:
+    def constant(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> Self:
         """Build a `CONSTANT` policy waiting `base_delay` between attempts."""
         return cls(base_delay=base_delay, backoff_type=BackoffType.CONSTANT, **kwargs)
 
     @classmethod
-    def linear(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> typing.Self:
+    def linear(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> Self:
         """Build a `LINEAR` policy growing the delay by `base_delay` each attempt."""
         return cls(base_delay=base_delay, backoff_type=BackoffType.LINEAR, **kwargs)
 
     @classmethod
     def exponential(
         cls, base_delay: float = 0.8, factor: float = 2.0, **kwargs: typing.Any
-    ) -> typing.Self:
+    ) -> Self:
         """Build an `EXPONENTIAL` policy, the default and generally safest choice."""
         return cls(
             base_delay=base_delay,
@@ -106,7 +112,7 @@ class RetryPolicy:
     @classmethod
     def logarithmic(
         cls, base_delay: float = 0.8, factor: float = 2.0, **kwargs: typing.Any
-    ) -> typing.Self:
+    ) -> Self:
         """Build a `LOGARITHMIC` policy, for retries that should barely grow."""
         return cls(
             base_delay=base_delay,

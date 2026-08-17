@@ -173,7 +173,8 @@ class SessionMode(enum.Enum):
     Open a fresh session for every tool call that needs one, and close it
     immediately after. Slowest and heaviest, but gives every call full
     isolation. Handy under multi-tenant auth where sessions shouldn't be
-    shared across callers."""
+    shared across callers.
+    """
 
 
 class RateLimitScope(enum.Enum):
@@ -197,17 +198,21 @@ class SessionAccess:
     """Controls if/how/when the MCP application may open a live `BrowserSession`."""
 
     enabled: bool = True
-    """Whether `Source.LIVE` (and `Source.AUTO` falling back to it) is
+    """
+    Whether `Source.LIVE` (and `Source.AUTO` falling back to it) is
     available at all. `False` makes this a local-only server regardless of
-    `SourcePolicy`."""
+    `SourcePolicy`.
+    """
 
     mode: SessionMode = SessionMode.LAZY
     """When the shared session is opened. See `SessionMode`."""
 
     idle_timeout: float | None = 300.0
-    """Seconds an `EAGER`/`LAZY` session may sit unused before a background
+    """
+    Seconds an `EAGER`/`LAZY` session may sit unused before a background
     reaper closes it (a later call re-opens one). `None` disables the
-    reaper, so a session lives until server shutdown. Ignored for `PER_CALL`."""
+    reaper, so a session lives until server shutdown. Ignored for `PER_CALL`.
+    """
 
     max_concurrent: int = 1
     """
@@ -352,9 +357,8 @@ class RateLimit:
     The `slb_glossary.mcp.ratelimit.RateLimiter` to consult. 
     
     `None` while `enabled=True` builds a default in-memory
-    `slb_glossary.mcp.ratelimit.SlidingWindowRateLimiter` from
-    `limit`/`window`- see
-    `slb_glossary.mcp.api.MCPApp._resolve_default_rate_limiter`."""
+    from `limit`/`window`.
+    """
 
     limit: int = 60
     """

@@ -10,6 +10,7 @@ import dataclasses
 import json
 import logging
 import pathlib
+import sys
 import typing
 from collections.abc import Mapping, Sequence
 
@@ -18,6 +19,11 @@ from slb_glossary.logging import LogSink
 from slb_glossary.models import Language
 from slb_glossary.paths import default_config_path
 from slb_glossary.retries import BackoffType, RetryPolicy
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +61,7 @@ class RetryOptions:
     jitter: bool = True
     """Whether to randomize each retry delay by up to +/-50%% to avoid retry storms."""
 
-    def to_retry_policy(self) -> RetryPolicy:
+    def retry_policy(self) -> RetryPolicy:
         """Build the `RetryPolicy` this config describes."""
         try:
             backoff_type = BackoffType(self.backoff)
@@ -74,7 +80,7 @@ class RetryOptions:
         )
 
     @classmethod
-    def from_retry_policy(cls, policy: RetryPolicy) -> typing.Self:
+    def from_policy(cls, policy: RetryPolicy) -> Self:
         """Build a `RetryOptions` from an existing `RetryPolicy`."""
         return cls(
             attempts=policy.attempts,
@@ -143,7 +149,7 @@ class BrowserSessionOptions:
     retry: RetryOptions = dataclasses.field(default_factory=RetryOptions)
     """Policy for retrying a flaky initial page load."""
 
-    def to_session_kwargs(self) -> dict[str, typing.Any]:
+    def session_kwargs(self) -> dict[str, typing.Any]:
         """
         Build keyword arguments for `slb_glossary.browser.open_session`/`session`.
 
@@ -177,7 +183,7 @@ class BrowserSessionOptions:
             "block": block,
             "timeout": self.timeout,
             "terms_per_tab": self.terms_per_tab,
-            "retry": self.retry.to_retry_policy(),
+            "retry": self.retry.retry_policy(),
             "settle_timeout": self.settle_timeout,
             "poll_interval": self.poll_interval,
             "executable_path": self.executable_path,
@@ -397,7 +403,7 @@ class Config:
     """Default output formatting options."""
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, typing.Any]) -> typing.Self:
+    def from_dict(cls, data: Mapping[str, typing.Any]) -> Self:
         """
         Build a `Config` from a plain nested dict, e.g. one already parsed from JSON.
 
@@ -412,7 +418,7 @@ class Config:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_file(cls, path: str | pathlib.Path) -> typing.Self:
+    def from_file(cls, path: str | pathlib.Path) -> Self:
         """
         Load a `Config` from a JSON, TOML or YAML file.
 
@@ -433,7 +439,7 @@ class Config:
         return cls.from_dict(data)
 
     @classmethod
-    def load(cls, path: str | pathlib.Path | None = None) -> typing.Self:
+    def load(cls, path: str | pathlib.Path | None = None) -> Self:
         """
         Load a `Config` from `path`, or the default config path if it exists.
 
@@ -469,9 +475,9 @@ class Config:
         _write_config_file(self.to_dict(), path, resolved_format)
         logger.info("Saved config to %s (%s)", path, resolved_format)
 
-    def to_session_kwargs(self) -> dict[str, typing.Any]:
+    def session_kwargs(self) -> dict[str, typing.Any]:
         """Build keyword arguments for `open_session`/`session` from `self.session`."""
-        return self.session.to_session_kwargs()
+        return self.session.session_kwargs()
 
     def get(self, key: str) -> typing.Any:
         """

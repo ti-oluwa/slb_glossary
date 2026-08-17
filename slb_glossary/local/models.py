@@ -3,9 +3,14 @@
 import dataclasses
 import json
 import pathlib
-import typing
+import sys
 
 import aiosqlite
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 __all__ = ["Database", "Metadata"]
 
@@ -48,7 +53,7 @@ class Metadata:
     """Mapping of topic name to term count, as of the last sync."""
 
     @classmethod
-    def load(cls, path: pathlib.Path) -> typing.Self:
+    def load(cls, path: pathlib.Path) -> Self:
         """
         Load metadata from `path`, or return fresh defaults if it doesn't exist.
 

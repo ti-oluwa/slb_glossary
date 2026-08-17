@@ -100,13 +100,8 @@ def compare(
                 )
                 if lookup.value is not None:
                     sources_seen.add(lookup.source.value)
-                    # Holds `open_configured_db` open across the yield on purpose,
-                    # so each term is printed as soon as it's resolved instead of
-                    # waiting for every term to finish. Safe: `output_results`
-                    # (the only consumer) wraps this generator in
-                    # `contextlib.aclosing`, so the db still closes promptly on
-                    # an early break/cancel.
                     yield lookup.value  # noqa: ASYNC119
+
                 elif not params["quiet"]:
                     click.secho(f"Not found: {term!r}", fg="yellow", err=True)
 

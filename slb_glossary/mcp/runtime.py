@@ -124,7 +124,7 @@ class Runtime(NamedComponent):
     async def _open_session(self) -> BrowserSession:
         async with self._session_lock:
             if self._session is None:
-                kwargs = self.config.session.browser.to_session_kwargs()
+                kwargs = self.config.session.browser.session_kwargs()
                 self._session = await open_session(**kwargs)
             self._session_last_used = time.monotonic()
             return self._session
@@ -196,7 +196,7 @@ class Runtime(NamedComponent):
 
         if self.config.session.mode is SessionMode.PER_CALL:
             async with self._session_semaphore:
-                kwargs = self.config.session.browser.to_session_kwargs()
+                kwargs = self.config.session.browser.session_kwargs()
                 session = await open_session(**kwargs)
                 try:
                     yield db, session
