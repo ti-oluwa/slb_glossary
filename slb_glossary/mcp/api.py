@@ -154,14 +154,14 @@ class MCPApp(NamedComponent):
         await self.runtime.start()
         for hook in self.config.hooks.on_startup:
             await hook()
-        logger.info("[%s] MCPApp started", self.name)
+        logger.info("[%s] MCP application started", self.name)
 
     async def aclose(self) -> None:
         """Tear down every resource opened by `start()` and run `Hooks.on_shutdown` hooks."""
         await self.runtime.aclose()
         for hook in self.config.hooks.on_shutdown:
             await hook()
-        logger.info("[%s] MCPApp closed", self.name)
+        logger.info("[%s] MCP application closed", self.name)
 
     def _configure_logging(self) -> None:
         """

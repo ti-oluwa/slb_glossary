@@ -7,14 +7,17 @@ config = slb_mcp.MCPConfig(
         enabled=True,
         max_concurrent=3,
         browser=slb.config.BrowserSessionOptions(
-            use_stealth=False, log_sink=slb.log.FileSink("example.mcp.log")
+            use_stealth=False, log_sink=slb.log.FileSink("./example.mcp.browser.log")
         ),
     ),
     local=slb_mcp.LocalAccess(allow_write=True),
     tools=slb_mcp.Tool.SEARCH | slb_mcp.Tool.SYNC,
     streaming=slb_mcp.Streaming(allow_override=False),
+    logging=slb_mcp.MCPLogging(
+        sinks=[slb.log.FileSink("./example.mcp.log"), slb.log.StderrSink()]
+    ),
 )
 app = slb_mcp.MCPApp(config)
 
 if __name__ == "__main__":
-    app.run(transport="http")
+    app.run(transport="streamable-http")
