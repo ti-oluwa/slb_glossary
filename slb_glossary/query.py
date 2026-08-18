@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "Source",
     "TermLookup",
+    "SimilarTerms",
     "search",
     "get_terms_on",
     "get_terms_urls",
@@ -89,6 +90,16 @@ Default `relevance_threshold` for `search`'s `Source.AUTO` behavior:
 below this score (see `slb_glossary.local.scored_search`), the local
 database's best match isn't trusted alone and a live search is added on.
 """
+
+SIMILAR_TERMS_POOL_SIZE = 5
+"""
+Live results `_fetch_live_term(with_similar=True)` pulls from the glossary
+site to look for an exact match in and, when `with_similar` is `True`,
+to draw `SimilarTerms.similar` alternatives from.
+"""
+
+MAX_SIMILAR_TERMS = 3
+"""Max number of alternatives `_fetch_live_term`/`get_term` return in `SimilarTerms.similar`."""
 
 
 class Source(enum.Enum):
@@ -125,6 +136,37 @@ class TermLookup(typing.Generic[T]):
     Whether this lookup's result was written to `db` as part of the call
     (only ever `True` for a live result fetched with `persist=True`).
     """
+
+
+@dataclasses.dataclass(slots=True, kw_only=True, frozen=True)
+class SimilarTerms:
+    """
+    The outcome of a `with_similar=True` term lookup: an exact match, plus alternatives.
+
+    Returned by `_fetch_live_term`/`get_term` in place of a bare
+    `SearchResult | None` when the caller opted into also seeing
+    similarly-named results - handy for a "did you mean" prompt when
+    `exact` turns out to be `None`.
+
+    Falsy (via `__bool__`) exactly when both `exact` is `None` and
+    `similar` is empty, so callers that check `if lookup.value:` (e.g.
+    `slb_glossary.cli.source_options.resolve_lookup`) keep working
+    whether or not `with_similar` was used.
+    """
+
+    exact: SearchResult | None
+    """The exact (case-insensitive) term-name match, or `None` if there wasn't one."""
+
+    similar: tuple[SearchResult, ...] = ()
+    """
+    Other results the live search turned up for the same query, best
+    match first, `exact` itself excluded, capped at `MAX_SIMILAR_TERMS`.
+    Always empty for a local-only lookup - only a live search has
+    anything to compare against.
+    """
+
+    def __bool__(self) -> bool:
+        return self.exact is not None or bool(self.similar)
 
 
 def _validate_source(db: Database | None, session: BrowserSession | None, source: Source) -> None:
@@ -713,6 +755,7 @@ async def get_topics(
     return dict(session.topics)
 
 
+@typing.overload
 async def get_term(
     term_or_url: str,
     *,
@@ -720,7 +763,31 @@ async def get_term(
     session: BrowserSession | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
-) -> TermLookup[SearchResult | None]:
+    with_similar: typing.Literal[False] = False,
+) -> TermLookup[SearchResult | None]: ...
+
+
+@typing.overload
+async def get_term(
+    term_or_url: str,
+    *,
+    db: Database | None = None,
+    session: BrowserSession | None = None,
+    source: Source = Source.AUTO,
+    persist: bool = False,
+    with_similar: typing.Literal[True],
+) -> TermLookup[SimilarTerms]: ...
+
+
+async def get_term(
+    term_or_url: str,
+    *,
+    db: Database | None = None,
+    session: BrowserSession | None = None,
+    source: Source = Source.AUTO,
+    persist: bool = False,
+    with_similar: bool = False,
+) -> TermLookup:
     """
     Look up a single term by exact name or detail-page URL.
 
@@ -729,13 +796,22 @@ async def get_term(
     :param db: An open local `Database`.
     :param session: An open live `BrowserSession`.
     :param source: Which source(s) to read from. See the module docstring.
-    :param persist: If `True`, and a live fetch happens, cache its result
-        into `db`. This is a single-value lookup, so there's only ever one
-        result to write - batching doesn't apply here the way it does for
-        `search`/`get_terms_on`.
+    :param persist: If `True`, and a live fetch happens, cache its result(s)
+        into `db`. This is a single-value lookup, so there's normally only
+        one result to write - batching doesn't apply here the way it does
+        for `search`/`get_terms_on`. With `with_similar=True`, every
+        alternative gathered alongside the exact match is cached too.
+    :param with_similar: If `True`, resolve to a `TermLookup[SimilarTerms]`
+        instead: `SimilarTerms.exact` holds what a plain call would have
+        returned, and `SimilarTerms.similar` holds up to `MAX_SIMILAR_TERMS`
+        other results found for `term_or_url` along the way, best match
+        first - only ever populated by a live lookup, since that's the
+        only source with anything to compare against. Handy for a "did you
+        mean" prompt when the exact match turns out to be `None`.
     :return: A `TermLookup` wrapping the found `SearchResult` (or `None` if
-        not found by the resolved source(s)), which source actually served
-        it, and whether it was cached as a result of this call.
+        not found by the resolved source(s)) - or, with `with_similar=True`,
+        a `SimilarTerms` - plus which source actually served it, and
+        whether it was cached as a result of this call.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
@@ -743,55 +819,118 @@ async def get_term(
     if resolved is Source.LOCAL:
         assert db is not None
         result = await local_api.get_term(db, term_or_url)
-        return TermLookup(value=result, source=Source.LOCAL, persisted=False)
+        value = SimilarTerms(exact=result) if with_similar else result
+        return TermLookup(value=value, source=Source.LOCAL, persisted=False)
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
-        result = await _fetch_live_term(session, term_or_url)
+        fetched = await _fetch_live_term(session, term_or_url, with_similar=with_similar)
         persisted = await _maybe_persist(
             db,
-            results=[result] if result else [],
+            results=_flatten_results(fetched, with_similar=with_similar),
             persist=persist,
             language=session.language.value,
         )
-        return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
+        return TermLookup(value=fetched, source=Source.LIVE, persisted=persisted)
 
     assert db is not None
     result = await local_api.get_term(db, term_or_url)
     if result is not None:
-        return TermLookup(value=result, source=Source.LOCAL, persisted=False)
+        value = SimilarTerms(exact=result) if with_similar else result
+        return TermLookup(value=value, source=Source.LOCAL, persisted=False)
 
     if session is None:
-        return TermLookup(value=None, source=Source.LOCAL, persisted=False)
+        empty = SimilarTerms(exact=None) if with_similar else None
+        return TermLookup(value=empty, source=Source.LOCAL, persisted=False)
 
-    result = await _fetch_live_term(session, term_or_url)
+    fetched = await _fetch_live_term(session, term_or_url, with_similar=with_similar)
     persisted = await _maybe_persist(
         db,
-        results=[result] if result else [],
+        results=_flatten_results(fetched, with_similar=with_similar),
         persist=persist,
         language=session.language.value,
     )
-    return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
+    return TermLookup(value=fetched, source=Source.LIVE, persisted=persisted)
 
 
-async def _fetch_live_term(session: BrowserSession, term_or_url: str) -> SearchResult | None:
-    """Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched."""
+def _flatten_results(
+    fetched: SearchResult | None | SimilarTerms, *, with_similar: bool
+) -> list[SearchResult]:
+    """Flatten a `_fetch_live_term` result into the `SearchResult`(s) `_maybe_persist` should cache."""
+    if not with_similar:
+        assert not isinstance(fetched, SimilarTerms)
+        return [fetched] if fetched else []
+
+    assert isinstance(fetched, SimilarTerms)
+    exact = [fetched.exact] if fetched.exact is not None else []
+    return exact + list(fetched.similar)
+
+
+@typing.overload
+async def _fetch_live_term(
+    session: BrowserSession, term_or_url: str, *, with_similar: typing.Literal[False] = False
+) -> SearchResult | None: ...
+
+
+@typing.overload
+async def _fetch_live_term(
+    session: BrowserSession, term_or_url: str, *, with_similar: typing.Literal[True]
+) -> SimilarTerms: ...
+
+
+async def _fetch_live_term(
+    session: BrowserSession, term_or_url: str, *, with_similar: bool = False
+) -> SearchResult | None | SimilarTerms:
+    """
+    Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched.
+
+    :param session: An open live `BrowserSession`.
+    :param term_or_url: An exact (case-insensitive) term name, or a
+        glossary term detail-page URL.
+    :param with_similar: If `True`, return a `SimilarTerms` gathering up to
+        `MAX_SIMILAR_TERMS` other results turned up while searching for
+        the exact match, instead of just the exact match itself. A direct
+        URL fetch has nothing to search, so `SimilarTerms.similar` is
+        always empty in that case.
+    :return: The exact `SearchResult` match (or `None`), or - with
+        `with_similar=True` - a `SimilarTerms` wrapping the exact match
+        (if any) and its alternatives.
+    """
     if term_or_url.startswith(("http://", "https://")):
-        async for result in live.get_results_from_url(session, term_or_url):
+        results: list[SearchResult] = [
+            result async for result in live.get_results_from_url(session, term_or_url)
+        ]
+        result, similar = (results[0], results[0:]) if results else (None, [])
+        return SimilarTerms(exact=result, similar=tuple(similar)) if with_similar else result
+
+    term = term_or_url.strip().lower()
+
+    if not with_similar:
+        # The correct definition should at least be in the first 5 results, searching atleast 2 at a time
+        async for result in live.search(
+            session, term, limit=SIMILAR_TERMS_POOL_SIZE, concurrency=2
+        ):
+            if result.term and result.term.strip().lower() == term:
+                return result
+        # No exact (case-insensitive) match among the top results;
+        # fall back to whatever ranked first, if anything did.
+        async for result in live.search(session, term, limit=1):
             return result
         return None
 
-    # The correct definition should at least be in the first 5 results, searching atleast 2 at a time
-    term = term_or_url.strip().lower()
-    async for result in live.search(session, term, limit=5, concurrency=2):
-        if result.term and result.term.strip().lower() == term:
-            return result
-
-    # No exact (case-insensitive) match among the top result's definitions;
-    # fall back to whatever ranked first, if anything did.
-    async for result in live.search(session, term, limit=1):
-        return result
-    return None
+    # When `with_similar=True`, we drain the whole pool so alternatives are
+    # available regardless of where (or whether) the exact match turned up.
+    pool = [
+        result
+        async for result in live.search(
+            session, term, limit=SIMILAR_TERMS_POOL_SIZE, concurrency=2
+        )
+    ]
+    exact = next(
+        (result for result in pool if result.term and result.term.strip().lower() == term), None
+    )
+    similar = tuple(result for result in pool if result is not exact)[:MAX_SIMILAR_TERMS]
+    return SimilarTerms(exact=exact, similar=similar)
 
 
 async def related_terms(

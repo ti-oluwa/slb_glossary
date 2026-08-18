@@ -1,5 +1,6 @@
 """`slb-glossary define` - look up a single glossary term's definition."""
 
+import sys
 import typing
 
 import click
@@ -18,7 +19,8 @@ from slb_glossary.cli.source_options import (
     source_options,
 )
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.query import Source
+from slb_glossary.query import SimilarTerms, Source
+from slb_glossary.types import SearchResult
 
 __all__ = ["define"]
 
@@ -47,6 +49,18 @@ def _validate_term(ctx: click.Context, param: click.Parameter, value: str) -> st
     default=False,
     show_default=True,
     help="Show/hide the illustrative image URL column.",
+)
+@click.option(
+    "--suggest/--no-suggest",
+    "suggest_similar",
+    default=True,
+    show_default=True,
+    help=(
+        "When a live lookup finds no exact match for TERM, offer up to a "
+        "few similarly-named alternatives instead of just reporting "
+        "nothing found. On an interactive terminal, lets you pick one to "
+        "view its definition."
+    ),
 )
 @config_option
 @session_options
@@ -82,33 +96,50 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
     source = resolve_source(params)
     config = get_loaded_config(params)
 
-    async def _run() -> int:
+    suggest_similar = params["suggest_similar"]
+
+    async def _run() -> tuple[int, tuple[SearchResult, ...]]:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             lookup = await resolve_lookup(
                 ctx,
                 params,
                 db,
                 source=source,
-                local_call=lambda db: query.get_term(term, db=db, source=Source.LOCAL),
+                local_call=lambda db: query.get_term(
+                    term,
+                    db=db,
+                    source=Source.LOCAL,
+                    with_similar=suggest_similar,
+                ),
                 live_call=lambda session: query.get_term(
                     term,
                     db=db,
                     session=session,
                     source=Source.LIVE,
                     persist=params["cache_results"],
+                    with_similar=suggest_similar,
                 ),
             )
 
-        if lookup.value is None:
-            return 0
+        if suggest_similar:
+            assert isinstance(lookup.value, SimilarTerms)
+            exact = lookup.value.exact
+            similar = lookup.value.similar
+        else:
+            assert not isinstance(lookup.value, SimilarTerms)
+            exact = lookup.value
+            similar = ()
+
+        if exact is None:
+            return 0, similar
 
         if not params["quiet"]:
             click.secho(f"(source: {lookup.source.value})", fg="bright_black", err=True)
 
         async def _one() -> typing.AsyncIterator[typing.Any]:
-            yield lookup.value
+            yield exact
 
-        return await output_results(
+        count = await output_results(
             _one(),
             title=f"Definition: {term}",
             save_paths=params["save_paths"],
@@ -118,7 +149,56 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
             show_related=params["show_related"],
             show_image=params["show_image"],
         )
+        return count, similar
 
-    count = run_async(_run())
-    if not params["quiet"] and count == 0:
+    count, similar = run_async(_run())
+    if count > 0 or params["quiet"]:
+        return
+
+    if similar and sys.stdin.isatty() and not params["json_output"]:
+        _show_similar_prompt(term, similar)
+    else:
         click.echo(f"{term!r} was not found.", err=True)
+        if similar:
+            click.echo("Did you mean:", err=True)
+            for result in similar:
+                click.echo(f"  • {result.term}", err=True)
+
+
+def _show_similar_prompt(term: str, similar: typing.Sequence[SearchResult]) -> None:
+    """
+    Print `similar` as a "Did you mean" list and let the user interactively view one.
+
+    Loops: after printing a picked term's definition, the user can pick
+    another right away, or quit with `q`/`x`. Only called on an interactive terminal.
+
+    :param term: The originally looked-up term, only used for messaging.
+    :param similar: Similarly-named live results to offer as alternatives,
+        best match first.
+    """
+    click.echo(f'No exact definition found for "{term}".')
+    click.echo("Did you mean:")
+    for index, result in enumerate(similar, start=1):
+        click.echo(f"  {index}. {result.term}")
+    click.echo(
+        f"\nUse `slb-glossary search {term}` to search for related terms. "
+        f"Or enter a number (1-{len(similar)}) to view that term's definition (q to quit): ",
+        nl=False,
+    )
+
+    while True:
+        choice = click.getchar().strip().lower()
+        click.echo(choice)
+        if choice in ("q", "x", ""):
+            return
+
+        if not choice.isdigit() or not (1 <= int(choice) <= len(similar)):
+            click.echo(f"Enter a number between 1 and {len(similar)}, or q to quit: ", nl=False)
+            continue
+
+        picked = similar[int(choice) - 1]
+        click.echo()
+        click.secho(picked.term, bold=True)
+        click.echo(picked.definition or "(no definition available)")
+        click.echo()
+        click.echo("Enter another number to view, or q to quit: ", nl=False)
