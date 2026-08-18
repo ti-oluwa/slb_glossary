@@ -2,18 +2,20 @@
 Configuration for `slb_glossary.mcp`'s MCP application (`slb_glossary.mcp.api.MCPApp`).
 
 ```python
-import dataclasses
 from slb_glossary.mcp.config import MCPConfig, LocalAccess
 
-config = dataclasses.replace(
-    MCPConfig.default(),
+config = MCPConfig.default().update(
     local=LocalAccess(enabled=True, allow_write=True),
 )
 ```
 
 Every nested config is a frozen, `slots=True`, keyword-only dataclass, so
-instances are hashable-by-value-where-possible, cheap to copy with
-`dataclasses.replace`, and cannot be mutated out from under a running server.
+instances are hashable-by-value-where-possible, cannot be mutated out
+from under a running server, and are cheap to copy with `.update(...)`
+(`slb_glossary.utils.Updatable`, a thin wrapper over
+`dataclasses.replace` - reach for `dataclasses.replace` directly instead
+if you need its `changes` to come from an unpacked mapping rather than
+keyword arguments).
 """
 
 import dataclasses
@@ -32,6 +34,7 @@ from slb_glossary.mcp.ratelimit import RateLimiter
 from slb_glossary.mcp.types import AfterToolHook, BeforeToolHook, LifecycleHook, ToolErrorHook
 from slb_glossary.query import Source
 from slb_glossary.types import Language
+from slb_glossary.utils import Updatable
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -195,7 +198,7 @@ class RateLimitScope(enum.Enum):
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class SessionAccess:
+class SessionAccess(Updatable):
     """Controls if/how/when the MCP application may open a live `BrowserSession`."""
 
     enabled: bool = True
@@ -231,7 +234,7 @@ class SessionAccess:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class LocalAccess:
+class LocalAccess(Updatable):
     """Controls if/how the MCP application may read and write the local database."""
 
     enabled: bool = True
@@ -259,7 +262,7 @@ class LocalAccess:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class SourcePolicy:
+class SourcePolicy(Updatable):
     """Controls which `slb_glossary.query.Source` values callers may request."""
 
     allowed: frozenset[Source] | None = None
@@ -288,7 +291,7 @@ class SourcePolicy:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class Timeout:
+class Timeout(Updatable):
     """Per-call execution time caps, enforced by FastMCP's own tool `timeout=`."""
 
     default: float | None = 60.0
@@ -313,7 +316,7 @@ class Timeout:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class Auth:
+class Auth(Updatable):
     """Controls authentication/authorization (*mainly authorization*) for tool calls."""
 
     backend: AuthBackend | None = None
@@ -347,7 +350,7 @@ class Auth:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class RateLimit:
+class RateLimit(Updatable):
     """Controls optional per-tool/per-client request-rate limiting."""
 
     enabled: bool = False
@@ -375,7 +378,7 @@ class RateLimit:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class Hooks:
+class Hooks(Updatable):
     """Caller-supplied hooks run around every tool call and around the server's lifecycle."""
 
     before_tool: tuple[BeforeToolHook, ...] = ()
@@ -407,7 +410,7 @@ class Hooks:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class MCPLogging:
+class MCPLogging(Updatable):
     """
     Controls where/how `slb_glossary`'s logging is routed for this server process.
 
@@ -464,7 +467,7 @@ class MCPLogging:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class Streaming:
+class Streaming(Updatable):
     """Controls the optional `stream` argument tools that can stream expose."""
 
     default: bool = False
@@ -487,7 +490,7 @@ class Streaming:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class ServerInfo:
+class ServerInfo(Updatable):
     """Identity metadata for the MCP application/server itself."""
 
     name: str = "slb-glossary"
@@ -506,7 +509,7 @@ class ServerInfo:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class MCPConfig:
+class MCPConfig(Updatable):
     """
     Top-level configuration for `slb_glossary.mcp.api.MCPApp`.
 
@@ -523,8 +526,7 @@ class MCPConfig:
     read-only, local-and-live, unauthenticated, unlimited-rate server
     configuration. Validated at construction time.
 
-    Build with `dataclasses.replace` to change one field without
-    re-specifying the rest.
+    Build with `.update(...)` to change one field without re-specifying the rest.
     """
 
     server: ServerInfo = dataclasses.field(default_factory=ServerInfo)
@@ -635,17 +637,15 @@ class MCPConfig:
 
         Equivalent to `MCPConfig()` when `language` is omitted. `language`
         exists as a shortcut for the one setting that's awkward to reach
-        through `dataclasses.replace` alone, since it's nested three
-        levels down (`session.browser.language`):
+        even through `.update(...)` alone, since it's nested three levels
+        down (`session.browser.language`):
 
         ```python
         config = MCPConfig.default(language="es")
         # instead of:
-        config = dataclasses.replace(
-            MCPConfig.default(),
-            session=dataclasses.replace(
-                SessionAccess(),
-                browser=dataclasses.replace(BrowserSessionOptions(), language="es"),
+        config = MCPConfig.default().update(
+            session=SessionAccess().update(
+                browser=BrowserSessionOptions().update(language="es"),
             ),
         )
         ```
@@ -674,10 +674,8 @@ class MCPConfig:
                     f"Unknown language {language!r}. Expected one of: {choices}."
                 ) from exc
 
-        return dataclasses.replace(
-            config,
-            session=dataclasses.replace(
-                config.session,
-                browser=dataclasses.replace(config.session.browser, language=language_value),
+        return config.update(
+            session=config.session.update(
+                browser=config.session.browser.update(language=language_value),
             ),
         )

@@ -19,6 +19,7 @@ from slb_glossary.logging import LogSink
 from slb_glossary.paths import default_config_path
 from slb_glossary.retries import BackoffType, RetryPolicy
 from slb_glossary.types import Language
+from slb_glossary.utils import Updatable
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -40,7 +41,7 @@ T = typing.TypeVar("T")
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class RetryOptions:
+class RetryOptions(Updatable):
     """Serializable counterpart of `slb_glossary.retries.RetryPolicy`."""
 
     attempts: int = 3
@@ -93,7 +94,7 @@ class RetryOptions:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class BrowserSessionOptions:
+class BrowserSessionOptions(Updatable):
     """Serializable counterpart of the options `slb_glossary.browser.open_session` takes."""
 
     language: str = "en"
@@ -195,7 +196,7 @@ class BrowserSessionOptions:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class DatabaseOptions:
+class DatabaseOptions(Updatable):
     """Configuration for `slb_glossary.local`'s local search database."""
 
     enabled: bool = True
@@ -220,7 +221,7 @@ class DatabaseOptions:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class OutputOptions:
+class OutputOptions(Updatable):
     """Default CLI/print output formatting."""
 
     default_format: str | None = None
@@ -382,7 +383,7 @@ def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format: 
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class Config:
+class Config(Updatable):
     """
     Top-level, file-loadable configuration for a `BrowserSession` and local database.
 

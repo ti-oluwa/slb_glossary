@@ -30,7 +30,8 @@ __all__ = [
 ]
 
 ProgressReporter = Callable[[int, int | None], Awaitable[None]]
-"""`async def report(count: int, total: int | None) -> None`.
+"""
+`async def report(count: int, total: int | None) -> None`.
 
 A thin callback tools use to report incremental progress, so this module doesn't
 need to import FastMCP's `Context` to stream. `slb_glossary.mcp.api.MCPApp` adapts
@@ -344,6 +345,7 @@ async def _handle_search(
     started_at = time.monotonic()
     async with runtime.acquire(source) as (db, session):
         results: list[dict[str, typing.Any]] = []
+        count = 0
         async for result in query_api.search(
             args.query,
             db=db,
@@ -356,11 +358,12 @@ async def _handle_search(
             fuzzy=args.fuzzy,
         ):
             results.append(result.asdict())
+            count += 1
             if stream:
-                await report_progress(len(results), args.limit)
+                await report_progress(count, args.limit)
     return {
         "results": results,
-        "count": len(results),
+        "count": count,
         "source": source.value,
         "elapsed_ms": round((time.monotonic() - started_at) * 1000, 1),
     }
@@ -397,6 +400,7 @@ async def _handle_terms_on(
     started_at = time.monotonic()
     async with runtime.acquire(source) as (db, session):
         results: list[dict[str, typing.Any]] = []
+        count = 0
         async for result in query_api.get_terms_on(
             args.topic,
             db=db,
@@ -408,11 +412,12 @@ async def _handle_terms_on(
             fuzzy=args.fuzzy,
         ):
             results.append(result.asdict())
+            count += 1
             if stream:
-                await report_progress(len(results), args.limit)
+                await report_progress(count, args.limit)
     return {
         "results": results,
-        "count": len(results),
+        "count": count,
         "source": source.value,
         "elapsed_ms": round((time.monotonic() - started_at) * 1000, 1),
     }

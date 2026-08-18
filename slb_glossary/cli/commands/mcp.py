@@ -1,6 +1,5 @@
 """`slb-glossary mcp` - run the SLB Energy Glossary as an MCP server for LLM agents."""
 
-import dataclasses
 import pathlib
 import typing
 
@@ -211,7 +210,7 @@ def serve(
     glossary_config = Config.load(config_path) if config_path is not None else Config()
     session_browser = glossary_config.session
     if language is not None:
-        session_browser = dataclasses.replace(session_browser, language=Language(language).value)
+        session_browser = session_browser.update(language=Language(language).value)
 
     session = SessionAccess(enabled=not no_live, browser=session_browser)
     local = LocalAccess(
@@ -245,7 +244,7 @@ def serve(
         timeouts=Timeout(default=timeout or None),
         auth=auth_config,
         rate_limit=rate_limit,
-        logging=dataclasses.replace(MCPConfig.default().logging, level=log_level),
+        logging=MCPConfig.default().logging.update(level=log_level),
     )
     app = MCPApp(config)
     run_async(app.run_async(**transport_kwargs))

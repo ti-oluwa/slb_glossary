@@ -1,0 +1,597 @@
+diff --git a/slb_glossary/cli/commands/mcp.py b/slb_glossary/cli/commands/mcp.py
+index 8760385..9309fdd 100644
+--- a/slb_glossary/cli/commands/mcp.py
++++ b/slb_glossary/cli/commands/mcp.py
+@@ -1,6 +1,5 @@
+ """`slb-glossary mcp` - run the SLB Energy Glossary as an MCP server for LLM agents."""
+ 
+-import dataclasses
+ import pathlib
+ import typing
+ 
+@@ -211,7 +210,7 @@ def serve(
+     glossary_config = Config.load(config_path) if config_path is not None else Config()
+     session_browser = glossary_config.session
+     if language is not None:
+-        session_browser = dataclasses.replace(session_browser, language=Language(language).value)
++        session_browser = session_browser.update(language=Language(language).value)
+ 
+     session = SessionAccess(enabled=not no_live, browser=session_browser)
+     local = LocalAccess(
+@@ -245,7 +244,7 @@ def serve(
+         timeouts=Timeout(default=timeout or None),
+         auth=auth_config,
+         rate_limit=rate_limit,
+-        logging=dataclasses.replace(MCPConfig.default().logging, level=log_level),
++        logging=MCPConfig.default().logging.update(level=log_level),
+     )
+     app = MCPApp(config)
+     run_async(app.run_async(**transport_kwargs))
+diff --git a/slb_glossary/config.py b/slb_glossary/config.py
+index 1e43722..989c14c 100644
+--- a/slb_glossary/config.py
++++ b/slb_glossary/config.py
+@@ -19,6 +19,7 @@ from slb_glossary.logging import LogSink
+ from slb_glossary.paths import default_config_path
+ from slb_glossary.retries import BackoffType, RetryPolicy
+ from slb_glossary.types import Language
++from slb_glossary.utils import Updatable
+ 
+ if sys.version_info >= (3, 11):
+     from typing import Self
+@@ -40,7 +41,7 @@ T = typing.TypeVar("T")
+ 
+ 
+ @dataclasses.dataclass(slots=True, kw_only=True)
+-class RetryOptions:
++class RetryOptions(Updatable):
+     """Serializable counterpart of `slb_glossary.retries.RetryPolicy`."""
+ 
+     attempts: int = 3
+@@ -93,7 +94,7 @@ class RetryOptions:
+ 
+ 
+ @dataclasses.dataclass(slots=True, kw_only=True)
+-class BrowserSessionOptions:
++class BrowserSessionOptions(Updatable):
+     """Serializable counterpart of the options `slb_glossary.browser.open_session` takes."""
+ 
+     language: str = "en"
+@@ -195,7 +196,7 @@ class BrowserSessionOptions:
+ 
+ 
+ @dataclasses.dataclass(slots=True, kw_only=True)
+-class DatabaseOptions:
++class DatabaseOptions(Updatable):
+     """Configuration for `slb_glossary.local`'s local search database."""
+ 
+     enabled: bool = True
+@@ -220,7 +221,7 @@ class DatabaseOptions:
+ 
+ 
+ @dataclasses.dataclass(slots=True, kw_only=True)
+-class OutputOptions:
++class OutputOptions(Updatable):
+     """Default CLI/print output formatting."""
+ 
+     default_format: str | None = None
+@@ -382,7 +383,7 @@ def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format:
+ 
+ 
+ @dataclasses.dataclass(slots=True, kw_only=True)
+-class Config:
++class Config(Updatable):
+     """
+     Top-level, file-loadable configuration for a `BrowserSession` and local database.
+ 
+diff --git a/slb_glossary/live/api.py b/slb_glossary/live/api.py
+index 3cdfd64..0383858 100644
+--- a/slb_glossary/live/api.py
++++ b/slb_glossary/live/api.py
+@@ -14,7 +14,7 @@ from slb_glossary.live.parsers import (
+     get_result_links,
+     get_results_header_text,
+     get_term_detail_blocks,
+-    get_term_image,
++    get_term_images,
+     get_term_name,
+     get_total_term_count,
+ )
+@@ -264,9 +264,11 @@ async def get_results_from_url(
+         name is used for its `SearchResult.topic` instead of the topic
+         parsed off the page.
+     :yield: One `SearchResult` per definition found on the page. Each
+-        result's `image`/`image_caption` and `related` fields are
+-        `None`/empty when the page has no illustrative image or no
+-        related-term links.
++        result's `image`/`image_caption` reflect *that definition's own*
++        section, independently of any other section on the page - `None`
++        only when that particular section has no illustrative image, even
++        if a sibling section does. `related` is empty when that section
++        has no related-term links.
+     """
+     resolved_topic = get_topic_match(session.topics, topic) if topic else None
+ 
+@@ -278,15 +280,14 @@ async def get_results_from_url(
+         logger.debug("No definitions found at %s (%.3fs)", url, time.monotonic() - started_at)
+         return
+ 
+-    # A term page carries at most one illustrative image, shared across
+-    # every definition section on it (not one image per topic/definition).
+-    term_image = await get_term_image(session.page)
+-    image_url, image_caption = (
+-        (term_image.url, term_image.caption) if term_image is not None else (None, None)
+-    )
++    # One illustrative image per definition section, not one shared across
++    # the whole page - a term with several definitions can have a
++    # different image (or none) per section. Indices line up with
++    # `detail_sections` since both come from the same repeated DOM wrapper.
++    section_images = await get_term_images(session.page)
+ 
+     yielded = 0
+-    for section_blocks in detail_sections:
++    for index, section_blocks in enumerate(detail_sections):
+         if len(section_blocks) < 2:
+             continue
+ 
+@@ -307,6 +308,11 @@ async def get_results_from_url(
+         else:
+             topic = summary_line.split(".")[-1].strip().removeprefix("[").removesuffix("]")
+ 
++        section_image = section_images[index] if index < len(section_images) else None
++        image_url, image_caption = (
++            (section_image.url, section_image.caption) if section_image is not None else (None, None)
++        )
++
+         yielded += 1
+         yield SearchResult(
+             term=term_name,
+diff --git a/slb_glossary/live/parsers.py b/slb_glossary/live/parsers.py
+index acf004d..bf3221f 100644
+--- a/slb_glossary/live/parsers.py
++++ b/slb_glossary/live/parsers.py
+@@ -27,6 +27,7 @@ __all__ = [
+     "TERM_IMAGE_CAPTION_SELECTOR",
+     "TERM_IMAGE_SELECTOR",
+     "TERM_NAME_SELECTOR",
++    "TERM_SECTION_SELECTOR",
+     "TOPIC_VALUE_SELECTOR",
+     "TOTAL_COUNT_SELECTOR",
+     "TermImage",
+@@ -37,7 +38,7 @@ __all__ = [
+     "get_result_links",
+     "get_results_header_text",
+     "get_term_detail_blocks",
+-    "get_term_image",
++    "get_term_images",
+     "get_term_name",
+     "get_total_term_count",
+ ]
+@@ -65,13 +66,21 @@ TERM_NAME_SELECTOR = ".row .small-12 h1 strong"
+ """Heading holding the term name on a term detail page."""
+ 
+ TERM_DETAIL_SELECTOR = ".content-two-col__text"
+-"""One definition block on a term detail page; a term may have several."""
++"""One definition block's text on a term detail page; a term may have several."""
+ 
+-TERM_IMAGE_SELECTOR = ".content-two-col .bordered-img .image img"
+-"""The term's illustrative image on a term detail page, if it has one."""
++TERM_SECTION_SELECTOR = ".content-two-col"
++"""
++One definition section wrapper on a term detail page - a term can have
++several (one per topic it's filed under), and each carries its own text
++(`TERM_DETAIL_SELECTOR`) and, independently, its own illustrative image
++if it has one - not one image shared across the whole page.
++"""
++
++TERM_IMAGE_SELECTOR = ".bordered-img .image img"
++"""A definition section's own illustrative image, scoped within `TERM_SECTION_SELECTOR`."""
+ 
+-TERM_IMAGE_CAPTION_SELECTOR = ".content-two-col .bordered-img .desc"
+-"""Caption text accompanying `TERM_IMAGE_SELECTOR`, if any."""
++TERM_IMAGE_CAPTION_SELECTOR = ".bordered-img .desc"
++"""Caption text accompanying `TERM_IMAGE_SELECTOR`, scoped the same way."""
+ 
+ 
+ async def get_element_text(page: Page, selector: str, *, timeout: float = 5_000) -> str:
+@@ -254,7 +263,7 @@ async def get_term_detail_blocks(page: Page) -> list[list[TermBlock]]:
+ 
+ 
+ class TermImage(typing.NamedTuple):
+-    """A term's illustrative image, if the term detail page has one."""
++    """A definition section's illustrative image, if it has one."""
+ 
+     url: str
+     """URL of the image."""
+@@ -263,22 +272,42 @@ class TermImage(typing.NamedTuple):
+     """Caption text accompanying the image, or `""` if it has none."""
+ 
+ 
+-async def get_term_image(page: Page) -> TermImage | None:
++async def get_term_images(page: Page) -> list[TermImage | None]:
+     """
+-    Read the illustrative image on a term detail page, if it has one.
++    Read each definition section's own illustrative image, if it has one.
++
++    A term detail page repeats one `TERM_SECTION_SELECTOR` wrapper per
++    definition (one per topic the term is filed under), and each section
++    carries its own image independently of the others - a term with
++    several definitions can have a different image (or none at all) per
++    section, not one image shared across the whole page. This reads every
++    section's image in a single page evaluation, so the result lines up
++    index-for-index with `get_term_detail_blocks`'s own per-section list.
+ 
+     :param page: A page currently showing a term detail page.
+-    :return: The page's `TermImage`, or `None` if it has no image.
++    :return: One entry per definition section, in document order - a
++        `TermImage` for a section that has one, `None` for a section that doesn't.
+     """
+-    locator = page.locator(TERM_IMAGE_SELECTOR).first
+     try:
+-        src = await locator.get_attribute("src", timeout=2_000)
++        sections = await page.eval_on_selector_all(
++            TERM_SECTION_SELECTOR,
++            f"""
++            (elements) => elements.map((element) => {{
++                const img = element.querySelector("{TERM_IMAGE_SELECTOR}");
++                const src = img ? img.getAttribute("src") : null;
++                if (!src) return null;
++                const desc = element.querySelector("{TERM_IMAGE_CAPTION_SELECTOR}");
++                return {{ src, caption: desc ? desc.textContent.trim() : "" }};
++            }})
++            """,
++        )
+     except Exception as exc:
+-        logger.debug("No term image found", exc_info=exc)
+-        return None
+-    if not src:
+-        return None
++        logger.debug("No term sections/images found", exc_info=exc)
++        return []
+ 
+-    url = urljoin(BASE_URL, src)
+-    caption = await get_element_text(page, TERM_IMAGE_CAPTION_SELECTOR, timeout=2_000)
+-    return TermImage(url=url, caption=caption)
++    return [
++        TermImage(url=urljoin(BASE_URL, section["src"]), caption=section["caption"])
++        if section is not None
++        else None
++        for section in sections
++    ]
+diff --git a/slb_glossary/mcp/config.py b/slb_glossary/mcp/config.py
+index 7d74d00..8d38f32 100644
+--- a/slb_glossary/mcp/config.py
++++ b/slb_glossary/mcp/config.py
+@@ -2,18 +2,20 @@
+ Configuration for `slb_glossary.mcp`'s MCP application (`slb_glossary.mcp.api.MCPApp`).
+ 
+ ```python
+-import dataclasses
+ from slb_glossary.mcp.config import MCPConfig, LocalAccess
+ 
+-config = dataclasses.replace(
+-    MCPConfig.default(),
++config = MCPConfig.default().update(
+     local=LocalAccess(enabled=True, allow_write=True),
+ )
+ ```
+ 
+ Every nested config is a frozen, `slots=True`, keyword-only dataclass, so
+-instances are hashable-by-value-where-possible, cheap to copy with
+-`dataclasses.replace`, and cannot be mutated out from under a running server.
++instances are hashable-by-value-where-possible, cannot be mutated out
++from under a running server, and are cheap to copy with `.update(...)`
++(`slb_glossary.utils.Updatable`, a thin wrapper over
++`dataclasses.replace` - reach for `dataclasses.replace` directly instead
++if you need its `changes` to come from an unpacked mapping rather than
++keyword arguments).
+ """
+ 
+ import dataclasses
+@@ -32,6 +34,7 @@ from slb_glossary.mcp.ratelimit import RateLimiter
+ from slb_glossary.mcp.types import AfterToolHook, BeforeToolHook, LifecycleHook, ToolErrorHook
+ from slb_glossary.query import Source
+ from slb_glossary.types import Language
++from slb_glossary.utils import Updatable
+ 
+ if sys.version_info >= (3, 11):
+     from typing import Self
+@@ -195,7 +198,7 @@ class RateLimitScope(enum.Enum):
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class SessionAccess:
++class SessionAccess(Updatable):
+     """Controls if/how/when the MCP application may open a live `BrowserSession`."""
+ 
+     enabled: bool = True
+@@ -231,7 +234,7 @@ class SessionAccess:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class LocalAccess:
++class LocalAccess(Updatable):
+     """Controls if/how the MCP application may read and write the local database."""
+ 
+     enabled: bool = True
+@@ -259,7 +262,7 @@ class LocalAccess:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class SourcePolicy:
++class SourcePolicy(Updatable):
+     """Controls which `slb_glossary.query.Source` values callers may request."""
+ 
+     allowed: frozenset[Source] | None = None
+@@ -288,7 +291,7 @@ class SourcePolicy:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class Timeout:
++class Timeout(Updatable):
+     """Per-call execution time caps, enforced by FastMCP's own tool `timeout=`."""
+ 
+     default: float | None = 60.0
+@@ -313,7 +316,7 @@ class Timeout:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class Auth:
++class Auth(Updatable):
+     """Controls authentication/authorization (*mainly authorization*) for tool calls."""
+ 
+     backend: AuthBackend | None = None
+@@ -347,7 +350,7 @@ class Auth:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class RateLimit:
++class RateLimit(Updatable):
+     """Controls optional per-tool/per-client request-rate limiting."""
+ 
+     enabled: bool = False
+@@ -375,7 +378,7 @@ class RateLimit:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class Hooks:
++class Hooks(Updatable):
+     """Caller-supplied hooks run around every tool call and around the server's lifecycle."""
+ 
+     before_tool: tuple[BeforeToolHook, ...] = ()
+@@ -407,7 +410,7 @@ class Hooks:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class MCPLogging:
++class MCPLogging(Updatable):
+     """
+     Controls where/how `slb_glossary`'s logging is routed for this server process.
+ 
+@@ -464,7 +467,7 @@ class MCPLogging:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class Streaming:
++class Streaming(Updatable):
+     """Controls the optional `stream` argument tools that can stream expose."""
+ 
+     default: bool = False
+@@ -487,7 +490,7 @@ class Streaming:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class ServerInfo:
++class ServerInfo(Updatable):
+     """Identity metadata for the MCP application/server itself."""
+ 
+     name: str = "slb-glossary"
+@@ -506,7 +509,7 @@ class ServerInfo:
+ 
+ 
+ @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+-class MCPConfig:
++class MCPConfig(Updatable):
+     """
+     Top-level configuration for `slb_glossary.mcp.api.MCPApp`.
+ 
+@@ -523,8 +526,7 @@ class MCPConfig:
+     read-only, local-and-live, unauthenticated, unlimited-rate server
+     configuration. Validated at construction time.
+ 
+-    Build with `dataclasses.replace` to change one field without
+-    re-specifying the rest.
++    Build with `.update(...)` to change one field without re-specifying the rest.
+     """
+ 
+     server: ServerInfo = dataclasses.field(default_factory=ServerInfo)
+@@ -635,17 +637,15 @@ class MCPConfig:
+ 
+         Equivalent to `MCPConfig()` when `language` is omitted. `language`
+         exists as a shortcut for the one setting that's awkward to reach
+-        through `dataclasses.replace` alone, since it's nested three
+-        levels down (`session.browser.language`):
++        even through `.update(...)` alone, since it's nested three levels
++        down (`session.browser.language`):
+ 
+         ```python
+         config = MCPConfig.default(language="es")
+         # instead of:
+-        config = dataclasses.replace(
+-            MCPConfig.default(),
+-            session=dataclasses.replace(
+-                SessionAccess(),
+-                browser=dataclasses.replace(BrowserSessionOptions(), language="es"),
++        config = MCPConfig.default().update(
++            session=SessionAccess().update(
++                browser=BrowserSessionOptions().update(language="es"),
+             ),
+         )
+         ```
+@@ -674,10 +674,8 @@ class MCPConfig:
+                     f"Unknown language {language!r}. Expected one of: {choices}."
+                 ) from exc
+ 
+-        return dataclasses.replace(
+-            config,
+-            session=dataclasses.replace(
+-                config.session,
+-                browser=dataclasses.replace(config.session.browser, language=language_value),
++        return config.update(
++            session=config.session.update(
++                browser=config.session.browser.update(language=language_value),
+             ),
+         )
+diff --git a/slb_glossary/mcp/tools.py b/slb_glossary/mcp/tools.py
+index 8884687..8ae32e9 100644
+--- a/slb_glossary/mcp/tools.py
++++ b/slb_glossary/mcp/tools.py
+@@ -344,6 +344,7 @@ async def _handle_search(
+     started_at = time.monotonic()
+     async with runtime.acquire(source) as (db, session):
+         results: list[dict[str, typing.Any]] = []
++        count = 0
+         async for result in query_api.search(
+             args.query,
+             db=db,
+@@ -356,11 +357,12 @@ async def _handle_search(
+             fuzzy=args.fuzzy,
+         ):
+             results.append(result.asdict())
++            count += 1
+             if stream:
+-                await report_progress(len(results), args.limit)
++                await report_progress(count, args.limit)
+     return {
+         "results": results,
+-        "count": len(results),
++        "count": count,
+         "source": source.value,
+         "elapsed_ms": round((time.monotonic() - started_at) * 1000, 1),
+     }
+@@ -397,6 +399,7 @@ async def _handle_terms_on(
+     started_at = time.monotonic()
+     async with runtime.acquire(source) as (db, session):
+         results: list[dict[str, typing.Any]] = []
++        count = 0
+         async for result in query_api.get_terms_on(
+             args.topic,
+             db=db,
+@@ -408,11 +411,12 @@ async def _handle_terms_on(
+             fuzzy=args.fuzzy,
+         ):
+             results.append(result.asdict())
++            count += 1
+             if stream:
+-                await report_progress(len(results), args.limit)
++                await report_progress(count, args.limit)
+     return {
+         "results": results,
+-        "count": len(results),
++        "count": count,
+         "source": source.value,
+         "elapsed_ms": round((time.monotonic() - started_at) * 1000, 1),
+     }
+diff --git a/slb_glossary/utils.py b/slb_glossary/utils.py
+index cc7b614..539edd5 100644
+--- a/slb_glossary/utils.py
++++ b/slb_glossary/utils.py
+@@ -1,5 +1,6 @@
+ """Utilities shared across the package."""
+ 
++import dataclasses
+ import logging
+ import sys
+ import time
+@@ -13,11 +14,90 @@ from rich.table import Table
+ 
+ from slb_glossary.types import RecordLike, SearchResult
+ 
+-__all__ = ["parse_int", "print_records", "print_async_records", "log_timed_yields"]
++__all__ = [
++    "parse_int",
++    "print_records",
++    "print_async_records",
++    "log_timed_yields",
++    "Updatable",
++]
+ 
+ logger = logging.getLogger(__name__)
+ 
+ T = typing.TypeVar("T")
++UpdatableT = typing.TypeVar("UpdatableT", bound="Updatable")
++
++
++class Updatable:
++    """
++    Mixin adding `.update(**changes)` to a `@dataclasses.dataclass`, as a
++    shorter, more efficient alternative to `dataclasses.replace` for the
++    common case of changing a few top-level fields.
++
++    ```python
++    @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
++    class Options(Updatable):
++        timeout: float = 30.0
++        retries: int = 3
++
++    opts = Options()
++    opts2 = opts.update(timeout=60.0)  # instead of dataclasses.replace(opts, timeout=60.0)
++    ```
++
++    For a **frozen** dataclass, `update` returns a new instance with
++    `changes` applied - `self` is untouched, exactly like
++    `dataclasses.replace`, just shorter to write and to chain
++    (`config.update(a=1).update(b=2)`). For a **non-frozen** one, `update`
++    mutates `self` in place, field by field, and returns `self` - so a
++    caller that doesn't know (or care) whether a particular config is
++    frozen can still call `.update(...)` and either use the return value
++    or not, uniformly.
++
++    `changes` are applied via `dataclasses.replace`/`setattr`, not
++    `__init__`, so a class's own `__post_init__` still runs (for a frozen
++    dataclass, since `replace` re-constructs the instance) or doesn't (for
++    a mutable one, since plain attribute assignment doesn't
++    re-invoke `__init__`) - matching each construction style's own normal
++    behavior, `update` doesn't change that.
++
++    Declare this *before* other bases so it doesn't shadow a dataclass
++    field actually named `update`, e.g. `class Foo(Updatable): ...` not
++    `class Foo(SomethingElse, Updatable): ...` if `SomethingElse` has an
++    `update` field/method of its own.
++    """
++
++    __slots__ = ()
++
++    def update(self: UpdatableT, **changes: typing.Any) -> UpdatableT:
++        """
++        Apply `changes` to this dataclass instance.
++
++        :param changes: Field name to new value. Every name must be an
++            actual field of this dataclass.
++        :return: A new instance with `changes` applied, if this dataclass
++            is frozen; `self`, mutated in place, otherwise.
++        :raises TypeError: If this class isn't a `dataclasses.dataclass`,
++            or `changes` includes a name that isn't one of its fields.
++        """
++        if not dataclasses.is_dataclass(self):
++            raise TypeError(f"{type(self).__name__}.update() requires a dataclasses.dataclass.")
++        if not changes:
++            return self
++
++        valid = {f.name for f in dataclasses.fields(self)}
++        unknown = changes.keys() - valid
++        if unknown:
++            raise TypeError(
++                f"{type(self).__name__}.update() got unexpected field(s): "
++                f"{', '.join(sorted(unknown))}. Expected one of: {', '.join(sorted(valid))}."
++            )
++
++        if dataclasses.is_dataclass(self) and type(self).__dataclass_params__.frozen:  # type: ignore[attr-defined]
++            return dataclasses.replace(self, **changes)
++
++        for name, value in changes.items():
++            setattr(self, name, value)
++        return self
+ 
+ 
+ def parse_int(text: str) -> int:

@@ -27,6 +27,7 @@ __all__ = [
     "TERM_IMAGE_CAPTION_SELECTOR",
     "TERM_IMAGE_SELECTOR",
     "TERM_NAME_SELECTOR",
+    "TERM_SECTION_SELECTOR",
     "TOPIC_VALUE_SELECTOR",
     "TOTAL_COUNT_SELECTOR",
     "TermImage",
@@ -37,7 +38,7 @@ __all__ = [
     "get_result_links",
     "get_results_header_text",
     "get_term_detail_blocks",
-    "get_term_image",
+    "get_term_images",
     "get_term_name",
     "get_total_term_count",
 ]
@@ -65,13 +66,21 @@ TERM_NAME_SELECTOR = ".row .small-12 h1 strong"
 """Heading holding the term name on a term detail page."""
 
 TERM_DETAIL_SELECTOR = ".content-two-col__text"
-"""One definition block on a term detail page; a term may have several."""
+"""One definition block's text on a term detail page; a term may have several."""
 
-TERM_IMAGE_SELECTOR = ".content-two-col .bordered-img .image img"
-"""The term's illustrative image on a term detail page, if it has one."""
+TERM_SECTION_SELECTOR = ".content-two-col"
+"""
+One definition section wrapper on a term detail page - a term can have
+several (one per topic it's filed under), and each carries its own text
+(`TERM_DETAIL_SELECTOR`) and, independently, its own illustrative image
+if it has one - not one image shared across the whole page.
+"""
 
-TERM_IMAGE_CAPTION_SELECTOR = ".content-two-col .bordered-img .desc"
-"""Caption text accompanying `TERM_IMAGE_SELECTOR`, if any."""
+TERM_IMAGE_SELECTOR = ".bordered-img .image img"
+"""A definition section's own illustrative image, scoped within `TERM_SECTION_SELECTOR`."""
+
+TERM_IMAGE_CAPTION_SELECTOR = ".bordered-img .desc"
+"""Caption text accompanying `TERM_IMAGE_SELECTOR`, scoped the same way."""
 
 
 async def get_element_text(page: Page, selector: str, *, timeout: float = 5_000) -> str:
@@ -254,7 +263,7 @@ async def get_term_detail_blocks(page: Page) -> list[list[TermBlock]]:
 
 
 class TermImage(typing.NamedTuple):
-    """A term's illustrative image, if the term detail page has one."""
+    """A definition section's illustrative image, if it has one."""
 
     url: str
     """URL of the image."""
@@ -263,22 +272,42 @@ class TermImage(typing.NamedTuple):
     """Caption text accompanying the image, or `""` if it has none."""
 
 
-async def get_term_image(page: Page) -> TermImage | None:
+async def get_term_images(page: Page) -> list[TermImage | None]:
     """
-    Read the illustrative image on a term detail page, if it has one.
+    Read each definition section's own illustrative image, if it has one.
+
+    A term detail page repeats one `TERM_SECTION_SELECTOR` wrapper per
+    definition (one per topic the term is filed under), and each section
+    carries its own image independently of the others. A term with
+    several definitions can have a different image (or none at all) per
+    section, not one image shared across the whole page. This reads every
+    section's image in a single page evaluation, so the result lines up
+    index-for-index with `get_term_detail_blocks`'s own per-section list.
 
     :param page: A page currently showing a term detail page.
-    :return: The page's `TermImage`, or `None` if it has no image.
+    :return: One entry per definition section, in document order. A
+        `TermImage` for a section that has one, `None` for a section that doesn't.
     """
-    locator = page.locator(TERM_IMAGE_SELECTOR).first
     try:
-        src = await locator.get_attribute("src", timeout=2_000)
+        sections = await page.eval_on_selector_all(
+            TERM_SECTION_SELECTOR,
+            f"""
+            (elements) => elements.map((element) => {{
+                const img = element.querySelector("{TERM_IMAGE_SELECTOR}");
+                const src = img ? img.getAttribute("src") : null;
+                if (!src) return null;
+                const desc = element.querySelector("{TERM_IMAGE_CAPTION_SELECTOR}");
+                return {{ src, caption: desc ? desc.textContent.trim() : "" }};
+            }})
+            """,
+        )
     except Exception as exc:
-        logger.debug("No term image found", exc_info=exc)
-        return None
-    if not src:
-        return None
+        logger.debug("No term sections/images found", exc_info=exc)
+        return []
 
-    url = urljoin(BASE_URL, src)
-    caption = await get_element_text(page, TERM_IMAGE_CAPTION_SELECTOR, timeout=2_000)
-    return TermImage(url=url, caption=caption)
+    return [
+        TermImage(url=urljoin(BASE_URL, section["src"]), caption=section["caption"])
+        if section is not None
+        else None
+        for section in sections
+    ]

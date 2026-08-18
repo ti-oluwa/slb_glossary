@@ -14,7 +14,7 @@ from slb_glossary.live.parsers import (
     get_result_links,
     get_results_header_text,
     get_term_detail_blocks,
-    get_term_image,
+    get_term_images,
     get_term_name,
     get_total_term_count,
 )
@@ -264,9 +264,11 @@ async def get_results_from_url(
         name is used for its `SearchResult.topic` instead of the topic
         parsed off the page.
     :yield: One `SearchResult` per definition found on the page. Each
-        result's `image`/`image_caption` and `related` fields are
-        `None`/empty when the page has no illustrative image or no
-        related-term links.
+        result's `image`/`image_caption` reflect *that definition's own*
+        section, independently of any other section on the page - `None`
+        only when that particular section has no illustrative image, even
+        if a sibling section does. `related` is empty when that section
+        has no related-term links.
     """
     resolved_topic = get_topic_match(session.topics, topic) if topic else None
 
@@ -278,15 +280,14 @@ async def get_results_from_url(
         logger.debug("No definitions found at %s (%.3fs)", url, time.monotonic() - started_at)
         return
 
-    # A term page carries at most one illustrative image, shared across
-    # every definition section on it (not one image per topic/definition).
-    term_image = await get_term_image(session.page)
-    image_url, image_caption = (
-        (term_image.url, term_image.caption) if term_image is not None else (None, None)
-    )
+    # One illustrative image per definition section. A term with
+    # several definitions can have a different image (or none)
+    # per section. Indices line up with`detail_sections` since
+    # both come from the same repeated DOM wrapper.
+    section_images = await get_term_images(session.page)
 
     yielded = 0
-    for section_blocks in detail_sections:
+    for index, section_blocks in enumerate(detail_sections):
         if len(section_blocks) < 2:
             continue
 
@@ -306,6 +307,13 @@ async def get_results_from_url(
             topic = resolved_topic
         else:
             topic = summary_line.split(".")[-1].strip().removeprefix("[").removesuffix("]")
+
+        section_image = section_images[index] if index < len(section_images) else None
+        image_url, image_caption = (
+            (section_image.url, section_image.caption)
+            if section_image is not None
+            else (None, None)
+        )
 
         yielded += 1
         yield SearchResult(
