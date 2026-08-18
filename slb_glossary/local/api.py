@@ -33,15 +33,18 @@ DEFAULT_UPSERT_BATCH_SIZE = 20
 """Default `batch_size` for `upsert_results_incrementally`."""
 
 FTS_COLUMN_WEIGHTS: tuple[float, float, float] = (10.0, 1.0, 3.0)
-"""bm25() column weights for `terms_fts`'s `(term, definition, topic)` columns,
+"""
+bm25() column weights for `terms_fts`'s `(term, definition, topic)` columns,
 in that order. FTS5's default is `1.0` for every column, which lets a
 result whose *definition* happens to repeat the query outrank one whose
-*term name* actually matches it. Weighting `term` well above the others
-still doesn't fully fix it - bm25 also rewards a column for how *often*
-the query appears in it, so a term whose definition just says the query
-word a lot can still out-score the term actually named that. `scored_search`
-sidesteps this with an exact/prefix name-match tier computed directly in
-SQL, ahead of bm25 entirely - see its docstring.
+*term name* actually matches it. 
+
+Weighting `term` well above the others still doesn't fully fix 
+this as bm25 also rewards a column for how *often* the query appears in it, 
+so a term whose definition just says the query word a lot can still out-score 
+the term actually named that. `scored_search` sidesteps this with an 
+exact/prefix name-match tier computed directly in SQL, ahead of bm25 entirely, 
+see its docstring.
 """
 
 
@@ -243,6 +246,7 @@ async def upsert_results_incrementally(
         nonlocal buffer, total_written, batches_written
         if not buffer:
             return
+
         pending, buffer = buffer, []
         written = await upsert_results(db, pending, language=language, source=source)
         total_written += written
@@ -274,6 +278,7 @@ async def upsert_results_incrementally(
                 "Discarding %d unpersisted result(s) after an error (persist_on_error=False)",
                 len(buffer),
             )
+
         if total_written:
             level = logging.WARNING if error is not None else logging.INFO
             logger.log(
@@ -362,7 +367,7 @@ def fuzzy_match_topics(
     return result
 
 
-async def _resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | None:
+async def resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | None:
     """
     Resolve a caller-supplied topic filter, optionally fuzzily, against the local database.
 
@@ -373,7 +378,7 @@ async def _resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | 
     :param fuzzy: If `True`, resolve `topic` against `get_topics(db)` via
         `fuzzy_match_topics` instead of using it as-is.
     :return: The topic filter to apply, or `None`/`""` if there's nothing
-        to filter by - including when `fuzzy` is `True` and no locally
+        to filter by, including when `fuzzy` is `True` and no locally
         stored topic came close enough to match.
     """
     if not topic:
@@ -413,7 +418,7 @@ async def scored_search(
     query is never outranked by an unrelated term whose definition just
     happens to mention it a lot (e.g. searching "mud" surfacing "Drilling
     fluid" ahead of "Mud" itself, because "mud" is repeated throughout
-    that definition) - the failure mode a purely bm25/word-count-driven
+    that definition) which is the failure mode a purely bm25/word-count-driven
     ranking is prone to.
 
     `search` is a thin wrapper around this. Pass `scored=True` to it
@@ -456,7 +461,7 @@ async def scored_search(
     """
     params: list[typing.Any] = [query_norm, query_norm, query_norm, _to_fts_query(query)]
 
-    resolved_topic = await _resolve_topic(db, topic, fuzzy)
+    resolved_topic = await resolve_topic(db, topic, fuzzy)
     if resolved_topic:
         topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
         if topics:
@@ -567,8 +572,7 @@ def search(
     instead of calling `scored_search` separately.
 
     Unlike `slb_glossary.live.search`, this never touches the live
-    glossary site; results are only as fresh as the last
-    `slb_glossary.local.sync` or import.
+    glossary site; results are only as fresh as the last sync or import.
 
     :param db: The local database to search.
     :param query: Free-text query, matched against term, definition, and topic.
@@ -580,7 +584,7 @@ def search(
         `topic` by resolving it against locally stored topic names first.
         Has no effect if `topic` is falsy.
     :param scored: If `True`, yield `(result, score)` pairs instead of
-        bare results - see `scored_search`.
+        bare results. See `scored_search`.
     :yield: Matching `SearchResult`s, or `(SearchResult, float)` pairs if
         `scored=True`, best match first either way.
     """
@@ -628,7 +632,7 @@ async def get_terms_on(
         fuzzy,
     )
     started_at = time.monotonic()
-    resolved_topic = await _resolve_topic(db, topic, fuzzy)
+    resolved_topic = await resolve_topic(db, topic, fuzzy)
     if not resolved_topic:
         logger.debug("No local topic resolved for %r, yielding nothing", topic)
         return
@@ -704,7 +708,7 @@ async def get_random_term(
     sql = "SELECT * FROM terms"
     params: list[typing.Any] = []
 
-    resolved_topic = await _resolve_topic(db, topic, fuzzy)
+    resolved_topic = await resolve_topic(db, topic, fuzzy)
     if resolved_topic:
         topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
         if topics:
@@ -736,7 +740,7 @@ async def get_terms_urls(
 
     :param db: The local database to read from.
     :param query: If given, restrict to (and rank by) an FTS5 match on
-        this free-text query - see `search`.
+        this free-text query. See `search`.
     :param topic: Restrict to this topic, or several comma-separated topics.
     :param start_letter: Restrict to terms starting with this letter.
     :param limit: Maximum number of URLs. `None` for unlimited.
@@ -771,7 +775,7 @@ async def get_terms_urls(
         )
         return
 
-    resolved_topic = await _resolve_topic(db, topic, fuzzy)
+    resolved_topic = await resolve_topic(db, topic, fuzzy)
     sql = "SELECT url FROM terms WHERE 1=1"
     params: list[typing.Any] = []
     if resolved_topic:

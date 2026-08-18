@@ -103,10 +103,7 @@ class RetryPolicy:
     ) -> Self:
         """Build an `EXPONENTIAL` policy, the default and generally safest choice."""
         return cls(
-            base_delay=base_delay,
-            backoff_type=BackoffType.EXPONENTIAL,
-            factor=factor,
-            **kwargs,
+            base_delay=base_delay, backoff_type=BackoffType.EXPONENTIAL, factor=factor, **kwargs
         )
 
     @classmethod
@@ -115,10 +112,7 @@ class RetryPolicy:
     ) -> Self:
         """Build a `LOGARITHMIC` policy, for retries that should barely grow."""
         return cls(
-            base_delay=base_delay,
-            backoff_type=BackoffType.LOGARITHMIC,
-            factor=factor,
-            **kwargs,
+            base_delay=base_delay, backoff_type=BackoffType.LOGARITHMIC, factor=factor, **kwargs
         )
 
 

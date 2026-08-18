@@ -3,13 +3,6 @@ Sync the local database from a live `BrowserSession`.
 
 Call one of these functions as often (or as rarely) as fits your own use of the glossary; see the
 responsible-use note on `sync_all` in particular.
-
-Every fetch here writes to the local database incrementally, in batches
-(see `batch_size`/`persist_on_error` on each function), via
-`slb_glossary.local.upsert_results_incrementally` - rather than collecting
-the whole fetch in memory and writing it in one shot at the end - so a
-sync interrupted partway through (a browser crash, a killed process, a
-flaky network) still keeps whatever it managed to fetch before that point.
 """
 
 import dataclasses
@@ -59,9 +52,11 @@ class SyncSummary:
     """ISO-8601 UTC timestamp this sync completed at."""
 
     interrupted: bool = False
-    """`True` if the live fetch behind this sync raised partway through and
+    """
+    `True` if the live fetch behind this sync raised partway through and
     this summary reflects only the partial progress saved before that
-    (see each function's `persist_on_error`), rather than a complete fetch."""
+    (see each function's `persist_on_error`), rather than a complete fetch.
+    """
 
 
 async def _record_sync(

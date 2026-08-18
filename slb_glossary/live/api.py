@@ -71,7 +71,7 @@ async def _wait_for_settle(
     """
     Load `url` and wait until the results panel differs from the given baseline.
 
-    The glossary is a single-page MCPApp: navigating between search
+    The glossary is a mostly single-page application. Navigating between search
     filters changes only the URL fragment, so a fresh `page.goto` can
     resolve before the site's JavaScript has actually re-rendered the
     results panel. This polls the rendered result links and results header
@@ -255,7 +255,7 @@ async def get_results_from_url(
     this yields one `SearchResult` per definition.
 
     :param session: An open glossary session. Its `session.page` is
-        navigated directly - use a session with a dedicated page (e.g. one
+        navigated directly. Use a session with a dedicated page (e.g. one
         of the child sessions `get_results_from_urls` opens) if you're
         fetching several URLs concurrently.
     :param url: A term detail page URL, as yielded by `get_terms_urls`.
@@ -265,7 +265,7 @@ async def get_results_from_url(
         parsed off the page.
     :yield: One `SearchResult` per definition found on the page. Each
         result's `image`/`image_caption` reflect *that definition's own*
-        section, independently of any other section on the page - `None`
+        section, independently of any other section on the page, and is `None`
         only when that particular section has no illustrative image, even
         if a sibling section does. `related` is empty when that section
         has no related-term links.

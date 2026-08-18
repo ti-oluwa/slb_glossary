@@ -19,7 +19,7 @@ from slb_glossary.cli.source_options import (
     source_options,
 )
 from slb_glossary.cli.tui import launch_tui
-from slb_glossary.query import SimilarTerms, Source
+from slb_glossary.query import SimilarResult, Source
 from slb_glossary.types import SearchResult
 
 __all__ = ["define"]
@@ -122,11 +122,11 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
             )
 
         if suggest_similar:
-            assert isinstance(lookup.value, SimilarTerms)
+            assert isinstance(lookup.value, SimilarResult)
             exact = lookup.value.exact
             similar = lookup.value.similar
         else:
-            assert not isinstance(lookup.value, SimilarTerms)
+            assert not isinstance(lookup.value, SimilarResult)
             exact = lookup.value
             similar = ()
 

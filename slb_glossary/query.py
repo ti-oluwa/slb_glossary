@@ -66,8 +66,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "Source",
-    "TermLookup",
-    "SimilarTerms",
+    "LookupResult",
+    "SimilarResult",
     "search",
     "get_terms_on",
     "get_terms_urls",
@@ -93,13 +93,13 @@ database's best match isn't trusted alone and a live search is added on.
 
 SIMILAR_TERMS_POOL_SIZE = 5
 """
-Live results `_fetch_term(with_similar=True)` pulls from the glossary
+Maximum number of live results to pull from the glossary
 site to look for an exact match in and, when `with_similar` is `True`,
-to draw `SimilarTerms.similar` alternatives from.
+to draw `SimilarResult.similar` alternatives from.
 """
 
 MAX_SIMILAR_TERMS = 3
-"""Max number of alternatives `_fetch_term`/`get_term` return in `SimilarTerms.similar`."""
+"""Max number of alternative/similar terms to return in `SimilarResult.similar`."""
 
 
 class Source(enum.Enum):
@@ -122,7 +122,7 @@ T = typing.TypeVar("T")
 
 
 @dataclasses.dataclass(slots=True, kw_only=True, frozen=True)
-class TermLookup(typing.Generic[T]):
+class LookupResult(typing.Generic[T]):
     """The outcome of a single-value lookup (`get_term`, `random_term`), with its provenance."""
 
     value: T
@@ -139,19 +139,12 @@ class TermLookup(typing.Generic[T]):
 
 
 @dataclasses.dataclass(slots=True, kw_only=True, frozen=True)
-class SimilarTerms:
+class SimilarResult:
     """
     The outcome of a `with_similar=True` term lookup: an exact match, plus alternatives.
 
-    Returned by `_fetch_term`/`get_term` in place of a bare
-    `SearchResult | None` when the caller opted into also seeing
-    similarly-named results - handy for a "did you mean" prompt when
-    `exact` turns out to be `None`.
-
-    Falsy (via `__bool__`) exactly when both `exact` is `None` and
-    `similar` is empty, so callers that check `if lookup.value:` (e.g.
-    `slb_glossary.cli.source_options.resolve_lookup`) keep working
-    whether or not `with_similar` was used.
+    Returned by `get_term` in place of a bare `SearchResult | None`
+    when the caller opted into also seeing similarly-named results.
     """
 
     exact: SearchResult | None
@@ -160,8 +153,9 @@ class SimilarTerms:
     similar: tuple[SearchResult, ...] = ()
     """
     Other results the live search turned up for the same query, best
-    match first, `exact` itself excluded, capped at `MAX_SIMILAR_TERMS`.
-    Always empty for a local-only lookup - only a live search has
+    match first, `exact` itself excluded.
+
+    Always empty for a local-only lookup as only a live search has
     anything to compare against.
     """
 
@@ -169,7 +163,7 @@ class SimilarTerms:
         return self.exact is not None or bool(self.similar)
 
 
-def _validate_source(db: Database | None, session: BrowserSession | None, source: Source) -> None:
+def validate_source(db: Database | None, session: BrowserSession | None, source: Source) -> None:
     """Validate that `db`/`session` actually support the requested `source`."""
     if db is None and session is None:
         raise QueryError(
@@ -183,9 +177,9 @@ def _validate_source(db: Database | None, session: BrowserSession | None, source
         raise QueryError("`source=Source.LIVE` requires `session` (an open `BrowserSession`).")
 
 
-def _resolve_source(db: Database | None, session: BrowserSession | None, source: Source) -> Source:
+def resolve_source(db: Database | None, session: BrowserSession | None, source: Source) -> Source:
     """Narrow `Source.AUTO` to a starting concrete source given what's available."""
-    _validate_source(db, session, source)
+    validate_source(db, session, source)
     if source is not Source.AUTO:
         return source
     return Source.LOCAL if db is not None else Source.LIVE
@@ -210,7 +204,7 @@ async def _maybe_persist(
     return written > 0
 
 
-def _persist_incrementally(
+def persist_incrementally(
     db: Database | None,
     results: typing.AsyncIterator[SearchResult],
     *,
@@ -232,7 +226,7 @@ def _persist_incrementally(
         passes through unchanged. Checked once up front so this is a cheap
         no-op wrapper when persistence wasn't requested.
     :param language: Glossary language edition these results were fetched
-        in. Passed straight through to `local_api.upsert_results_incrementally`.
+        in. Passed straight through to `slb_glossary.local.upsert_results_incrementally`.
     :param batch_size: Number of results to buffer before writing an
         incremental batch. Smaller values save progress more often at the
         cost of more (smaller) database writes; larger values write less
@@ -323,7 +317,7 @@ async def search(
         or the requested `source` needs one that wasn't given.
     """
     started_at = time.monotonic()
-    resolved = _resolve_source(db, session, source)
+    resolved = resolve_source(db, session, source)
     count = 0
     if resolved is Source.LOCAL:
         assert db is not None
@@ -337,6 +331,7 @@ async def search(
         ):
             count += 1
             yield result
+
         logger.debug(
             "`query.search(%r, source=LOCAL)` yielded %d result(s) in %.3fs",
             query,
@@ -355,7 +350,7 @@ async def search(
             limit=limit,
             concurrency=concurrency,
         )
-        async for result in _persist_incrementally(
+        async for result in persist_incrementally(
             db,
             live_stream,
             persist=persist,
@@ -365,6 +360,7 @@ async def search(
         ):
             count += 1
             yield result
+
         logger.debug(
             "`query.search(%r, source=LIVE)` yielded %d result(s) in %.3fs",
             query,
@@ -373,7 +369,7 @@ async def search(
         )
         return
 
-    # source is Source.AUTO, resolved started as LOCAL: score it, then decide.
+    # source is `Source.AUTO`, resolved started as `LOCAL`: score it, then decide.
     assert db is not None
     scored = await local_api.scored_search(
         db, query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
@@ -439,7 +435,7 @@ async def search(
         limit=remaining if remaining is not None else limit,
         concurrency=concurrency,
     )
-    async for result in _persist_incrementally(
+    async for result in persist_incrementally(
         db,
         live_stream,
         persist=persist,
@@ -502,15 +498,14 @@ async def get_terms_on(
         save whatever's buffered so far if the live fetch raises partway
         through, instead of losing it.
     :param fuzzy: If `True`, any local-database read tolerates minor
-        misspellings/partial names in `topic` - see
-        `slb_glossary.local.fuzzy_match_topics`. Live reads already
+        misspellings/partial names in `topic`. Live reads already
         fuzzy-match topics unconditionally, so this has no effect on them.
     :yield: `SearchResult`s filed under `topic`.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
     started_at = time.monotonic()
-    resolved = _resolve_source(db, session, source)
+    resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
         count = 0
@@ -523,6 +518,7 @@ async def get_terms_on(
         ):
             count += 1
             yield result
+
         logger.debug(
             "`query.get_terms_on(%r, source=LOCAL)` yielded %d result(s) in %.3fs",
             topic,
@@ -541,7 +537,7 @@ async def get_terms_on(
             concurrency=concurrency,
         )
         count = 0
-        async for result in _persist_incrementally(
+        async for result in persist_incrementally(
             db,
             live_stream,
             persist=persist,
@@ -551,6 +547,7 @@ async def get_terms_on(
         ):
             count += 1
             yield result
+
         logger.debug(
             "`query.get_terms_on(%r, source=LIVE)` yielded %d result(s) in %.3fs",
             topic,
@@ -595,7 +592,7 @@ async def get_terms_on(
         concurrency=concurrency,
     )
     live_count = 0
-    async for result in _persist_incrementally(
+    async for result in persist_incrementally(
         db,
         live_stream,
         persist=persist,
@@ -641,14 +638,13 @@ async def get_terms_urls(
     :param start_letter: Restrict to terms starting with this letter.
     :param limit: Maximum number of URLs to yield. `None` for unlimited.
     :param fuzzy: If `True`, any local-database read tolerates minor
-        misspellings/partial names in `topic` - see
-        `slb_glossary.local.fuzzy_match_topics`. Live reads already
+        misspellings/partial names in `topic`. Live reads already
         fuzzy-match topics unconditionally, so this has no effect on them.
     :yield: Matching term detail-page URLs.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
-    resolved = _resolve_source(db, session, source)
+    resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
         async for url in local_api.get_terms_urls(
@@ -736,7 +732,7 @@ async def get_topics(
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
-    resolved = _resolve_source(db, session, source)
+    resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
         return await local_api.get_topics(db)
@@ -764,7 +760,7 @@ async def get_term(
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: typing.Literal[False] = False,
-) -> TermLookup[SearchResult | None]: ...
+) -> LookupResult[SearchResult | None]: ...
 
 
 @typing.overload
@@ -776,7 +772,7 @@ async def get_term(
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: typing.Literal[True],
-) -> TermLookup[SimilarTerms]: ...
+) -> LookupResult[SimilarResult]: ...
 
 
 async def get_term(
@@ -787,7 +783,7 @@ async def get_term(
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: bool = False,
-) -> TermLookup:
+) -> LookupResult:
     """
     Look up a single term by exact name or detail-page URL.
 
@@ -798,29 +794,29 @@ async def get_term(
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, and a live fetch happens, cache its result(s)
         into `db`. This is a single-value lookup, so there's normally only
-        one result to write - batching doesn't apply here the way it does
+        one result to write. Batching doesn't apply here the way it does
         for `search`/`get_terms_on`. With `with_similar=True`, every
         alternative gathered alongside the exact match is cached too.
-    :param with_similar: If `True`, resolve to a `TermLookup[SimilarTerms]`
-        instead: `SimilarTerms.exact` holds what a plain call would have
-        returned, and `SimilarTerms.similar` holds up to `MAX_SIMILAR_TERMS`
+    :param with_similar: If `True`, resolve to a `LookupResult[SimilarResult]`
+        instead: `SimilarResult.exact` holds what a plain call would have
+        returned, and `SimilarResult.similar` holds up to `MAX_SIMILAR_TERMS`
         other results found for `term_or_url` along the way, best match
-        first - only ever populated by a live lookup, since that's the
+        first and is only ever populated by a live lookup, since that's the
         only source with anything to compare against. Handy for a "did you
         mean" prompt when the exact match turns out to be `None`.
-    :return: A `TermLookup` wrapping the found `SearchResult` (or `None` if
-        not found by the resolved source(s)) - or, with `with_similar=True`,
-        a `SimilarTerms` - plus which source actually served it, and
+    :return: A `LookupResult` wrapping the found `SearchResult` (or `None` if
+        not found by the resolved source(s)). Or, with `with_similar=True`,
+        a `SimilarResult`, plus which source actually served it, and
         whether it was cached as a result of this call.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
-    resolved = _resolve_source(db, session, source)
+    resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
         result = await local_api.get_term(db, term_or_url)
-        value = SimilarTerms(exact=result) if with_similar else result
-        return TermLookup(value=value, source=Source.LOCAL, persisted=False)
+        value = SimilarResult(exact=result) if with_similar else result
+        return LookupResult(value=value, source=Source.LOCAL, persisted=False)
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
@@ -831,17 +827,17 @@ async def get_term(
             persist=persist,
             language=session.language.value,
         )
-        return TermLookup(value=fetched, source=Source.LIVE, persisted=persisted)
+        return LookupResult(value=fetched, source=Source.LIVE, persisted=persisted)
 
     assert db is not None
     result = await local_api.get_term(db, term_or_url)
     if result is not None:
-        value = SimilarTerms(exact=result) if with_similar else result
-        return TermLookup(value=value, source=Source.LOCAL, persisted=False)
+        value = SimilarResult(exact=result) if with_similar else result
+        return LookupResult(value=value, source=Source.LOCAL, persisted=False)
 
     if session is None:
-        empty = SimilarTerms(exact=None) if with_similar else None
-        return TermLookup(value=empty, source=Source.LOCAL, persisted=False)
+        empty = SimilarResult(exact=None) if with_similar else None
+        return LookupResult(value=empty, source=Source.LOCAL, persisted=False)
 
     fetched = await _fetch_term(session, term_or_url, with_similar=with_similar)
     persisted = await _maybe_persist(
@@ -850,18 +846,18 @@ async def get_term(
         persist=persist,
         language=session.language.value,
     )
-    return TermLookup(value=fetched, source=Source.LIVE, persisted=persisted)
+    return LookupResult(value=fetched, source=Source.LIVE, persisted=persisted)
 
 
 def _flatten_results(
-    fetched: SearchResult | None | SimilarTerms, *, with_similar: bool
+    fetched: SearchResult | None | SimilarResult, *, with_similar: bool
 ) -> list[SearchResult]:
     """Flatten a `_fetch_term` result into the `SearchResult`(s) `_maybe_persist` should cache."""
     if not with_similar:
-        assert not isinstance(fetched, SimilarTerms)
+        assert not isinstance(fetched, SimilarResult)
         return [fetched] if fetched else []
 
-    assert isinstance(fetched, SimilarTerms)
+    assert isinstance(fetched, SimilarResult)
     exact = [fetched.exact] if fetched.exact is not None else []
     return exact + list(fetched.similar)
 
@@ -875,25 +871,25 @@ async def _fetch_term(
 @typing.overload
 async def _fetch_term(
     session: BrowserSession, term_or_url: str, *, with_similar: typing.Literal[True]
-) -> SimilarTerms: ...
+) -> SimilarResult: ...
 
 
 async def _fetch_term(
     session: BrowserSession, term_or_url: str, *, with_similar: bool = False
-) -> SearchResult | None | SimilarTerms:
+) -> SearchResult | None | SimilarResult:
     """
     Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched.
 
     :param session: An open live `BrowserSession`.
     :param term_or_url: An exact (case-insensitive) term name, or a
         glossary term detail-page URL.
-    :param with_similar: If `True`, return a `SimilarTerms` gathering up to
+    :param with_similar: If `True`, return a `SimilarResult` gathering up to
         `MAX_SIMILAR_TERMS` other results turned up while searching for
         the exact match, instead of just the exact match itself. A direct
-        URL fetch has nothing to search, so `SimilarTerms.similar` is
+        URL fetch has nothing to search, so `SimilarResult.similar` is
         always empty in that case.
-    :return: The exact `SearchResult` match (or `None`), or - with
-        `with_similar=True` - a `SimilarTerms` wrapping the exact match
+    :return: The exact `SearchResult` match (or `None`), or with
+        `with_similar=True`, a `SimilarResult` wrapping the exact match
         (if any) and its alternatives.
     """
     if term_or_url.startswith(("http://", "https://")):
@@ -901,7 +897,7 @@ async def _fetch_term(
             result async for result in live.get_results_from_url(session, term_or_url)
         ]
         result, similar = (results[0], results[0:]) if results else (None, [])
-        return SimilarTerms(exact=result, similar=tuple(similar)) if with_similar else result
+        return SimilarResult(exact=result, similar=tuple(similar)) if with_similar else result
 
     term = term_or_url.strip().lower()
 
@@ -930,7 +926,7 @@ async def _fetch_term(
         (result for result in pool if result.term and result.term.strip().lower() == term), None
     )
     similar = tuple(result for result in pool if result is not exact)[:MAX_SIMILAR_TERMS]
-    return SimilarTerms(exact=exact, similar=similar)
+    return SimilarResult(exact=exact, similar=similar)
 
 
 async def related_terms(
@@ -940,7 +936,7 @@ async def related_terms(
     session: BrowserSession | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
-) -> TermLookup[tuple[RelatedTerm, ...]]:
+) -> LookupResult[tuple[RelatedTerm, ...]]:
     """
     Look up the related terms linked from a single term's definition.
 
@@ -954,14 +950,14 @@ async def related_terms(
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, and a live fetch happens, cache the looked-up
         term's own result into `db`.
-    :return: A `TermLookup` wrapping the related terms found (empty if
+    :return: A `LookupResult` wrapping the related terms found (empty if
         `term_or_url` wasn't found, or was found but links to nothing).
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
     lookup = await get_term(term_or_url, db=db, session=session, source=source, persist=persist)
     related = lookup.value.related if lookup.value is not None else None
-    return TermLookup(value=related or (), source=lookup.source, persisted=lookup.persisted)
+    return LookupResult(value=related or (), source=lookup.source, persisted=lookup.persisted)
 
 
 async def get_random_term(
@@ -972,7 +968,7 @@ async def get_random_term(
     topic: str | None = None,
     persist: bool = False,
     fuzzy: bool = False,
-) -> TermLookup[SearchResult | None]:
+) -> LookupResult[SearchResult | None]:
     """
     Return one randomly chosen term, optionally restricted to a topic.
 
@@ -985,7 +981,7 @@ async def get_random_term(
     :param session: An open live `BrowserSession`.
     :param source: Which source(s) to read from. See the module docstring.
         `Source.AUTO` here means "pick locally if the local database
-        has anything (matching `topic`, if given), otherwise pick live" -
+        has anything (matching `topic`, if given), otherwise pick form the live site,
         not "try local, then live" the way the streaming functions do,
         since a local miss on one random draw says nothing about whether
         the local database is empty.
@@ -996,16 +992,16 @@ async def get_random_term(
         partial names in `topic`.
         Live picks already fuzzy-match topics unconditionally, so this has
         no effect on them.
-    :return: A `TermLookup` wrapping the picked `SearchResult`, or `None` if
+    :return: A `LookupResult` wrapping the picked `SearchResult`, or `None` if
         nothing matched (empty local database/topic, or no live match found).
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given.
     """
-    resolved = _resolve_source(db, session, source)
+    resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
         result = await local_api.get_random_term(db, topic=topic, fuzzy=fuzzy)
-        return TermLookup(value=result, source=Source.LOCAL, persisted=False)
+        return LookupResult(value=result, source=Source.LOCAL, persisted=False)
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
@@ -1016,29 +1012,29 @@ async def get_random_term(
             persist=persist,
             language=session.language.value,
         )
-        return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
+        return LookupResult(value=result, source=Source.LIVE, persisted=persisted)
 
     # AUTO: prefer a local pick when the local database actually has
     # something to pick from; only go live when it doesn't.
     assert db is not None
     result = await local_api.get_random_term(db, topic=topic, fuzzy=fuzzy)
     if result is not None:
-        return TermLookup(value=result, source=Source.LOCAL, persisted=False)
+        return LookupResult(value=result, source=Source.LOCAL, persisted=False)
 
     if session is None:
-        return TermLookup(value=None, source=Source.LOCAL, persisted=False)
+        return LookupResult(value=None, source=Source.LOCAL, persisted=False)
 
     result = await _fetch_random_term(session, topic=topic, sample_size=25)
     persisted = await _maybe_persist(
         db, results=[result] if result else [], persist=persist, language=session.language.value
     )
-    return TermLookup(value=result, source=Source.LIVE, persisted=persisted)
+    return LookupResult(value=result, source=Source.LIVE, persisted=persisted)
 
 
 LETTERS = list(string.ascii_lowercase)
 
 
-def random_letters(n: int | None = None) -> list[str]:
+def _random_letters(n: int | None = None) -> list[str]:
     """Return a shuffled list of letters a-z, optionally truncated to `n` letters."""
     shuffled = LETTERS[:]
     random.shuffle(shuffled)
@@ -1059,7 +1055,7 @@ async def _fetch_random_term(
         # No topic given: shuffle through starting letters until one yields
         # results, since a purely random letter (e.g. an uncommon one) may
         # have no terms at all.
-        for letter in random_letters():
+        for letter in _random_letters():
             url_iter = live.get_terms_urls(session, start_letter=letter, limit=sample_size)
             urls = [url async for url in url_iter]
             if urls:
@@ -1081,7 +1077,7 @@ async def compare(
     session: BrowserSession | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
-) -> dict[str, TermLookup[SearchResult | None]]:
+) -> dict[str, LookupResult[SearchResult | None]]:
     """
     Look up several terms at once, for side-by-side comparison.
 
@@ -1093,8 +1089,8 @@ async def compare(
         is looked up (and, on a live fetch, persisted) individually via
         `get_term`, so an error partway through this call still leaves
         earlier terms' results saved.
-    :return: `{term_or_url: TermLookup}`, in the order `terms` was given.
-        A `TermLookup.value` of `None` means that term wasn't found by the
+    :return: `{term_or_url: LookupResult}`, in the order `terms` was given.
+        A `LookupResult.value` of `None` means that term wasn't found by the
         resolved source(s).
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         or the requested `source` needs one that wasn't given, or `terms` is empty.
@@ -1102,13 +1098,14 @@ async def compare(
     if not terms:
         raise QueryError("`compare()` needs at least one term to look up.")
 
-    _validate_source(db, session, source)
+    validate_source(db, session, source)
     started_at = time.monotonic()
-    results: dict[str, TermLookup[SearchResult | None]] = {}
+    results: dict[str, LookupResult[SearchResult | None]] = {}
     for term in terms:
         results[term] = await get_term(
             term, db=db, session=session, source=source, persist=persist
         )
+
     elapsed = time.monotonic() - started_at
     logger.debug(
         "`compare(%d term(s))` done in %.3fs (avg %.3fs/term)",

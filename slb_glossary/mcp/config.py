@@ -52,7 +52,7 @@ __all__ = [
     "Auth",
     "RateLimit",
     "Hooks",
-    "MCPLogging",
+    "Logging",
     "Streaming",
     "ServerInfo",
     "MCPConfig",
@@ -410,7 +410,7 @@ class Hooks(Updatable):
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class MCPLogging(Updatable):
+class Logging(Updatable):
     """
     Controls where/how `slb_glossary`'s logging is routed for this server process.
 
@@ -559,7 +559,7 @@ class MCPConfig(Updatable):
     hooks: Hooks = dataclasses.field(default_factory=Hooks)
     """Caller-supplied lifecycle and per-call hooks."""
 
-    logging: MCPLogging = dataclasses.field(default_factory=MCPLogging)
+    logging: Logging = dataclasses.field(default_factory=Logging)
     """Logging routing for this server process."""
 
     streaming: Streaming = dataclasses.field(default_factory=Streaming)

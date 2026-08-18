@@ -10,7 +10,7 @@ from slb_glossary.local import sync as sync_api
 from slb_glossary.mcp.config import MCPConfig, Streaming, Tool
 from slb_glossary.mcp.errors import MCPError
 from slb_glossary.mcp.runtime import Runtime
-from slb_glossary.query import Source, TermLookup
+from slb_glossary.query import LookupResult, Source
 from slb_glossary.types import SearchResult
 
 __all__ = [
@@ -66,7 +66,7 @@ it at "auto" unless you specifically need one or the other.
 """
 
 
-def term_lookup_to_dict(lookup: TermLookup[SearchResult | None]) -> dict[str, typing.Any]:
+def term_lookup_to_dict(lookup: LookupResult[SearchResult | None]) -> dict[str, typing.Any]:
     return {
         "value": lookup.value.asdict() if lookup.value is not None else None,
         "source": lookup.source.value,
@@ -74,7 +74,7 @@ def term_lookup_to_dict(lookup: TermLookup[SearchResult | None]) -> dict[str, ty
     }
 
 
-def related_lookup_to_dict(lookup: TermLookup[tuple[typing.Any, ...]]) -> dict[str, typing.Any]:
+def related_lookup_to_dict(lookup: LookupResult[tuple[typing.Any, ...]]) -> dict[str, typing.Any]:
     return {
         "value": [related._asdict() for related in lookup.value],
         "source": lookup.source.value,

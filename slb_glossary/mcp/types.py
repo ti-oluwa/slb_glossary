@@ -1,4 +1,4 @@
-"""Types shared across `slb_glossary.mcp`"""
+"""Datastrutures and types shared across `slb_glossary` MCP API"""
 
 import dataclasses
 import time

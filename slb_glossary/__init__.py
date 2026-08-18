@@ -45,8 +45,8 @@ from .live.browser import (
 )
 from .live.topics import refresh_topics
 from .query import (
+    LookupResult,
     Source,
-    TermLookup,
     compare,
     get_random_term,
     get_term,
@@ -100,7 +100,7 @@ __all__ = [
     "BrowserType",
     "ResourceType",
     "Source",
-    "TermLookup",
+    "LookupResult",
     "search",
     "get_terms_on",
     "get_terms_urls",

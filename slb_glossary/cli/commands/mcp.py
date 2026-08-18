@@ -28,7 +28,7 @@ _APP_PATH_IGNORED_OPTIONS = (
 )
 """
 Option names that only make sense when *building* an `MCPConfig` from
-flags. Thos options are meaningless (and silently ignored, if we let them through) once
+flags. Those options are meaningless (and silently ignored, if we let them through) once
 `APP_PATH` hands over an already-built app.
 """
 
@@ -244,7 +244,7 @@ def serve(
         timeouts=Timeout(default=timeout or None),
         auth=auth_config,
         rate_limit=rate_limit,
-        logging=MCPConfig.default().logging.update(level=log_level),
+        logging=MCPConfig.default(language=language).logging.update(level=log_level),
     )
     app = MCPApp(config)
     run_async(app.run_async(**transport_kwargs))

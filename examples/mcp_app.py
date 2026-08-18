@@ -13,11 +13,10 @@ config = slb_mcp.MCPConfig(
         ),
     ),
     local=slb_mcp.LocalAccess(allow_write=True),
-    tools=slb_mcp.Tool.SEARCH | slb_mcp.Tool.SYNC,
+    tools=slb_mcp.Tool.ALL,
     streaming=slb_mcp.Streaming(allow_override=False),
-    logging=slb_mcp.MCPLogging(
-        sinks=[slb.log.FileSink("./example.mcp.log"), slb.log.StderrSink()]
-    ),
+    timeouts=slb_mcp.Timeout(default=300),
+    logging=slb_mcp.Logging(sinks=[slb.log.FileSink("./example.mcp.log"), slb.log.StderrSink()]),
 )
 app = slb_mcp.MCPApp(config)
 

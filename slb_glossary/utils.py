@@ -45,20 +45,15 @@ class Updatable:
     ```
 
     For a **frozen** dataclass, `update` returns a new instance with
-    `changes` applied - `self` is untouched, exactly like
+    `changes` applied so `self` is untouched, exactly like
     `dataclasses.replace`, just shorter to write and to chain
-    (`config.update(a=1).update(b=2)`). For a **non-frozen** one, `update`
-    mutates `self` in place, field by field, and returns `self` - so a
-    caller that doesn't know (or care) whether a particular config is
-    frozen can still call `.update(...)` and either use the return value
-    or not, uniformly.
+    (`config.update(a=1).update(b=2)`).
 
-    `changes` are applied via `dataclasses.replace`/`setattr`, not
-    `__init__`, so a class's own `__post_init__` still runs (for a frozen
-    dataclass, since `replace` re-constructs the instance) or doesn't (for
-    a mutable one, since plain attribute assignment doesn't
-    re-invoke `__init__`) - matching each construction style's own normal
-    behavior, `update` doesn't change that.
+    For a **non-frozen** one, `update` mutates `self` in place, field by field,
+    and returns `self` so a caller that doesn't know (or care) whether a particular config is
+    frozen can still call `.update(...)` and either use the return value or not, uniformly.
+
+    `changes` are applied via `dataclasses.replace`/`setattr`.
 
     Declare this *before* other bases so it doesn't shadow a dataclass
     field actually named `update`, e.g. `class Foo(Updatable): ...` not
@@ -80,7 +75,7 @@ class Updatable:
             or `changes` includes a name that isn't one of its fields.
         """
         if not dataclasses.is_dataclass(self):
-            raise TypeError(f"{type(self).__name__}.update() requires a dataclasses.dataclass.")
+            raise TypeError(f"`{type(self).__name__}.update()` requires a dataclasses.dataclass.")
         if not changes:
             return self
 
@@ -88,7 +83,7 @@ class Updatable:
         unknown = changes.keys() - valid
         if unknown:
             raise TypeError(
-                f"{type(self).__name__}.update() got unexpected field(s): "
+                f"`{type(self).__name__}.update()` got unexpected field(s): "
                 f"{', '.join(sorted(unknown))}. Expected one of: {', '.join(sorted(valid))}."
             )
 
