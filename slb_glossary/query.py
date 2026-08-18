@@ -93,13 +93,13 @@ database's best match isn't trusted alone and a live search is added on.
 
 SIMILAR_TERMS_POOL_SIZE = 5
 """
-Live results `_fetch_live_term(with_similar=True)` pulls from the glossary
+Live results `_fetch_term(with_similar=True)` pulls from the glossary
 site to look for an exact match in and, when `with_similar` is `True`,
 to draw `SimilarTerms.similar` alternatives from.
 """
 
 MAX_SIMILAR_TERMS = 3
-"""Max number of alternatives `_fetch_live_term`/`get_term` return in `SimilarTerms.similar`."""
+"""Max number of alternatives `_fetch_term`/`get_term` return in `SimilarTerms.similar`."""
 
 
 class Source(enum.Enum):
@@ -143,7 +143,7 @@ class SimilarTerms:
     """
     The outcome of a `with_similar=True` term lookup: an exact match, plus alternatives.
 
-    Returned by `_fetch_live_term`/`get_term` in place of a bare
+    Returned by `_fetch_term`/`get_term` in place of a bare
     `SearchResult | None` when the caller opted into also seeing
     similarly-named results - handy for a "did you mean" prompt when
     `exact` turns out to be `None`.
@@ -824,7 +824,7 @@ async def get_term(
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
-        fetched = await _fetch_live_term(session, term_or_url, with_similar=with_similar)
+        fetched = await _fetch_term(session, term_or_url, with_similar=with_similar)
         persisted = await _maybe_persist(
             db,
             results=_flatten_results(fetched, with_similar=with_similar),
@@ -843,7 +843,7 @@ async def get_term(
         empty = SimilarTerms(exact=None) if with_similar else None
         return TermLookup(value=empty, source=Source.LOCAL, persisted=False)
 
-    fetched = await _fetch_live_term(session, term_or_url, with_similar=with_similar)
+    fetched = await _fetch_term(session, term_or_url, with_similar=with_similar)
     persisted = await _maybe_persist(
         db,
         results=_flatten_results(fetched, with_similar=with_similar),
@@ -856,7 +856,7 @@ async def get_term(
 def _flatten_results(
     fetched: SearchResult | None | SimilarTerms, *, with_similar: bool
 ) -> list[SearchResult]:
-    """Flatten a `_fetch_live_term` result into the `SearchResult`(s) `_maybe_persist` should cache."""
+    """Flatten a `_fetch_term` result into the `SearchResult`(s) `_maybe_persist` should cache."""
     if not with_similar:
         assert not isinstance(fetched, SimilarTerms)
         return [fetched] if fetched else []
@@ -867,18 +867,18 @@ def _flatten_results(
 
 
 @typing.overload
-async def _fetch_live_term(
+async def _fetch_term(
     session: BrowserSession, term_or_url: str, *, with_similar: typing.Literal[False] = False
 ) -> SearchResult | None: ...
 
 
 @typing.overload
-async def _fetch_live_term(
+async def _fetch_term(
     session: BrowserSession, term_or_url: str, *, with_similar: typing.Literal[True]
 ) -> SimilarTerms: ...
 
 
-async def _fetch_live_term(
+async def _fetch_term(
     session: BrowserSession, term_or_url: str, *, with_similar: bool = False
 ) -> SearchResult | None | SimilarTerms:
     """
@@ -1009,7 +1009,7 @@ async def get_random_term(
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
-        result = await _fetch_live_get_random_term(session, topic=topic)
+        result = await _fetch_random_term(session, topic=topic)
         persisted = await _maybe_persist(
             db,
             results=[result] if result else [],
@@ -1028,7 +1028,7 @@ async def get_random_term(
     if session is None:
         return TermLookup(value=None, source=Source.LOCAL, persisted=False)
 
-    result = await _fetch_live_get_random_term(session, topic=topic, sample_size=25)
+    result = await _fetch_random_term(session, topic=topic, sample_size=25)
     persisted = await _maybe_persist(
         db, results=[result] if result else [], persist=persist, language=session.language.value
     )
@@ -1047,7 +1047,7 @@ def random_letters(n: int | None = None) -> list[str]:
     return shuffled
 
 
-async def _fetch_live_get_random_term(
+async def _fetch_random_term(
     session: BrowserSession, *, topic: str | None, sample_size: int = 25
 ) -> SearchResult | None:
     """Sample up to `sample_size` live term URLs (by topic, or a random letter) and fetch one."""
