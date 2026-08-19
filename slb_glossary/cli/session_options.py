@@ -33,12 +33,14 @@ SESSION_PARAM_TO_CONFIG_KEY: dict[str, str] = {
     "block_resources": "session.block_resources",
     "timeout": "session.timeout",
     "terms_per_tab": "session.terms_per_tab",
+    "max_pages": "session.max_pages",
     "settle_timeout": "session.settle_timeout",
     "poll_interval": "session.poll_interval",
     "executable_path": "session.executable_path",
     "proxy": "session.proxy",
     "viewport": "session.viewport",
     "use_stealth": "session.use_stealth",
+    "initialize": "session.initialize",
     "retry_attempts": "session.retry.attempts",
     "retry_base_delay": "session.retry.base_delay",
     "retry_backoff": "session.retry.backoff",
@@ -168,6 +170,16 @@ def session_options(func: F) -> F:
             help="Number of results the glossary site returns per results page.",
         ),
         click.option(
+            "--max-pages",
+            type=int,
+            default=6,
+            show_default=True,
+            help=(
+                "Maximum browser pages the session keeps open at once. Raise "
+                "this if you use a higher --concurrency than the default covers."
+            ),
+        ),
+        click.option(
             "--settle-timeout",
             type=float,
             default=8000,
@@ -207,6 +219,17 @@ def session_options(func: F) -> F:
             default=True,
             show_default=True,
             help="Apply Playwright stealth patches to the browser context.",
+        ),
+        click.option(
+            "--initialize/--no-initialize",
+            "initialize",
+            default=True,
+            show_default=True,
+            help=(
+                "Load the glossary's topics/size as soon as the session "
+                "opens. Leave this on unless you have a specific reason to "
+                "defer it."
+            ),
         ),
         click.option(
             "--log-to",
@@ -337,6 +360,14 @@ def resolve_session_kwargs(
     config file sets the defaults for every run and CLI flags are one-off
     overrides for this run only; nothing is written back to the file.
 
+    If the command has an explicit `--concurrency` (e.g. `search`, `terms`,
+    `sync`/`update`) and the user typed it without also typing `--max-pages`,
+    `max_pages` is bumped up to cover it (`concurrency + 1`, the extra one
+    for a search page paging through tabs alongside the workers) rather than
+    leaving it at whatever `--config`/the built-in default says. An
+    explicit `--max-pages` always wins over this; with neither given,
+    both stay at their config/default values untouched.
+
     :param ctx: The current click context, used to tell an explicitly
         passed flag from click's own default via `ctx.get_parameter_source`.
     :param params: The command's parsed parameters, including `config_path`
@@ -357,6 +388,21 @@ def resolve_session_kwargs(
             if not value:
                 continue
         resolved.set(config_key, value)
+
+    if (
+        "concurrency" in params
+        and ctx.get_parameter_source("concurrency") == click.core.ParameterSource.COMMANDLINE
+        and ctx.get_parameter_source("max_pages") != click.core.ParameterSource.COMMANDLINE
+    ):
+        needed = (params["concurrency"] or 1) + 1
+        if needed > resolved.session.max_pages:
+            logger.debug(
+                "Bumping session.max_pages %d -> %d to cover --concurrency=%r",
+                resolved.session.max_pages,
+                needed,
+                params["concurrency"],
+            )
+            resolved.set("session.max_pages", needed)
 
     kwargs = resolved.session_kwargs()
     if kwargs.get("log_sink"):

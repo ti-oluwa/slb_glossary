@@ -1,0 +1,181 @@
+diff --git a/slb_glossary/cli/commands/local.py b/slb_glossary/cli/commands/local.py
+index 40e841d..650e66a 100644
+--- a/slb_glossary/cli/commands/local.py
++++ b/slb_glossary/cli/commands/local.py
+@@ -39,6 +39,11 @@ def show_path(**params: typing.Any) -> None:
+     """
+     Print the resolved local database and metadata file paths.
+ 
++    If you move or back these up by hand, also bring along the
++    database's `-wal`/`-shm` sidecar files (it runs in WAL mode) - or
++    close the database first (e.g. don't have anything else using it) so
++    SQLite folds them back into the main file before you copy it.
++
+     \b
+     Examples:
+       slb-glossary local path
+@@ -53,6 +58,11 @@ def show_path(**params: typing.Any) -> None:
+     db_path, metadata_path = run_async(_run())
+     click.echo(f"Database: {db_path}")
+     click.echo(f"Metadata: {metadata_path}")
++    click.echo(
++        f"(WAL sidecar files, if present: {db_path}-wal, {db_path}-shm - "
++        "move/copy these together with the database above, and metadata "
++        "separately; see `slb-glossary local path --help`.)"
++    )
+ 
+ 
+ @local.command("stats")
+diff --git a/slb_glossary/local/connection.py b/slb_glossary/local/connection.py
+index 56a943d..6b2c1ba 100644
+--- a/slb_glossary/local/connection.py
++++ b/slb_glossary/local/connection.py
+@@ -27,6 +27,39 @@ def _resolve_metadata_path(
+     return db_path.with_name(db_path.stem + ".metadata.json")
+ 
+ 
++async def _enable_wal(connection: aiosqlite.Connection) -> str:
++    """
++    Switch `connection` to WAL journaling and return the mode SQLite actually applied.
++
++    WAL keeps a database usable by readers while a write is in progress
++    (readers no longer block on writers), at the cost of two sidecar files
++    living next to the main database file for as long as it's in active
++    use: `<db>-wal` (the write-ahead log itself) and `<db>-shm` (the
++    shared-memory index into it). Both are ordinary SQLite bookkeeping
++    files, not optional extras - see `open_db`'s docstring for what that
++    means for backing up or moving a database.
++
++    :param connection: An open `aiosqlite` connection, not yet used for
++        any other statement.
++    :return: The journal mode SQLite reports after the request, e.g.
++        `"wal"`. Not always what was asked for - some filesystems (network
++        shares in particular) don't support WAL and SQLite silently falls
++        back to another mode instead of erroring.
++    """
++    cursor = await connection.execute("PRAGMA journal_mode=WAL")
++    row = await cursor.fetchone()
++    await cursor.close()
++    mode = str(row[0]) if row else "unknown"
++    if mode.lower() != "wal":
++        logger.warning(
++            "Requested WAL journal mode but SQLite applied %r instead "
++            "(common on filesystems, e.g. some network shares, that don't "
++            "support WAL). Continuing with that mode.",
++            mode,
++        )
++    return mode
++
++
+ async def open_db(
+     path: str | pathlib.Path | None = None,
+     *,
+@@ -35,6 +68,22 @@ async def open_db(
+     """
+     Open (creating if needed) the local search database at `path`.
+ 
++    The database runs in WAL journal mode (see `_enable_wal`), which adds
++    two sidecar files next to `path` while it's in use: `<path>-wal` and
++    `<path>-shm`. **If you move, copy, or back up the database file
++    yourself** (outside of `slb_glossary`), move those two alongside it -
++    a `.db` file copied on its own while its `-wal` still holds
++    unflushed writes is missing data. Move `metadata_path` (or its
++    default, `<path>.metadata.json` / `metadata.json`) along with it too;
++    it's a separate file and won't follow the `.db` file automatically.
++    `slb_glossary.local.flush`/`reset` checkpoint and truncate the WAL
++    file as part of what they do, so a freshly flushed/reset database has
++    little or nothing outstanding in `-wal` to lose - but closing the
++    database first (`close_db`, or exiting a `database(...)` block) is
++    still the simplest way to guarantee a clean, single-file snapshot,
++    since SQLite folds the WAL back into the main file and removes the
++    sidecar files itself once the last connection to it closes.
++
+     :param path: Path to the SQLite database file. Defaults to
+         `slb_glossary.paths.default_db_path()` (the OS-appropriate user
+         data directory - see `slb_glossary.paths`).
+@@ -56,12 +105,17 @@ async def open_db(
+ 
+     connection = await aiosqlite.connect(resolved_db_path)
+     connection.row_factory = aiosqlite.Row
++    journal_mode = await _enable_wal(connection)
+     await initialize(connection)
+ 
+     if not resolved_metadata_path.exists():
+         Metadata().save(resolved_metadata_path)
+ 
+-    logger.info("Opened local glossary database at %s", resolved_db_path)
++    logger.info(
++        "Opened local glossary database at %s (journal_mode=%s)",
++        resolved_db_path,
++        journal_mode,
++    )
+     return Database(
+         connection=connection,
+         db_path=resolved_db_path,
+@@ -73,7 +127,12 @@ async def close_db(db: Database) -> None:
+     """
+     Close `db`'s connection.
+ 
+-    Safe to call more than once; later calls are no-ops.
++    Safe to call more than once; later calls are no-ops. If this is the
++    last open connection to `db.db_path`, SQLite folds its `-wal` sidecar
++    file back into the main database file and removes both `-wal`/`-shm`
++    as part of closing - so a database closed this way is a clean,
++    single-file snapshot, safe to copy or back up as just `db_path` (plus
++    `metadata_path`) with nothing else to bring along.
+ 
+     :param db: The local database to close.
+     """
+diff --git a/slb_glossary/local/maintenance.py b/slb_glossary/local/maintenance.py
+index 8d7fbec..2e090ac 100644
+--- a/slb_glossary/local/maintenance.py
++++ b/slb_glossary/local/maintenance.py
+@@ -17,12 +17,19 @@ async def flush(db: Database) -> None:
+     timestamps intact e.g. right before a fresh `slb_glossary.local.sync_all`.
+     Use `reset` instead to also forget the local database's sync history.
+ 
++    Also checkpoints and truncates the database's `-wal` file (see
++    `slb_glossary.local.open_db`'s docstring on why it has one) as part of
++    the `VACUUM`, so a freshly flushed database is left with little or
++    nothing outstanding in `-wal`/`-shm` - handy if you're about to copy
++    or back up `db.db_path` right after.
++
+     :param db: The local database to clear.
+     """
+     await db.connection.execute("DELETE FROM vectors")
+     await db.connection.execute("DELETE FROM terms")
+     await db.connection.commit()
+     await db.connection.execute("VACUUM")
++    await db.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+     logger.info("Flushed local glossary database at %s", db.db_path)
+ 
+ 
+@@ -30,6 +37,9 @@ async def reset(db: Database) -> None:
+     """
+     Flush the local database and reset its `metadata.json` (sync history) to defaults.
+ 
++    Includes everything `flush` does, including the `-wal`/`-shm`
++    checkpoint/truncate.
++
+     :param db: The local database to reset.
+     """
+     await flush(db)
+diff --git a/slb_glossary/local/types.py b/slb_glossary/local/types.py
+index d70d816..9bf590b 100644
+--- a/slb_glossary/local/types.py
++++ b/slb_glossary/local/types.py
+@@ -21,6 +21,14 @@ class Database:
+     An open connection to the local search database.
+ 
+     Obtain one with `slb_glossary.local.open_db`/`database`.
++
++    Runs in WAL journal mode, so while open it has two sidecar files next
++    to `db_path`: `<db_path>-wal` and `<db_path>-shm`. Moving or copying
++    `db_path` by hand (rather than through `slb_glossary.local`) means
++    moving those two along with it, and `metadata_path` too - it's a
++    separate file and isn't picked up automatically. See `open_db`'s
++    docstring for the full story, including how to avoid the sidecar
++    files altogether (close the database first).
+     """
+ 
+     connection: aiosqlite.Connection

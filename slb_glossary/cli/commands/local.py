@@ -39,6 +39,11 @@ def show_path(**params: typing.Any) -> None:
     """
     Print the resolved local database and metadata file paths.
 
+    If you move or back these up by hand, also bring along the
+    database's `-wal`/`-shm` sidecar files (it runs in WAL mode) - or
+    close the database first (e.g. don't have anything else using it) so
+    SQLite folds them back into the main file before you copy it.
+
     \b
     Examples:
       slb-glossary local path
@@ -53,6 +58,11 @@ def show_path(**params: typing.Any) -> None:
     db_path, metadata_path = run_async(_run())
     click.echo(f"Database: {db_path}")
     click.echo(f"Metadata: {metadata_path}")
+    click.echo(
+        f"(WAL sidecar files, if present: {db_path}-wal, {db_path}-shm - "
+        "move/copy these together with the database above, and metadata "
+        "separately; see `slb-glossary local path --help`.)"
+    )
 
 
 @local.command("stats")

@@ -15,6 +15,17 @@ class BrowserError(SLBGlossaryError):
     """Raised when the browser automation layer fails outside of a network issue."""
 
 
+class SessionNotInitializedError(BrowserError):
+    """
+    Raised when a search function is called on a `Session` that hasn't
+    loaded its topics/size yet.
+
+    Call `Session.initialize()` first, or open the session with
+    `open_session(..., initialize=True)` (the default) so it's ready to
+    use as soon as it's returned.
+    """
+
+
 class ParsingError(SLBGlossaryError):
     """Raised when a glossary page did not contain the markup a parser expected."""
 

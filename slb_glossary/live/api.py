@@ -1,7 +1,6 @@
 """Search engine API for the SLB glossary."""
 
 import asyncio
-import dataclasses
 import logging
 import math
 import time
@@ -9,6 +8,7 @@ import typing
 
 from patchright.async_api import Page
 
+from slb_glossary.errors import SessionNotInitializedError
 from slb_glossary.live.browser import Session
 from slb_glossary.live.grammar import resolve_grammatical_label
 from slb_glossary.live.parsers import (
@@ -170,7 +170,10 @@ async def get_terms_urls(
     :raises ValueError: If `limit` is given and is less than 1.
     """
     if not session.initialized:
-        raise
+        raise SessionNotInitializedError(
+            "Session is not initialized; call `session.initialize()` first "
+            "or open it with `open_session(..., initialize=True)`."
+        )
     if limit is not None and limit < 1:
         raise ValueError("`limit` must be greater than 0")
     if not topic and not (query or start_letter):
@@ -189,18 +192,24 @@ async def get_terms_urls(
     yielded = 0
     tab = 1
     max_tabs: int | None = None
-    # The glossary auto-runs an unfiltered query as soon as the search
-    # screen loads (that's what populates the facet panel), so the page
-    # always has *some* results-panel state to diff a filtered search
-    # against, so we read it now rather than starting from an empty baseline.
-    # An empty baseline previously meant "nothing to wait for", so the
-    # very first search of every session read that pre-filter panel
-    # before the site's JS had applied the query. Which will look exactly
-    # like every search returning the same (default) results.
-    previous_links = await get_result_links(session.page)
-    previous_header = await get_results_header_text(session.page)
-
+    # This generator owns `page` for its entire lifetime: every tab it
+    # pages through, and every pause while the caller processes a URL we
+    # already yielded, happens on this same page. It's never handed off
+    # to (or navigated by) anything else, so nothing can pull the rug out
+    # from under the SPA search state between one `yield` and the next.
+    page = await session.new_page()
     try:
+        # The glossary auto-runs an unfiltered query as soon as the search
+        # screen loads (that's what populates the facet panel), so the page
+        # always has *some* results-panel state to diff a filtered search
+        # against, so we read it now rather than starting from an empty baseline.
+        # An empty baseline previously meant "nothing to wait for", so the
+        # very first search of every session read that pre-filter panel
+        # before the site's JS had applied the query. Which will look exactly
+        # like every search returning the same (default) results.
+        previous_links = await get_result_links(page)
+        previous_header = await get_results_header_text(page)
+
         while True:
             pager_query = build_pager_query(tab_number=tab, terms_per_tab=session.terms_per_tab)
             url = build_search_url(
@@ -213,6 +222,7 @@ async def get_terms_urls(
             links, header_text = await _wait_for_settle(
                 session,
                 url=url,
+                page=page,
                 previous_links=previous_links,
                 previous_header=previous_header,
             )
@@ -225,7 +235,7 @@ async def get_terms_urls(
                 logger.debug("No results header on tab %d, stopping", tab)
                 return
 
-            total_terms = await get_total_term_count(session.page)
+            total_terms = await get_total_term_count(page)
             if total_terms is None:
                 logger.debug("Could not read a total term count on tab %d, stopping", tab)
                 return
@@ -255,6 +265,7 @@ async def get_terms_urls(
                 return
             tab += 1
     finally:
+        await page.close()
         elapsed = time.monotonic() - started_at
         logger.debug(
             "`get_terms_urls` done: %d url(s) across %d tab(s) in %.3fs (avg %.3fs/url)",
@@ -266,7 +277,7 @@ async def get_terms_urls(
 
 
 async def get_results_from_url(
-    session: Session, url: str, *, topic: str | None = None
+    session: Session, url: str, *, topic: str | None = None, page: Page | None = None
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Load a term detail page and lazily yield each definition found on it.
@@ -274,15 +285,17 @@ async def get_results_from_url(
     A term can carry several definitions, one per topic it appears under;
     this yields one `SearchResult` per definition.
 
-    :param session: An open glossary session. Its `session.page` is
-        navigated directly. Use a session with a dedicated page (e.g. one
-        of the child sessions `get_results_from_urls` opens) if you're
-        fetching several URLs concurrently.
+    :param session: An open glossary session.
     :param url: A term detail page URL, as yielded by `get_terms_urls`.
     :param topic: If a definition's source topic matches this topic
         (or one of several comma-separated topics), that resolved topic
         name is used for its `SearchResult.topic` instead of the topic
         parsed off the page.
+    :param page: A page to navigate to `url` on. When given, it's assumed
+        to be owned by the caller (e.g. a worker page reused across
+        several calls) and is left open when this generator finishes. When
+        omitted, a page is checked out from `session` for this call alone
+        and closed before returning.
     :yield: One `SearchResult` per definition found on the page. Each
         result's `image`/`image_caption` reflect *that definition's own*
         section, independently of any other section on the page, and is `None`
@@ -291,71 +304,79 @@ async def get_results_from_url(
         has no related-term links.
     """
     if not session.initialized:
-        raise
+        raise SessionNotInitializedError(
+            "Session is not initialized; call `session.initialize()` first "
+            "or open it with `open_session(..., initialize=True)`."
+        )
     resolved_topic = get_topic_match(session.topics, topic) if topic else None
 
     started_at = time.monotonic()
-    await goto(session, url)
-    term_name = await get_term_name(session.page)
-    detail_sections = await get_term_detail_blocks(session.page)
-    if not term_name or not detail_sections:
-        logger.debug("No definitions found at %s (%.3fs)", url, time.monotonic() - started_at)
-        return
+    owns_page = page is None
+    current_page = await goto(session, url, page=page)
+    try:
+        term_name = await get_term_name(current_page)
+        detail_sections = await get_term_detail_blocks(current_page)
+        if not term_name or not detail_sections:
+            logger.debug("No definitions found at %s (%.3fs)", url, time.monotonic() - started_at)
+            return
 
-    # One illustrative image per definition section. A term with
-    # several definitions can have a different image (or none)
-    # per section. Indices line up with `detail_sections` since
-    # both come from the same repeated DOM wrapper.
-    section_images = await get_term_images(session.page)
+        # One illustrative image per definition section. A term with
+        # several definitions can have a different image (or none)
+        # per section. Indices line up with `detail_sections` since
+        # both come from the same repeated DOM wrapper.
+        section_images = await get_term_images(current_page)
 
-    yielded = 0
-    for index, section_blocks in enumerate(detail_sections):
-        if len(section_blocks) < 2:
-            continue
+        yielded = 0
+        for index, section_blocks in enumerate(detail_sections):
+            if len(section_blocks) < 2:
+                continue
 
-        summary_line = section_blocks[0].text
-        definition = (
-            section_blocks[2].text
-            if len(section_blocks) > 2 and section_blocks[1].text == ""
-            else section_blocks[1].text
+            summary_line = section_blocks[0].text
+            definition = (
+                section_blocks[2].text
+                if len(section_blocks) > 2 and section_blocks[1].text == ""
+                else section_blocks[1].text
+            )
+            related = _find_related_links(section_blocks) or None
+
+            summary_words = summary_line.split()
+            label_abbreviation = summary_words[1] if len(summary_words) > 1 else ""
+            grammatical_label = resolve_grammatical_label(session.language, label_abbreviation)
+
+            if resolved_topic and resolved_topic.lower() in summary_line.lower():
+                topic = resolved_topic
+            else:
+                topic = summary_line.split(".")[-1].strip().removeprefix("[").removesuffix("]")
+
+            section_image = section_images[index] if index < len(section_images) else None
+            image_url, image_caption = (
+                (section_image.url, section_image.caption)
+                if section_image is not None
+                else (None, None)
+            )
+
+            yielded += 1
+            yield SearchResult(
+                term=term_name,
+                definition=definition,
+                grammatical_label=grammatical_label,
+                topic=topic,
+                url=url,
+                image=image_url,
+                image_caption=image_caption,
+                related=related,
+            )
+
+        logger.debug(
+            "Fetched %r: %d definition(s) from %s in %.3fs",
+            term_name,
+            yielded,
+            url,
+            time.monotonic() - started_at,
         )
-        related = _find_related_links(section_blocks) or None
-
-        summary_words = summary_line.split()
-        label_abbreviation = summary_words[1] if len(summary_words) > 1 else ""
-        grammatical_label = resolve_grammatical_label(session.language, label_abbreviation)
-
-        if resolved_topic and resolved_topic.lower() in summary_line.lower():
-            topic = resolved_topic
-        else:
-            topic = summary_line.split(".")[-1].strip().removeprefix("[").removesuffix("]")
-
-        section_image = section_images[index] if index < len(section_images) else None
-        image_url, image_caption = (
-            (section_image.url, section_image.caption)
-            if section_image is not None
-            else (None, None)
-        )
-
-        yielded += 1
-        yield SearchResult(
-            term=term_name,
-            definition=definition,
-            grammatical_label=grammatical_label,
-            topic=topic,
-            url=url,
-            image=image_url,
-            image_caption=image_caption,
-            related=related,
-        )
-
-    logger.debug(
-        "Fetched %r: %d definition(s) from %s in %.3fs",
-        term_name,
-        yielded,
-        url,
-        time.monotonic() - started_at,
-    )
+    finally:
+        if owns_page:
+            await current_page.close()
 
 
 async def get_results_from_urls(
@@ -369,23 +390,25 @@ async def get_results_from_urls(
     """
     Fetch term detail pages for `urls` and yield their definitions.
 
-    With `concurrency` > 1, extra browser pages are opened on `session`'s
-    existing browser context (child pages of the same session, not new
-    sessions so they share cookies/auth/stealth patches) so several term
-    pages can be fetched concurrently. Results are still yielded one at a
-    time as they become available, not collected into batches, though not
-    necessarily in the same order as `urls` when running concurrently.
+    With `concurrency` > 1, `concurrency` worker pages are opened on
+    `session` (via `session.new_page()`, so they share cookies/auth/stealth
+    patches with the rest of the session) so several term pages can be
+    fetched in parallel. Each worker reuses its own page across every URL
+    it handles rather than opening a fresh one per URL. Results are still
+    yielded one at a time as they become available, not collected into
+    batches, though not necessarily in the same order as `urls` when
+    running concurrently.
 
-    :param session: An open glossary session. With `concurrency` > 1, its
-        `session.page` becomes one of several worker pages; the others are
-        opened and closed by this function.
+    :param session: An open glossary session. `session.max_pages` must be
+        large enough to cover `concurrency` worker pages, plus one more if
+        `urls` is a still-paging `get_terms_urls` generator holding its
+        own page open at the same time.
     :param urls: Term detail page URLs to fetch, e.g. from `get_terms_urls`.
         May be a plain iterable or an async iterable (so a still-paging
         `get_terms_urls` generator can be passed straight through).
     :param topic: Passed through to `get_results_from_url` for each URL.
     :param concurrency: Number of term detail pages to fetch in parallel.
-        `1` (the default) fetches sequentially on `session.page`, with
-        identical behavior to calling `get_results_from_url` in a loop.
+        `1` (the default) fetches sequentially on a single page.
     :param first_only: If `True`, yield only the first definition found on
         each page rather than every definition on it (used by
         `get_terms_on`, which wants one result per term).
@@ -393,7 +416,10 @@ async def get_results_from_urls(
     :raises ValueError: If `concurrency` is less than 1.
     """
     if not session.initialized:
-        raise
+        raise SessionNotInitializedError(
+            "Session is not initialized; call `session.initialize()` first "
+            "or open it with `open_session(..., initialize=True)`."
+        )
     if concurrency < 1:
         raise ValueError("`concurrency` must be at least 1")
 
@@ -402,14 +428,16 @@ async def get_results_from_urls(
     url_iter = as_async_iterator(urls)
 
     if concurrency == 1:
+        page = await session.new_page()
         try:
             async for url in url_iter:
-                async for result in get_results_from_url(session, url, topic=topic):
+                async for result in get_results_from_url(session, url, topic=topic, page=page):
                     yielded += 1
                     yield result
                     if first_only:
                         break
         finally:
+            await page.close()
             elapsed = time.monotonic() - started_at
             logger.debug(
                 "`get_results_from_urls` (sequential) done: %d result(s) in %.3fs (avg %.3fs/result)",
@@ -419,13 +447,10 @@ async def get_results_from_urls(
             )
         return
 
-    # One worker reuses `session.page`; the rest get their own page on the
-    # same browser context, so every worker can navigate independently
-    # without racing over a single shared page.
-    extra_pages = [await session.context.new_page() for _ in range(concurrency - 1)]
-    worker_sessions: list[Session] = [session]
-    worker_sessions.extend(dataclasses.replace(session, page=page) for page in extra_pages)
-    logger.debug("Fetching with %d concurrent worker(s)", len(worker_sessions))
+    # Every worker gets its own page on the session's context, reused
+    # across every URL it handles, so workers never race over a shared page.
+    worker_pages = [await session.new_page() for _ in range(concurrency)]
+    logger.debug("Fetching with %d concurrent worker(s)", len(worker_pages))
 
     url_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=concurrency * 2)
     result_queue: asyncio.Queue[SearchResult | None] = asyncio.Queue()
@@ -433,17 +458,19 @@ async def get_results_from_urls(
     async def _produce() -> None:
         async for url in url_iter:
             await url_queue.put(url)
-        for _ in worker_sessions:
+        for _ in worker_pages:
             await url_queue.put(None)  # one stop signal per worker
 
-    async def _consume(worker_session: Session) -> None:
+    async def _consume(worker_page: Page) -> None:
         while True:
             url = await url_queue.get()
             if url is None:
                 break
 
             try:
-                async for result in get_results_from_url(worker_session, url, topic=topic):
+                async for result in get_results_from_url(
+                    session, url, topic=topic, page=worker_page
+                ):
                     await result_queue.put(result)
                     if first_only:
                         break
@@ -452,7 +479,7 @@ async def get_results_from_urls(
         await result_queue.put(None)  # this worker is done
 
     producer_task = asyncio.create_task(_produce())
-    worker_tasks = [asyncio.create_task(_consume(worker)) for worker in worker_sessions]
+    worker_tasks = [asyncio.create_task(_consume(worker_page)) for worker_page in worker_pages]
 
     try:
         total_worker_tasks = len(worker_tasks)
@@ -470,8 +497,8 @@ async def get_results_from_urls(
             task.cancel()
 
         await asyncio.gather(producer_task, *worker_tasks, return_exceptions=True)
-        for page in extra_pages:
-            await page.close()
+        for worker_page in worker_pages:
+            await worker_page.close()
 
         elapsed = time.monotonic() - started_at
         logger.debug(

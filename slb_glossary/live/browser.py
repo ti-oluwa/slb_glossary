@@ -78,37 +78,39 @@ CHROMIUM_LAUNCH_ARGS = [
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
 
 
-BLOCKED_HOSTS = frozenset({
-    "google-analytics.com",
-    "googletagmanager.com",
-    "doubleclick.net",
-    "facebook.com",
-    "facebook.net",
-    "connect.facebook.net",
-    "hotjar.com",
-    "segment.io",
-    "segment.com",
-    "clarity.ms",
-    "cookiepro.com",
-    "onetrust.com",
-    "linkedin.com",
-    "googlesyndication.com",
-    "googleadservices.com",
-    "sharethis.com",
-    "csi.slb.com",
-    "segments.company-target.com",
-    "kaltura.com",
-    "peer5.com",
-    "bing.com",
-    "addthis.com",
-    "perk0mean.com",
-    "brightcove.net",
-    "botframework.com",
-    "google.com",
-    "powerplatform.com",
-    "crwdcntrl.net",
-    "arcgis.com",
-})
+BLOCKED_HOSTS = frozenset(
+    {
+        "google-analytics.com",
+        "googletagmanager.com",
+        "doubleclick.net",
+        "facebook.com",
+        "facebook.net",
+        "connect.facebook.net",
+        "hotjar.com",
+        "segment.io",
+        "segment.com",
+        "clarity.ms",
+        "cookiepro.com",
+        "onetrust.com",
+        "linkedin.com",
+        "googlesyndication.com",
+        "googleadservices.com",
+        "sharethis.com",
+        "csi.slb.com",
+        "segments.company-target.com",
+        "kaltura.com",
+        "peer5.com",
+        "bing.com",
+        "addthis.com",
+        "perk0mean.com",
+        "brightcove.net",
+        "botframework.com",
+        "google.com",
+        "powerplatform.com",
+        "crwdcntrl.net",
+        "arcgis.com",
+    }
+)
 
 
 def should_block_host(hostname: str, blocked_hosts: frozenset[str]) -> bool:
@@ -246,6 +248,7 @@ async def open_session(
     block: bool | typing.Iterable[str] | ResourceType = True,
     timeout: float = 60_000,
     terms_per_tab: int = 12,
+    max_pages: int = 6,
     retry: RetryPolicy = DEFAULT_RETRY_POLICY,
     settle_timeout: float = 8000,
     poll_interval: float = 300,
@@ -255,6 +258,7 @@ async def open_session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
+    initialize: bool = True,
     log_sink: LogSink | type[LogSink] | str | pathlib.Path | None = None,
 ) -> SessionT:
     """
@@ -276,6 +280,10 @@ async def open_session(
         before raising a timeout error.
     :param terms_per_tab: Number of results the glossary site returns per
         results page. Only change this if the site's pagination changes.
+    :param max_pages: Maximum number of browser pages the returned session
+        will have open at once (see `Session.max_pages`). Raise this if you
+        plan to call search functions with a `concurrency` higher than the
+        default covers.
     :param retry: Policy for retrying the initial topic-list load if the
         glossary's search widget briefly renders empty. Also stored on the
         returned session for search functions to reuse.
@@ -299,6 +307,11 @@ async def open_session(
         Values passed here are merged with the library defaults.
     :param use_stealth: Whether to apply Playwright stealth patches to the
         browser context. Defaults to `True`.
+    :param initialize: Whether to load the glossary's topics/size before
+        returning the session, so it's immediately ready to pass to search
+        functions. Defaults to `True`. Pass `False` to get the session back
+        faster and call `session.initialize()` yourself later; search
+        functions raise `SessionNotInitializedError` until then.
     :param log_sink: Where to route `slb_glossary`'s logging for the
         lifetime of this process - a `slb_glossary.logging.LogSink`
         instance/class, a file path, `"stderr"`/`"stdout"`, or a
@@ -368,12 +381,16 @@ async def open_session(
             size=0,
             browser_type=browser_type,
             terms_per_tab=terms_per_tab,
+            max_pages=max_pages,
             blocked_resources=blocked_resources,
             retry=retry,
             timeout=timeout,
             settle_timeout=settle_timeout,
             poll_interval=poll_interval,
         )
+        if initialize:
+            await session.initialize()
+
         if session.initialized:
             logger.info(
                 "Glossary search session ready in %.3fs: %d topics, %d terms",
@@ -413,7 +430,9 @@ async def close_session(session: Session) -> None:
     closed_started_at = time.monotonic()
     logger.info("Closing glossary search session")
     with contextlib.suppress(Exception):
-        await session.context.close()
+        # Closes every page still checked out of `session.pages`, then
+        # `session.context` itself.
+        await session.close()
     with contextlib.suppress(Exception):
         await session.browser.close()
     with contextlib.suppress(Exception):
@@ -431,6 +450,7 @@ async def session(
     block: bool | typing.Iterable[str] | ResourceType = True,
     timeout: float = 60_000,
     terms_per_tab: int = 12,
+    max_pages: int = 6,
     retry: RetryPolicy = DEFAULT_RETRY_POLICY,
     settle_timeout: float = 8.0,
     poll_interval: float = 0.3,
@@ -440,6 +460,7 @@ async def session(
     launch_kwargs: dict[str, typing.Any] | None = None,
     context_kwargs: dict[str, typing.Any] | None = None,
     use_stealth: bool = True,
+    initialize: bool = True,
     log_sink: LogSink | type[LogSink] | str | pathlib.Path | None = None,
 ) -> typing.AsyncIterator[Session]:
     """
@@ -461,6 +482,8 @@ async def session(
         or pass a `ResourceType` to block.
     :param timeout: Milliseconds to wait for page loads and element lookups.
     :param terms_per_tab: Number of results returned per glossary results page.
+    :param max_pages: Maximum number of browser pages the session will have
+        open at once. See `open_session`.
     :param retry: Policy used when retrying the initial topic-list load.
     :param settle_timeout: Milliseconds to wait for the results list to settle.
     :param poll_interval: Poll interval in milliseconds, used while waiting for results updates.
@@ -478,6 +501,8 @@ async def session(
         Values passed here are merged with the library defaults.
     :param use_stealth: Whether to apply Playwright stealth patches to the
         browser context. Defaults to `True`.
+    :param initialize: Whether to load the glossary's topics/size before
+        yielding the session. See `open_session`.
     :param log_sink: Where to route `slb_glossary`'s logging for this
         process. See `open_session`'s `log_sink` parameter.
 
@@ -491,6 +516,7 @@ async def session(
         block=block,
         timeout=timeout,
         terms_per_tab=terms_per_tab,
+        max_pages=max_pages,
         retry=retry,
         settle_timeout=settle_timeout,
         poll_interval=poll_interval,
@@ -500,6 +526,7 @@ async def session(
         launch_kwargs=launch_kwargs,
         context_kwargs=context_kwargs,
         use_stealth=use_stealth,
+        initialize=initialize,
         log_sink=log_sink,
         session_cls=session_cls,
     )
@@ -559,7 +586,7 @@ async def session_from_config(
 
     The session is always closed on exit, including when the block raises.
     """
-    session = await open_session_from_config(config, **overrides)
+    session = await open_session_from_config(config, session_cls, **overrides)
     try:
         yield session
     finally:

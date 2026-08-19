@@ -21,6 +21,14 @@ class Database:
     An open connection to the local search database.
 
     Obtain one with `slb_glossary.local.open_db`/`database`.
+
+    Runs in WAL journal mode, so while open it has two sidecar files next
+    to `db_path`: `<db_path>-wal` and `<db_path>-shm`. Moving or copying
+    `db_path` by hand (rather than through `slb_glossary.local`) means
+    moving those two along with it, and `metadata_path` too - it's a
+    separate file and isn't picked up automatically. See `open_db`'s
+    docstring for the full story, including how to avoid the sidecar
+    files altogether (close the database first).
     """
 
     connection: aiosqlite.Connection

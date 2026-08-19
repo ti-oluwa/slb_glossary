@@ -93,12 +93,17 @@ async def refresh_topics(session: Session) -> Session:
     """
     started_at = time.monotonic()
     logger.debug("Refreshing topics for session on %s", session.base_url)
-    topics, size = await fetch_topics(
-        session.page,
-        base_url=session.base_url,
-        retry=session.retry,
-        settle_delay=session.settle_timeout,
-    )
+    page = await session.new_page()
+    try:
+        topics, size = await fetch_topics(
+            page,
+            base_url=session.base_url,
+            retry=session.retry,
+            settle_delay=session.settle_timeout,
+        )
+    finally:
+        await page.close()
+
     session.topics = topics
     session.size = size
     logger.debug("Refreshed topics in %.3fs", time.monotonic() - started_at)

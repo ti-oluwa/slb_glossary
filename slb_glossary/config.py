@@ -119,6 +119,24 @@ class BrowserSessionOptions(Updatable):
     terms_per_tab: int = 12
     """Number of results the glossary site returns per results page."""
 
+    max_pages: int = 6
+    """
+    Maximum number of browser pages a session will have open at once. Each
+    independent operation (the tab-paging search page, each concurrent
+    term-fetch worker) checks out its own page, so this should comfortably
+    cover the highest `--concurrency` a command is run with, plus one for
+    a search page paging through tabs at the same time.
+    """
+
+    initialize: bool = True
+    """
+    Whether to eagerly load the glossary's topics/size when a session
+    opens, so it's immediately ready to search. Leave this `True` unless
+    you're opening a session yourself and calling `Session.initialize()`
+    on your own schedule; search functions raise
+    `SessionNotInitializedError` until a session is initialized.
+    """
+
     settle_timeout: float = 8000
     """Milliseconds to wait for the results list to update after a search filter changes."""
 
@@ -184,6 +202,7 @@ class BrowserSessionOptions(Updatable):
             "block": block,
             "timeout": self.timeout,
             "terms_per_tab": self.terms_per_tab,
+            "max_pages": self.max_pages,
             "retry": self.retry.retry_policy(),
             "settle_timeout": self.settle_timeout,
             "poll_interval": self.poll_interval,
@@ -191,6 +210,7 @@ class BrowserSessionOptions(Updatable):
             "proxy": self.proxy,
             "viewport": self.viewport,
             "use_stealth": self.use_stealth,
+            "initialize": self.initialize,
             "log_sink": self.log_sink,
         }
 
