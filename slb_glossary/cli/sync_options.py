@@ -5,7 +5,7 @@ import typing
 import click
 
 from slb_glossary import local
-from slb_glossary.live.browser import BrowserSession
+from slb_glossary.live.browser import Session
 from slb_glossary.local.sync import SyncSummary
 from slb_glossary.local.types import Database
 
@@ -100,13 +100,13 @@ def validate_sync_filters(params: typing.Mapping[str, typing.Any]) -> None:
 
 
 async def run_configured_sync(
-    db: Database, session: BrowserSession, params: typing.Mapping[str, typing.Any]
+    db: Database, session: Session, params: typing.Mapping[str, typing.Any]
 ) -> SyncSummary:
     """
     Dispatch to the right `slb_glossary.local.sync` function for the given filter params.
 
     :param db: The local database to write to.
-    :param session: An open live `BrowserSession` to fetch from.
+    :param session: An open live `Session` to fetch from.
     :param params: The command's parsed parameters, as attached by `sync_filter_options`.
     :return: A summary of the sync.
     """

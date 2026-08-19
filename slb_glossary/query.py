@@ -57,7 +57,7 @@ import typing
 
 from slb_glossary import live
 from slb_glossary.errors import QueryError
-from slb_glossary.live.browser import BrowserSession
+from slb_glossary.live.browser import Session
 from slb_glossary.local import api as local_api
 from slb_glossary.local.types import Database
 from slb_glossary.types import RelatedTerm, SearchResult
@@ -163,7 +163,7 @@ class SimilarResult:
         return self.exact is not None or bool(self.similar)
 
 
-def validate_source(db: Database | None, session: BrowserSession | None, source: Source) -> None:
+def validate_source(db: Database | None, session: Session | None, source: Source) -> None:
     """Validate that `db`/`session` actually support the requested `source`."""
     if db is None and session is None:
         raise QueryError(
@@ -174,10 +174,10 @@ def validate_source(db: Database | None, session: BrowserSession | None, source:
             "`source=Source.LOCAL` requires `db` (a `database()`/`open_db()` Database)."
         )
     if source is Source.LIVE and session is None:
-        raise QueryError("`source=Source.LIVE` requires `session` (an open `BrowserSession`).")
+        raise QueryError("`source=Source.LIVE` requires `session` (an open `Session`).")
 
 
-def resolve_source(db: Database | None, session: BrowserSession | None, source: Source) -> Source:
+def resolve_source(db: Database | None, session: Session | None, source: Source) -> Source:
     """Narrow `Source.AUTO` to a starting concrete source given what's available."""
     validate_source(db, session, source)
     if source is not Source.AUTO:
@@ -257,7 +257,7 @@ async def search(
     query: str,
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     topic: str | None = None,
     start_letter: str | None = None,
@@ -283,7 +283,7 @@ async def search(
     :param query: Free-text query.
     :param db: An open local `Database`. Required for `Source.LOCAL`, and
         used as the primary source (and/or cache target) for `Source.AUTO`.
-    :param session: An open live `BrowserSession`. Required for `Source.LIVE`,
+    :param session: An open live `Session`. Required for `Source.LIVE`,
         and used as the fallback (and/or live source) for `Source.AUTO`.
     :param source: Which source(s) to read from. See the module docstring.
     :param topic: Restrict results to this topic, or several comma-separated topics.
@@ -466,7 +466,7 @@ async def get_terms_on(
     topic: str,
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     start_letter: str | None = None,
     limit: int | None = None,
@@ -483,7 +483,7 @@ async def get_terms_on(
 
     :param topic: Topic name, or several comma-separated topic names.
     :param db: An open local `Database`.
-    :param session: An open live `BrowserSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param start_letter: Restrict results to terms starting with this letter.
     :param limit: Maximum number of terms to yield. `None` for unlimited.
@@ -614,7 +614,7 @@ async def get_terms_on(
 async def get_terms_urls(
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     query: str | None = None,
     topic: str | None = None,
@@ -632,7 +632,7 @@ async def get_terms_urls(
     `search` for `Source.AUTO`.
 
     :param db: An open local `Database`.
-    :param session: An open live `BrowserSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param query: Restrict to a free-text query match.
     :param topic: Restrict to this topic, or several comma-separated topics.
@@ -712,7 +712,7 @@ async def get_terms_urls(
 async def get_topics(
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
 ) -> dict[str, int]:
     """
@@ -725,7 +725,7 @@ async def get_topics(
     :param db: An open local `Database`. Its topic counts only reflect
         terms that have actually been cached locally, which may be a
         subset of the live glossary's full topic list.
-    :param session: An open live `BrowserSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. `Source.AUTO`
         prefers the local database when it has at least one topic, falling
         back to `session.topics` otherwise. See the module docstring.
@@ -757,7 +757,7 @@ async def get_term(
     term_or_url: str,
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: typing.Literal[False] = False,
@@ -769,7 +769,7 @@ async def get_term(
     term_or_url: str,
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: typing.Literal[True],
@@ -780,7 +780,7 @@ async def get_term(
     term_or_url: str,
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: bool = False,
@@ -791,7 +791,7 @@ async def get_term(
     :param term_or_url: An exact (case-insensitive) term name, or a
         glossary term detail-page URL.
     :param db: An open local `Database`.
-    :param session: An open live `BrowserSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, and a live fetch happens, cache its result(s)
         into `db`. This is a single-value lookup, so there's normally only
@@ -865,23 +865,23 @@ def _flatten_results(
 
 @typing.overload
 async def _fetch_term(
-    session: BrowserSession, term_or_url: str, *, with_similar: typing.Literal[False] = False
+    session: Session, term_or_url: str, *, with_similar: typing.Literal[False] = False
 ) -> SearchResult | None: ...
 
 
 @typing.overload
 async def _fetch_term(
-    session: BrowserSession, term_or_url: str, *, with_similar: typing.Literal[True]
+    session: Session, term_or_url: str, *, with_similar: typing.Literal[True]
 ) -> SimilarResult: ...
 
 
 async def _fetch_term(
-    session: BrowserSession, term_or_url: str, *, with_similar: bool = False
+    session: Session, term_or_url: str, *, with_similar: bool = False
 ) -> SearchResult | None | SimilarResult:
     """
     Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched.
 
-    :param session: An open live `BrowserSession`.
+    :param session: An open live `Session`.
     :param term_or_url: An exact (case-insensitive) term name, or a
         glossary term detail-page URL.
     :param with_similar: If `True`, return a `SimilarResult` gathering up to
@@ -933,7 +933,7 @@ async def related_terms(
     term_or_url: str,
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
 ) -> LookupResult[tuple[RelatedTerm, ...]]:
@@ -946,7 +946,7 @@ async def related_terms(
     :param term_or_url: An exact (case-insensitive) term name, or a
         glossary term detail-page URL.
     :param db: An open local `Database`.
-    :param session: An open live `BrowserSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, and a live fetch happens, cache the looked-up
         term's own result into `db`.
@@ -963,7 +963,7 @@ async def related_terms(
 async def get_random_term(
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     topic: str | None = None,
     persist: bool = False,
@@ -978,7 +978,7 @@ async def get_random_term(
     from that topic) and fetches it.
 
     :param db: An open local `Database`.
-    :param session: An open live `BrowserSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
         `Source.AUTO` here means "pick locally if the local database
         has anything (matching `topic`, if given), otherwise pick form the live site,
@@ -1044,7 +1044,7 @@ def _random_letters(n: int | None = None) -> list[str]:
 
 
 async def _fetch_random_term(
-    session: BrowserSession, *, topic: str | None, sample_size: int = 25
+    session: Session, *, topic: str | None, sample_size: int = 25
 ) -> SearchResult | None:
     """Sample up to `sample_size` live term URLs (by topic, or a random letter) and fetch one."""
     urls: list[str] = []
@@ -1072,7 +1072,7 @@ async def compare(
     terms: typing.Sequence[str],
     *,
     db: Database | None = None,
-    session: BrowserSession | None = None,
+    session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
 ) -> dict[str, LookupResult[SearchResult | None]]:
@@ -1081,7 +1081,7 @@ async def compare(
 
     :param terms: Term names (or detail-page URLs) to look up. Order is preserved.
     :param db: An open local `Database`.
-    :param session: An open live `BrowserSession`.
+    :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, cache any live fetches into `db`. Each term
         is looked up (and, on a live fetch, persisted) individually via

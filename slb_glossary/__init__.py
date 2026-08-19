@@ -33,9 +33,9 @@ from .errors import (
     WriterError,
 )
 from .live.browser import (
-    BrowserSession,
     BrowserType,
     ResourceType,
+    Session,
     browser_session,
     close_session,
     open_session,
@@ -77,7 +77,7 @@ __all__ = [
     "close_session",
     "session",
     "session_from_config",
-    "BrowserSession",
+    "Session",
     "Config",
     "Language",
     "SearchResult",

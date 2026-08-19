@@ -3,7 +3,7 @@ Local search database. A SQLite (FTS5) cache of glossary terms, plus an
 optional custom embedding vector store, so repeat lookups don't
 have to keep re-visiting the live site.
 
-Open one with `open_db`/`database`, fill it from a live `BrowserSession`
+Open one with `open_db`/`database`, fill it from a live `Session`
 (with `sync_topics`/`sync_query`/`sync_topic`/`sync_all`) or from your own
 CSV/JSON/XLSX file (`slb_glossary.local.loaders.load_file`), then query
 it with `search`/`get_terms_on`/`get_term`/`get_terms_urls`/`iter_topics`

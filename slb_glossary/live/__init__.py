@@ -1,8 +1,8 @@
 from .api import get_results_from_url, get_results_from_urls, get_terms_on, get_terms_urls, search
 from .browser import (
-    BrowserSession,
     BrowserType,
     ResourceType,
+    Session,
     browser_session,
     close_session,
     open_session,
@@ -25,7 +25,7 @@ __all__ = [
     "open_session_from_config",
     "ResourceType",
     "BrowserType",
-    "BrowserSession",
+    "Session",
     "browser_session",
     "refresh_topics",
 ]

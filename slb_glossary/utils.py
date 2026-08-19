@@ -112,7 +112,7 @@ def get_topic_match(topics: typing.Mapping[str, int], topic: str) -> str:
     Resolve a user-supplied topic name to its closest match in `topics`.
 
     :param topics: Known glossary topics, as returned by `fetch_topics` or
-        held on `BrowserSession.topics`.
+        held on `Session.topics`.
     :param topic: One topic name, or several separated by commas, e.g.
         `"Geophysics,Geology"`. Matching is case-insensitive and tolerant of
         minor misspellings.

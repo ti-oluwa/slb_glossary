@@ -1,5 +1,5 @@
 """
-Sync the local database from a live `BrowserSession`.
+Sync the local database from a live `Session`.
 
 Call one of these functions as often (or as rarely) as fits your own use of the glossary; see the
 responsible-use note on `sync_all` in particular.
@@ -13,7 +13,7 @@ import typing
 
 from slb_glossary.live.api import get_results_from_urls, get_terms_on, get_terms_urls
 from slb_glossary.live.api import search as live_search
-from slb_glossary.live.browser import BrowserSession
+from slb_glossary.live.browser import Session
 from slb_glossary.local.api import (
     DEFAULT_UPSERT_BATCH_SIZE,
     get_topics,
@@ -115,6 +115,7 @@ async def _drain_and_upsert(
             language=language,
             batch_size=batch_size,
             persist_on_error=persist_on_error,
+            stats=stats,
         ):
             pass
     except BaseException:
@@ -124,15 +125,15 @@ async def _drain_and_upsert(
         # its `finally`, so re-raise only after recording what was saved.
         written = stats.get("written", 0)
         logger.warning(
-            "Sync interrupted after saving %d term(s); re-raising the original error", written
+            "Sync interrupted after saving %d term(s); re-raising the original error",
+            written,
+            exc_info=True,
         )
         raise
-    finally:
-        pass
     return stats.get("written", 0), interrupted
 
 
-async def sync_topics(db: Database, session: BrowserSession) -> SyncSummary:
+async def sync_topics(db: Database, session: Session) -> SyncSummary:
     """
     Refresh the local database's recorded topic list from `session`, without fetching terms.
 
@@ -142,7 +143,7 @@ async def sync_topics(db: Database, session: BrowserSession) -> SyncSummary:
     additional requests to the glossary site.
 
     :param db: The local database to update.
-    :param session: An open `BrowserSession` to read topic counts from.
+    :param session: An open `Session` to read topic counts from.
     :return: A summary of the sync (`terms_written` is always `0`).
     """
     logger.debug("Syncing topic list only (%d topic(s) known to session)", len(session.topics))
@@ -151,7 +152,7 @@ async def sync_topics(db: Database, session: BrowserSession) -> SyncSummary:
 
 async def sync_query(
     db: Database,
-    session: BrowserSession,
+    session: Session,
     query: str,
     *,
     topic: str | None = None,
@@ -168,7 +169,7 @@ async def sync_query(
     actually look up, without pulling the whole glossary.
 
     :param db: The local database to write to.
-    :param session: An open `BrowserSession` to fetch from.
+    :param session: An open `Session` to fetch from.
     :param query: Free-text query, as for `slb_glossary.live.search`.
     :param topic: Restrict the fetch to this topic, or several
         comma-separated topics.
@@ -218,7 +219,7 @@ async def sync_query(
 
 async def sync_topic(
     db: Database,
-    session: BrowserSession,
+    session: Session,
     topic: str,
     *,
     limit: int | None = None,
@@ -230,7 +231,7 @@ async def sync_topic(
     Fetch every term filed under `topic` from the live glossary and store them locally.
 
     :param db: The local database to write to.
-    :param session: An open `BrowserSession` to fetch from.
+    :param session: An open `Session` to fetch from.
     :param topic: Topic name, or several comma-separated topic names.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches.
@@ -269,7 +270,7 @@ async def sync_topic(
 
 async def sync_letter(
     db: Database,
-    session: BrowserSession,
+    session: Session,
     start_letter: str,
     *,
     topic: str | None = None,
@@ -286,7 +287,7 @@ async def sync_letter(
     over several separate, spaced-out runs.
 
     :param db: The local database to write to.
-    :param session: An open `BrowserSession` to fetch from.
+    :param session: An open `Session` to fetch from.
     :param start_letter: The starting letter to restrict the fetch to.
     :param topic: Also restrict the fetch to this topic, or several
         comma-separated topics.
@@ -334,7 +335,7 @@ async def sync_letter(
 
 async def sync_all(
     db: Database,
-    session: BrowserSession,
+    session: Session,
     *,
     concurrency: int = 1,
     batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
@@ -362,7 +363,7 @@ async def sync_all(
     the next topic.
 
     :param db: The local database to write to.
-    :param session: An open `BrowserSession` to fetch from.
+    :param session: An open `Session` to fetch from.
     :param concurrency: Concurrent term-page fetches, per topic.
     :param batch_size: Number of results to buffer before each incremental
         write to `db`. See `slb_glossary.local.upsert_results_incrementally`.

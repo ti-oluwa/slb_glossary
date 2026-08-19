@@ -385,11 +385,11 @@ def _write_config_file(data: dict[str, typing.Any], path: pathlib.Path, format: 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class Config(Updatable):
     """
-    Top-level, file-loadable configuration for a `BrowserSession` and local database.
+    Top-level, file-loadable configuration for a `Session` and local database.
 
     ```python
     config = Config.load()  # default path if it exists, else built-in defaults
-    async with BrowserSession.from_config(config) as session:
+    async with Session.from_config(config) as session:
         ...
     ```
     """

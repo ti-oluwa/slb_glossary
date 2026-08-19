@@ -156,7 +156,7 @@ def resolve_tools(value: Tool | str | Iterable[str] | None) -> Tool:
 
 
 class SessionMode(enum.Enum):
-    """Defines when the MCP application's live `BrowserSession` is opened and how long it lives."""
+    """Defines when the MCP application's live `Session` is opened and how long it lives."""
 
     EAGER = "eager"
     """
@@ -199,7 +199,7 @@ class RateLimitScope(enum.Enum):
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class SessionAccess(Updatable):
-    """Controls if/how/when the MCP application may open a live `BrowserSession`."""
+    """Controls if/how/when the MCP application may open a live `Session`."""
 
     enabled: bool = True
     """
@@ -533,7 +533,7 @@ class MCPConfig(Updatable):
     """Server identity metadata."""
 
     session: SessionAccess = dataclasses.field(default_factory=SessionAccess)
-    """Live `BrowserSession` access."""
+    """Live `Session` access."""
 
     local: LocalAccess = dataclasses.field(default_factory=LocalAccess)
     """Local database access."""

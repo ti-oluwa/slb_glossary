@@ -6,7 +6,7 @@ import time
 
 from patchright.async_api import Page
 
-from slb_glossary.live.browser import BrowserSession
+from slb_glossary.live.browser import Session
 from slb_glossary.live.parsers import (
     FACET_EXPAND_SELECTOR,
     FACET_HEADER_SELECTOR,
@@ -84,7 +84,7 @@ async def fetch_topics(
     return topics, size
 
 
-async def refresh_topics(session: BrowserSession) -> BrowserSession:
+async def refresh_topics(session: Session) -> Session:
     """
     Reload `session.topics` and `session.size` from the glossary site.
 

@@ -17,7 +17,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
     - [Library](#library)
     - [Command line](#command-line)
   - [Core concepts](#core-concepts)
-    - [`BrowserSession`: one session, many searches](#browsersession-one-session-many-searches)
+    - [`Session`: one session, many searches](#browsersession-one-session-many-searches)
     - [Retries and backoff](#retries-and-backoff)
     - [`SearchResult`](#searchresult)
     - [Live search: `slb_glossary.live`](#live-search-slb_glossarylive)
@@ -57,7 +57,7 @@ Search the [SLB Energy Glossary](https://glossary.slb.com/) programmatically, in
 - **An optional local cache with real ranking.** `slb_glossary.local` keeps a SQLite (FTS5) copy of terms you've already looked up, scored so an actual term match beats a word that just happens to show up in a definition, plus fuzzy topic matching and an optional bring-your-own-embedding vector store - so repeat lookups don't need the browser at all.
 - **One API for local, live, or both.** `slb_glossary.query` reads local first and only goes live when the local database doesn't have a confident answer, optionally caching whatever it fetches for next time - or pin it to `local`-only or `live`-only when you know which you want.
 - **File-based configuration.** Browser-session, local-database, and output defaults live in one JSON/TOML/YAML file, editable by hand, via `slb-glossary config set`, or through a guided wizard.
-- **Mostly a functional API.** Open a session, get back a plain `BrowserSession` value, and pass it to whichever function you need - most of what you'll call is a function, not a method on some stateful object.
+- **Mostly a functional API.** Open a session, get back a plain `Session` value, and pass it to whichever function you need - most of what you'll call is a function, not a method on some stateful object.
 - **A CLI that covers the same ground as the library.** Search, local caching, config, sync - all of it is also a `slb-glossary` subcommand, with `--save`/`--json` output, an interactive TUI, and shell-friendly exit codes.
 - **An MCP server for LLM agents.** `slb_glossary.mcp` exposes the same search/lookup functions as MCP tools, via `slb mcp serve` or `slb_glossary.mcp.MCPApp`, with config for sources, local write access, auth, rate limiting, timeouts, and hooks. See [MCP server](#mcp-server-slb_glossarymcp).
 - **Configurable retries.** Flaky page loads are retried with a pluggable backoff policy - constant, linear, exponential or logarithmic.
@@ -198,9 +198,9 @@ See [Command-line interface](#command-line-interface) for the full command refer
 
 ## Core concepts
 
-### `BrowserSession`: one session, many searches
+### `Session`: one session, many searches
 
-`slb_glossary` has no `Glossary` class. Instead, `open_session` (or the `session` context manager) launches a browser and loads the glossary's topic list once, returning a `BrowserSession` - a plain dataclass holding the live browser session and that metadata. Every live search function takes this session as its first argument.
+`slb_glossary` has no `Glossary` class. Instead, `open_session` (or the `session` context manager) launches a browser and loads the glossary's topic list once, returning a `Session` - a plain dataclass holding the live browser session and that metadata. Every live search function takes this session as its first argument.
 
 ```python
 session = await slb.open_session(language=slb.Language.ENGLISH)
@@ -329,7 +329,7 @@ With no path given, it opens at the OS-appropriate user data directory (see `slb
 
 ### Filling the local database
 
-Sync functions in `slb_glossary.local.sync` pull from a live `BrowserSession` into a `Database`, from cheapest to most expensive:
+Sync functions in `slb_glossary.local.sync` pull from a live `Session` into a `Database`, from cheapest to most expensive:
 
 ```python
 await slb.local.sync_topics(db, session)  # just the topic list/counts
@@ -537,7 +537,7 @@ config = MCPConfig(
 | Section         | Covers                                                                                      |
 | ---------------- | ------------------------------------------------------------------------------------------------ |
 | `server`          | Name/version/instructions advertised to MCP clients.                                          |
-| `session`          | Whether/how the live `BrowserSession` is used - `SessionMode.EAGER`/`LAZY`/`PER_CALL`, idle timeout, concurrency, and every `open_session` option (via `browser`). |
+| `session`          | Whether/how the live `Session` is used - `SessionMode.EAGER`/`LAZY`/`PER_CALL`, idle timeout, concurrency, and every `open_session` option (via `browser`). |
 | `local`            | Whether the local database is reachable, and whether **writes** are allowed (`allow_write`, off by default). |
 | `source_policy`    | Which `Source` values (`LOCAL`/`LIVE`/`AUTO`) a tool call may resolve to, and the default when a caller doesn't specify one. |
 | `tools`            | Which tools to build - a `Tool` flag combination, e.g. `Tool.SEARCH \| Tool.GET_TERM`, or `Tool.READ_ONLY`/`Tool.ALL`. |
@@ -728,7 +728,7 @@ logging.getLogger("slb_glossary").setLevel(logging.DEBUG)  # verbose, per-page d
 
 A few things `slb_glossary` does on its own to keep things fast: image, font, and media requests are blocked at the network layer by default (`block=True`). The glossary is a JavaScript app, so scripts and stylesheets still load, but nothing else needs to. Page data (topic lists, result links, definition text) is read with single `evaluate`-style JavaScript calls instead of one round-trip per DOM element. Search functions are lazy async generators, so `async for result in live.search(session, "x"): break` only does the work needed to produce that first result. And a local-database read never launches a browser.
 
-The rest is on you, and it's mostly about not paying for a browser more than once. Open one `BrowserSession` and reuse it for every live search you need instead of opening a new one per query. Most of a session's cost is the one-time browser launch and topic fetch. A session drives a single browser page, though, so it isn't safe to share across concurrent coroutines - for parallel searches, either open one session per task, or use a function's `concurrency` argument to open extra pages on the same session (keep this modest; it's still one site being asked for more at once).
+The rest is on you, and it's mostly about not paying for a browser more than once. Open one `Session` and reuse it for every live search you need instead of opening a new one per query. Most of a session's cost is the one-time browser launch and topic fetch. A session drives a single browser page, though, so it isn't safe to share across concurrent coroutines - for parallel searches, either open one session per task, or use a function's `concurrency` argument to open extra pages on the same session (keep this modest; it's still one site being asked for more at once).
 
 Past that, lean on the local database. `slb_glossary.query`'s `Source.AUTO` (the CLI's `--auto`, the default) tries the local database first, so a search you've already cached costs nothing beyond an SQLite read on a repeat run and only touches the network the first time. `search` specifically only trusts that local read alone if its best match is actually a good one (see `relevance_threshold` in [Source-aware queries](#source-aware-queries-slb_glossaryquery)). If it isn't, it augments with a live search instead of pretending the network step isn't needed, but the results still favor whatever's already local. If you know you'll need a topic or query a lot, `slb-glossary local sync`/`update` (or `slb_glossary.local.sync`) let you build up the cache ahead of time in one batch, so day-to-day lookups afterward stay entirely local.
 

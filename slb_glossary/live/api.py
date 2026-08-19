@@ -7,7 +7,9 @@ import math
 import time
 import typing
 
-from slb_glossary.live.browser import BrowserSession
+from patchright.async_api import Page
+
+from slb_glossary.live.browser import Session
 from slb_glossary.live.grammar import resolve_grammatical_label
 from slb_glossary.live.parsers import (
     TermBlock,
@@ -38,11 +40,17 @@ __all__ = [
 RELATED_KEYWORDS = ("related term", "see related", "synonyms", "alternate form")
 
 
-async def goto(session: BrowserSession, url: str, timeout: float | None = None) -> None:
-    async def _route() -> None:
-        await session.page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+async def goto(
+    session: Session, url: str, *, page: Page | None = None, timeout: float | None = None
+) -> Page:
+    async def navigate() -> Page:
+        nonlocal page
+        if page is None:
+            page = await session.new_page()
+        await page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+        return page
 
-    return await retry(_route, policy=session.retry, raise_exception=True)
+    return await retry(navigate, policy=session.retry, raise_exception=True)  # type: ignore[return-value]
 
 
 def _find_related_links(
@@ -70,9 +78,10 @@ def _find_related_links(
 
 
 async def _wait_for_settle(
-    session: BrowserSession,
+    session: Session,
     url: str,
     *,
+    page: Page | None = None,
     previous_links: typing.Sequence[str],
     previous_header: str,
 ) -> tuple[list[str], str]:
@@ -105,7 +114,7 @@ async def _wait_for_settle(
         without any observed change.
     """
     goto_started_at = time.monotonic()
-    await goto(session, url)
+    current_page = await goto(session, url, page=page)
     logger.debug("Loaded %s in %.3fs", url, time.monotonic() - goto_started_at)
 
     settle_started_at = time.monotonic()
@@ -115,8 +124,8 @@ async def _wait_for_settle(
     previous_links = list(previous_links)
     polls = 0
     while True:
-        current_links = await get_result_links(session.page)
-        current_header = await get_results_header_text(session.page)
+        current_links = await get_result_links(current_page)
+        current_header = await get_results_header_text(current_page)
         if current_links != previous_links or current_header != previous_header:
             logger.debug(
                 "Results panel settled after %.3fs (%d poll(s)) for %s",
@@ -136,7 +145,7 @@ async def _wait_for_settle(
 
 
 async def get_terms_urls(
-    session: BrowserSession,
+    session: Session,
     *,
     query: str | None = None,
     topic: str | None = None,
@@ -160,8 +169,10 @@ async def get_terms_urls(
     :yield: Term detail page URLs, in the order the glossary site returns them.
     :raises ValueError: If `limit` is given and is less than 1.
     """
+    if not session.initialized:
+        raise
     if limit is not None and limit < 1:
-        raise ValueError("limit must be greater than 0")
+        raise ValueError("`limit` must be greater than 0")
     if not topic and not (query or start_letter):
         return
 
@@ -209,6 +220,7 @@ async def get_terms_urls(
             if not links:
                 logger.debug("No result links on tab %d, stopping", tab)
                 return
+
             if not header_text:
                 logger.debug("No results header on tab %d, stopping", tab)
                 return
@@ -254,7 +266,7 @@ async def get_terms_urls(
 
 
 async def get_results_from_url(
-    session: BrowserSession, url: str, *, topic: str | None = None
+    session: Session, url: str, *, topic: str | None = None
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Load a term detail page and lazily yield each definition found on it.
@@ -278,6 +290,8 @@ async def get_results_from_url(
         if a sibling section does. `related` is empty when that section
         has no related-term links.
     """
+    if not session.initialized:
+        raise
     resolved_topic = get_topic_match(session.topics, topic) if topic else None
 
     started_at = time.monotonic()
@@ -290,7 +304,7 @@ async def get_results_from_url(
 
     # One illustrative image per definition section. A term with
     # several definitions can have a different image (or none)
-    # per section. Indices line up with`detail_sections` since
+    # per section. Indices line up with `detail_sections` since
     # both come from the same repeated DOM wrapper.
     section_images = await get_term_images(session.page)
 
@@ -345,7 +359,7 @@ async def get_results_from_url(
 
 
 async def get_results_from_urls(
-    session: BrowserSession,
+    session: Session,
     urls: typing.Iterable[str] | typing.AsyncIterable[str],
     *,
     topic: str | None = None,
@@ -378,8 +392,10 @@ async def get_results_from_urls(
     :yield: `SearchResult`s as they're fetched.
     :raises ValueError: If `concurrency` is less than 1.
     """
+    if not session.initialized:
+        raise
     if concurrency < 1:
-        raise ValueError("concurrency must be at least 1")
+        raise ValueError("`concurrency` must be at least 1")
 
     started_at = time.monotonic()
     yielded = 0
@@ -407,7 +423,7 @@ async def get_results_from_urls(
     # same browser context, so every worker can navigate independently
     # without racing over a single shared page.
     extra_pages = [await session.context.new_page() for _ in range(concurrency - 1)]
-    worker_sessions: list[BrowserSession] = [session]
+    worker_sessions: list[Session] = [session]
     worker_sessions.extend(dataclasses.replace(session, page=page) for page in extra_pages)
     logger.debug("Fetching with %d concurrent worker(s)", len(worker_sessions))
 
@@ -420,7 +436,7 @@ async def get_results_from_urls(
         for _ in worker_sessions:
             await url_queue.put(None)  # one stop signal per worker
 
-    async def _consume(worker_session: BrowserSession) -> None:
+    async def _consume(worker_session: Session) -> None:
         while True:
             url = await url_queue.get()
             if url is None:
@@ -468,7 +484,7 @@ async def get_results_from_urls(
 
 
 async def search(
-    session: BrowserSession,
+    session: Session,
     query: str,
     *,
     topic: str | None = None,
@@ -525,7 +541,7 @@ async def search(
 
 
 async def get_terms_on(
-    session: BrowserSession,
+    session: Session,
     topic: str,
     *,
     start_letter: str | None = None,
@@ -534,10 +550,6 @@ async def get_terms_on(
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield the definition of every term filed under `topic`.
-
-    Unlike `search`, this yields at most one `SearchResult` per term: the
-    definition filed under `topic` itself, rather than every definition a
-    term happens to have.
 
     :param session: An open glossary session.
     :param topic: The topic to look up terms for. Need not be an exact
@@ -570,7 +582,6 @@ async def get_terms_on(
             urls,
             topic=topic,
             concurrency=concurrency,
-            first_only=True,
         ),
         logger=logger,
         label=f"get_terms_on({topic!r})",

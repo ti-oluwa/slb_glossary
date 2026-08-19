@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncIterator
 
 from slb_glossary.config import DatabaseOptions
-from slb_glossary.live.browser import BrowserSession, close_session, open_session
+from slb_glossary.live.browser import Session, close_session, open_session
 from slb_glossary.local.connection import close_db, open_db
 from slb_glossary.local.types import Database
 from slb_glossary.mcp.config import MCPConfig, SessionMode
@@ -30,7 +30,7 @@ def get_db_path(database_config: DatabaseOptions) -> str | None:
 
 class Runtime(NamedComponent):
     """
-    Owns and manages the shared resources (`Database`/`BrowserSession`) for
+    Owns and manages the shared resources (`Database`/`Session`) for
     one running MCP application.
     """
 
@@ -39,7 +39,7 @@ class Runtime(NamedComponent):
         self.config = config
         self._db: Database | None = None
         self._db_lock = asyncio.Lock()
-        self._session: BrowserSession | None = None
+        self._session: Session | None = None
         self._session_lock = asyncio.Lock()
         self._session_semaphore = asyncio.Semaphore(config.session.max_concurrent)
         self._session_last_used: float = 0.0
@@ -121,7 +121,7 @@ class Runtime(NamedComponent):
                 self._db = await open_db(get_db_path(self.config.local.database))
             return self._db
 
-    async def _open_session(self) -> BrowserSession:
+    async def _open_session(self) -> Session:
         async with self._session_lock:
             if self._session is None:
                 kwargs = self.config.session.browser.session_kwargs()
@@ -163,7 +163,7 @@ class Runtime(NamedComponent):
     @contextlib.asynccontextmanager
     async def acquire(
         self, source: Source
-    ) -> AsyncIterator[tuple[Database | None, BrowserSession | None]]:
+    ) -> AsyncIterator[tuple[Database | None, Session | None]]:
         """
         Yield the `(db, session)` pair a tool call needs to satisfy `source`.
 

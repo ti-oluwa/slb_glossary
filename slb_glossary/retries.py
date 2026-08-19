@@ -48,8 +48,8 @@ class RetryPolicy:
     attempts: int = 3
     """Maximum number of times to call the retried function."""
 
-    base_delay: float = 0.8
-    """Seconds used as the base of the backoff calculation."""
+    base_delay: float = 800
+    """Milliseconds used as the base of the backoff calculation."""
 
     backoff_type: BackoffType = BackoffType.EXPONENTIAL
     """Strategy used to grow the delay between attempts."""
@@ -57,8 +57,8 @@ class RetryPolicy:
     factor: float = 2.0
     """Growth base for `EXPONENTIAL`, or log base for `LOGARITHMIC`."""
 
-    max_delay: float | None = 10.0
-    """Upper bound on any single delay. Uncapped if `None`."""
+    max_delay: float | None = 10_000.0
+    """Upper bound on any single delay (milliseconds). Uncapped if `None`."""
 
     jitter: bool = True
     """Randomize each delay by up to +/-50% to avoid retry storms."""
@@ -68,7 +68,7 @@ class RetryPolicy:
         Compute the delay to wait after the given attempt number.
 
         :param attempt: The 1-indexed attempt that just failed.
-        :return: Seconds to wait before the next attempt.
+        :return: Milliseconds to wait before the next attempt.
         """
         if self.backoff_type is BackoffType.CONSTANT:
             delay = self.base_delay
@@ -83,23 +83,24 @@ class RetryPolicy:
 
         if self.max_delay is not None:
             delay = min(delay, self.max_delay)
+
         if self.jitter:
             delay *= random.uniform(0.5, 1.5)
         return max(delay, 0.0)
 
     @classmethod
-    def constant(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> Self:
+    def constant(cls, base_delay: float = 800, **kwargs: typing.Any) -> Self:
         """Build a `CONSTANT` policy waiting `base_delay` between attempts."""
         return cls(base_delay=base_delay, backoff_type=BackoffType.CONSTANT, **kwargs)
 
     @classmethod
-    def linear(cls, base_delay: float = 0.8, **kwargs: typing.Any) -> Self:
+    def linear(cls, base_delay: float = 800, **kwargs: typing.Any) -> Self:
         """Build a `LINEAR` policy growing the delay by `base_delay` each attempt."""
         return cls(base_delay=base_delay, backoff_type=BackoffType.LINEAR, **kwargs)
 
     @classmethod
     def exponential(
-        cls, base_delay: float = 0.8, factor: float = 2.0, **kwargs: typing.Any
+        cls, base_delay: float = 800, factor: float = 2.0, **kwargs: typing.Any
     ) -> Self:
         """Build an `EXPONENTIAL` policy, the default and generally safest choice."""
         return cls(
@@ -108,7 +109,7 @@ class RetryPolicy:
 
     @classmethod
     def logarithmic(
-        cls, base_delay: float = 0.8, factor: float = 2.0, **kwargs: typing.Any
+        cls, base_delay: float = 800, factor: float = 2.0, **kwargs: typing.Any
     ) -> Self:
         """Build a `LOGARITHMIC` policy, for retries that should barely grow."""
         return cls(
@@ -121,10 +122,10 @@ DEFAULT_RETRY_POLICY = RetryPolicy()
 
 
 async def retry(
-    func: typing.Callable[[], typing.Awaitable[T | None]],
+    func: typing.Callable[[], typing.Awaitable[T]],
     *,
     policy: RetryPolicy = DEFAULT_RETRY_POLICY,
-    until: typing.Callable[[T | None], bool] | None = None,
+    until: typing.Callable[[T], bool] | None = None,
     raise_exception: bool = True,
 ) -> T | None:
     """
@@ -147,7 +148,7 @@ async def retry(
         attempt_started_at = time.monotonic()
         try:
             result = await func()
-            if until is not None and until(result):
+            if until is None or until(result):
                 logger.debug(
                     "%s succeeded on attempt %d/%d after %.3fs (total %.3fs including %.3fs of backoff)",
                     func,
@@ -172,7 +173,7 @@ async def retry(
             )
 
         if attempt < policy.attempts:
-            delay = policy.delay_for_attempt(attempt)
+            delay = policy.delay_for_attempt(attempt) / 1000
             total_delay += delay
             logger.debug(
                 "Attempt %d/%d failed, retrying in %.2fs (%.3fs elapsed so far)",
