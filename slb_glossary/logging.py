@@ -12,14 +12,31 @@ from slb_glossary.logging import FileSink, configure_logging
 # Route every slb_glossary log record to a file for this run.
 configure_logging(sinks=FileSink("slb-glossary.log"), level="DEBUG")
 ```
+
+Sinks can also be routed selectively: pass a `{filter: sink}` mapping
+instead of a single sink/list, and each record only goes to the sink(s)
+whose filter matches it.
+
+```python
+from slb_glossary.logging import FileSink, StderrSink, configure_logging
+
+# Everything from the query API (and its live/local sub-loggers) goes to
+# a dedicated file; everything else still prints to stderr as usual.
+configure_logging(sinks={
+    "slb_glossary.query*": FileSink("query.log"),
+    "*": StderrSink(),
+})
+```
 """
 
 import contextlib
+import fnmatch
 import importlib
 import logging
 import pathlib
 import sys
 import typing
+from collections.abc import Iterable, Mapping
 
 from rich.logging import RichHandler
 
@@ -30,9 +47,13 @@ __all__ = [
     "StderrSink",
     "FileSink",
     "SinkHandler",
+    "SinkFilter",
+    "SinkSpec",
+    "SinksSpec",
     "DEFAULT_LOG_FORMAT",
     "import_sink",
     "resolve_sink",
+    "resolve_sinks",
     "configure_logging",
 ]
 
@@ -145,17 +166,63 @@ class FileSink:
         return f"{type(self).__name__}({str(self.path)!r})"
 
 
+SinkFilter = str | typing.Callable[[logging.LogRecord], bool]
+"""
+A route filter for `SinkHandler`'s `{filter: sink(s)}` mapping form: a
+logger-name pattern (`fnmatch`-style, e.g. `"slb_glossary.query*"`, `"*"`
+for everything) matched against each record's logger name, or a callable
+taking a `logging.LogRecord` and returning whether it should go to that
+route's sink(s).
+"""
+
+
+def _sink_filter_matches(filter: SinkFilter, record: logging.LogRecord) -> bool:
+    """Whether `filter` selects `record` for its route's sink(s)."""
+    if isinstance(filter, str):
+        return fnmatch.fnmatch(record.name, filter)
+    return bool(filter(record))
+
+
 class SinkHandler(RichHandler):
     """
     A logging handler (`rich.logging.RichHandler`) that formats records
     and forwards them to one or more `LogSink`s.
+
+    `sinks` can be a single `LogSink`, several, or a `{filter: sink(s)}`
+    mapping - see the module docstring for an example. With a mapping,
+    each record only goes to the sink(s) whose filter matches it, so
+    different parts of the log stream (e.g. everything from the query
+    API vs. everything else) can be routed to different places.
     """
 
     def __init__(
-        self, sinks: typing.Iterable[LogSink], *, level: int = logging.NOTSET, **kwargs: typing.Any
+        self,
+        sinks: LogSink | Iterable[LogSink] | Mapping[SinkFilter, LogSink | Iterable[LogSink]],
+        *,
+        level: int = logging.NOTSET,
+        **kwargs: typing.Any,
     ) -> None:
         super().__init__(level=level, **kwargs)
-        self.sinks: list[LogSink] = list(sinks)
+        self._routes: list[tuple[SinkFilter | None, LogSink]] = []
+
+        if isinstance(sinks, LogSink):
+            self._routes.append((None, sinks))
+        elif isinstance(sinks, Mapping):
+            for filter, target in sinks.items():
+                assert not isinstance(filter, LogSink)
+                targets = [target] if isinstance(target, LogSink) else list(target)
+                self._routes.extend((filter, sink) for sink in targets)
+        else:
+            self._routes.extend((None, sink) for sink in sinks)
+
+    @property
+    def sinks(self) -> list[LogSink]:
+        """Every distinct sink this handler writes to, across all routes."""
+        seen: list[LogSink] = []
+        for _, sink in self._routes:
+            if sink not in seen:
+                seen.append(sink)
+        return seen
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -163,7 +230,10 @@ class SinkHandler(RichHandler):
         except Exception:
             self.handleError(record)
             return
-        for sink in self.sinks:
+
+        for filter, sink in self._routes:
+            if filter is not None and not _sink_filter_matches(filter, record):
+                continue
             try:
                 sink.write(message)
             except Exception:
@@ -260,9 +330,52 @@ def resolve_sink(
     return FileSink(text)
 
 
+SinkSpec = LogSink | type[LogSink] | str | pathlib.Path | None
+"""Anything `resolve_sink` accepts for a single sink."""
+
+SinksSpec = SinkSpec | Iterable[SinkSpec] | Mapping[SinkFilter, SinkSpec | Iterable[SinkSpec]]
+"""
+Anything `configure_logging`/`resolve_sinks` accept for `sinks`: a single
+sink (spec), several, or a `{filter: sink(s)}` mapping that routes only
+matching log records to each sink - see `SinkHandler`.
+"""
+
+
+def _is_single_sink_spec(value: typing.Any) -> bool:
+    """Whether `value` is one sink spec, rather than a collection of them."""
+    return value is None or isinstance(value, (LogSink, type, str, pathlib.Path))
+
+
+def resolve_sinks(
+    spec: SinksSpec, *, default: LogSink | None = None
+) -> LogSink | list[LogSink] | dict[SinkFilter, list[LogSink]]:
+    """
+    Resolve `sinks`-style input into ready `LogSink`(s), in the same shape it came in.
+
+    :param spec: A single sink spec, an iterable of them, or a
+        `{filter: spec(s)}` mapping - see `SinksSpec`.
+    :param default: Fallback sink for a `None`/empty single spec - see `resolve_sink`.
+    :return: A single `LogSink` for a single spec, a `list[LogSink]` for
+        an iterable, or a `{filter: list[LogSink]}` mapping for a mapping.
+    """
+    if isinstance(spec, Mapping):
+        return {  # type: ignore[return-value]
+            filter: (
+                [resolve_sink(target, default=default)]  # type: ignore
+                if _is_single_sink_spec(target)
+                else [resolve_sink(item, default=default) for item in target]  # type: ignore
+            )
+            for filter, target in spec.items()
+        }
+
+    if _is_single_sink_spec(spec):
+        return resolve_sink(spec, default=default)  # type: ignore
+    return [resolve_sink(item, default=default) for item in spec]  # type: ignore
+
+
 def configure_logging(
     *,
-    sinks: typing.Iterable[LogSink] | LogSink | None = None,
+    sinks: SinksSpec = None,
     level: int | str | None = None,
     logger_name: str = "slb_glossary",
     fmt: str = DEFAULT_LOG_FORMAT,
@@ -278,7 +391,9 @@ def configure_logging(
     changed mid-process) cleanly tears down the handler it previously set
     up before attaching the new one, so repeat calls don't pile up duplicate handlers.
 
-    :param sinks: One `LogSink`, several, or `None` for a single `StderrSink()`.
+    :param sinks: One sink (spec), several, a `{filter: sink(s)}` mapping
+        to route only matching log records to each sink (see
+        `SinkHandler`), or `None` for a single `StderrSink()`.
     :param level: Logging level (name or numeric) to set on `logger_name`'s
         logger. `None` leaves the logger's current level untouched, so this
         can be called purely to redirect output without also changing verbosity.
@@ -293,12 +408,7 @@ def configure_logging(
         sets up on package initialization.
     :return: The `SinkHandler` now attached to `logger_name`'s logger.
     """
-    if sinks is None:
-        resolved_sinks: list[LogSink] = [StderrSink()]
-    elif isinstance(sinks, LogSink):
-        resolved_sinks = [sinks]
-    else:
-        resolved_sinks = list(sinks)
+    resolved_sinks = resolve_sinks(sinks, default=StderrSink())
 
     logger = logging.getLogger(logger_name)
     if level is not None:
@@ -314,6 +424,6 @@ def configure_logging(
     handler.setFormatter(logging.Formatter(fmt))
     logger.addHandler(handler)
     logger.debug(
-        "Routed %r logging to: %s", logger_name, ", ".join(repr(sink) for sink in resolved_sinks)
+        "Routed %r logging to: %s", logger_name, ", ".join(repr(sink) for sink in handler.sinks)
     )
     return handler

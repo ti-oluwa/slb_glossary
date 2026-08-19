@@ -30,7 +30,7 @@ import typing
 from fastmcp.server.context import Context
 from fastmcp.server.server import FastMCP
 
-from slb_glossary.logging import DEFAULT_LOG_FORMAT, configure_logging, resolve_sink
+from slb_glossary.logging import DEFAULT_LOG_FORMAT, configure_logging
 from slb_glossary.mcp.config import MCPConfig
 from slb_glossary.mcp.middleware import MCPMiddleware
 from slb_glossary.mcp.ratelimit import SlidingWindowRateLimiter
@@ -161,16 +161,8 @@ class MCPApp(NamedComponent):
         if logging_config.sinks is None and logging_config.level is None:
             return
 
-        spec = logging_config.sinks
-        if spec is None:
-            resolved_sinks = None
-        elif isinstance(spec, (list, tuple, set, frozenset)):
-            resolved_sinks = [resolve_sink(item) for item in spec]
-        else:
-            resolved_sinks = [resolve_sink(spec)]  # type: ignore[arg-type]
-
         configure_logging(
-            sinks=resolved_sinks,
+            sinks=logging_config.sinks,
             level=logging_config.level,
             logger_name=logging_config.logger_name,
             fmt=logging_config.fmt or DEFAULT_LOG_FORMAT,

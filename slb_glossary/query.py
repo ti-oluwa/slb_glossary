@@ -761,6 +761,8 @@ async def get_term(
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: typing.Literal[False] = False,
+    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
+    max_similar_terms: int = MAX_SIMILAR_TERMS,
 ) -> LookupResult[SearchResult | None]: ...
 
 
@@ -773,6 +775,8 @@ async def get_term(
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: typing.Literal[True],
+    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
+    max_similar_terms: int = MAX_SIMILAR_TERMS,
 ) -> LookupResult[SimilarResult]: ...
 
 
@@ -784,6 +788,8 @@ async def get_term(
     source: Source = Source.AUTO,
     persist: bool = False,
     with_similar: bool = False,
+    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
+    max_similar_terms: int = MAX_SIMILAR_TERMS,
 ) -> LookupResult:
     """
     Look up a single term by exact name or detail-page URL.
@@ -800,11 +806,17 @@ async def get_term(
         alternative gathered alongside the exact match is cached too.
     :param with_similar: If `True`, resolve to a `LookupResult[SimilarResult]`
         instead: `SimilarResult.exact` holds what a plain call would have
-        returned, and `SimilarResult.similar` holds up to `MAX_SIMILAR_TERMS`
+        returned, and `SimilarResult.similar` holds up to `max_similar_terms`
         other results found for `term_or_url` along the way, best match
         first and is only ever populated by a live lookup, since that's the
         only source with anything to compare against. Handy for a "did you
         mean" prompt when the exact match turns out to be `None`.
+    :param similar_pool_size: Live results to pull while looking for the
+        exact match, and - with `with_similar=True` - to draw alternatives
+        from. Defaults to `SIMILAR_TERMS_POOL_SIZE`.
+    :param max_similar_terms: Max alternatives returned in
+        `SimilarResult.similar`. Defaults to `MAX_SIMILAR_TERMS`. Ignored
+        unless `with_similar=True`.
     :return: A `LookupResult` wrapping the found `SearchResult` (or `None` if
         not found by the resolved source(s)). Or, with `with_similar=True`,
         a `SimilarResult`, plus which source actually served it, and
@@ -821,7 +833,13 @@ async def get_term(
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
-        fetched = await _fetch_term(session, term_or_url, with_similar=with_similar)
+        fetched = await _fetch_term(
+            session,
+            term_or_url,
+            with_similar=with_similar,
+            similar_pool_size=similar_pool_size,
+            max_similar_terms=max_similar_terms,
+        )
         persisted = await _maybe_persist(
             db,
             results=_flatten_results(fetched, with_similar=with_similar),
@@ -840,7 +858,13 @@ async def get_term(
         empty = SimilarResult(exact=None) if with_similar else None
         return LookupResult(value=empty, source=Source.LOCAL, persisted=False)
 
-    fetched = await _fetch_term(session, term_or_url, with_similar=with_similar)
+    fetched = await _fetch_term(
+        session,
+        term_or_url,
+        with_similar=with_similar,
+        similar_pool_size=similar_pool_size,
+        max_similar_terms=max_similar_terms,
+    )
     persisted = await _maybe_persist(
         db,
         results=_flatten_results(fetched, with_similar=with_similar),
@@ -865,18 +889,33 @@ def _flatten_results(
 
 @typing.overload
 async def _fetch_term(
-    session: Session, term_or_url: str, *, with_similar: typing.Literal[False] = False
+    session: Session,
+    term_or_url: str,
+    *,
+    with_similar: typing.Literal[False] = False,
+    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
+    max_similar_terms: int = MAX_SIMILAR_TERMS,
 ) -> SearchResult | None: ...
 
 
 @typing.overload
 async def _fetch_term(
-    session: Session, term_or_url: str, *, with_similar: typing.Literal[True]
+    session: Session,
+    term_or_url: str,
+    *,
+    with_similar: typing.Literal[True],
+    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
+    max_similar_terms: int = MAX_SIMILAR_TERMS,
 ) -> SimilarResult: ...
 
 
 async def _fetch_term(
-    session: Session, term_or_url: str, *, with_similar: bool = False
+    session: Session,
+    term_or_url: str,
+    *,
+    with_similar: bool = False,
+    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
+    max_similar_terms: int = MAX_SIMILAR_TERMS,
 ) -> SearchResult | None | SimilarResult:
     """
     Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched.
@@ -885,10 +924,16 @@ async def _fetch_term(
     :param term_or_url: An exact (case-insensitive) term name, or a
         glossary term detail-page URL.
     :param with_similar: If `True`, return a `SimilarResult` gathering up to
-        `MAX_SIMILAR_TERMS` other results turned up while searching for
+        `max_similar_terms` other results turned up while searching for
         the exact match, instead of just the exact match itself. A direct
         URL fetch has nothing to search, so `SimilarResult.similar` is
         always empty in that case.
+    :param similar_pool_size: Live results to pull while looking for the
+        exact match, and - with `with_similar=True` - to draw
+        `SimilarResult.similar` alternatives from. Defaults to `SIMILAR_TERMS_POOL_SIZE`.
+    :param max_similar_terms: Max alternatives returned in
+        `SimilarResult.similar`. Defaults to `MAX_SIMILAR_TERMS`. Ignored
+        unless `with_similar=True`.
     :return: The exact `SearchResult` match (or `None`), or with
         `with_similar=True`, a `SimilarResult` wrapping the exact match
         (if any) and its alternatives.
@@ -903,9 +948,10 @@ async def _fetch_term(
     term = term_or_url.strip().lower()
 
     if not with_similar:
-        # The correct definition should at least be in the first 5 results, searching atleast 2 at a time
+        # The correct definition should at least be in the first `similar_pool_size`
+        # results, searching at least 2 at a time.
         async for result in live.search(
-            session, term, limit=SIMILAR_TERMS_POOL_SIZE, concurrency=2
+            session, term, limit=similar_pool_size, concurrency=2
         ):
             if result.term and result.term.strip().lower() == term:
                 return result
@@ -918,14 +964,12 @@ async def _fetch_term(
     # available regardless of where (or whether) the exact match turned up.
     pool = [
         result
-        async for result in live.search(
-            session, term, limit=SIMILAR_TERMS_POOL_SIZE, concurrency=2
-        )
+        async for result in live.search(session, term, limit=similar_pool_size, concurrency=2)
     ]
     exact = next(
         (result for result in pool if result.term and result.term.strip().lower() == term), None
     )
-    similar = tuple(result for result in pool if result is not exact)[:MAX_SIMILAR_TERMS]
+    similar = tuple(result for result in pool if result is not exact)[:max_similar_terms]
     return SimilarResult(exact=exact, similar=similar)
 
 

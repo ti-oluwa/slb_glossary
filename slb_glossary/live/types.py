@@ -308,6 +308,7 @@ class Session:
             )
             self.topics = topics
             self.size = size
+            self._initialized = True
         except Exception as exc:
             raise NetworkError(f"Could not reach the glossary at {self.base_url}") from exc
         finally:

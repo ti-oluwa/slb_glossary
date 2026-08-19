@@ -20,14 +20,13 @@ keyword arguments).
 
 import dataclasses
 import enum
-import pathlib
 import sys
 from collections.abc import Iterable, Mapping
 
 from fastmcp.server.auth import AuthProvider
 
 from slb_glossary.config import BrowserSessionOptions, DatabaseOptions
-from slb_glossary.logging import LogSink
+from slb_glossary.logging import SinksSpec
 from slb_glossary.mcp.auth import AuthBackend
 from slb_glossary.mcp.errors import MCPConfigError
 from slb_glossary.mcp.ratelimit import RateLimiter
@@ -418,19 +417,15 @@ class Logging(Updatable):
     closely, so anything that module supports is available here too.
     """
 
-    sinks: (
-        LogSink
-        | type[LogSink]
-        | str
-        | pathlib.Path
-        | Iterable[LogSink | type[LogSink] | str | pathlib.Path]
-        | None
-    ) = None
+    sinks: SinksSpec = None
     """
     Where to route logging. Any single `slb_glossary.logging.resolve_sink`
     spec (a `LogSink` instance/class, `"stderr"`/`"stdout"`, a file path, or
-    a `"module:ClassName"` import path), or several. 
-    
+    a `"module:ClassName"` import path), several, or a `{filter: sink(s)}`
+    mapping to send only matching log records to each sink - e.g. everything
+    from a live session/the query API to one file, everything else to
+    another. See `slb_glossary.logging.SinkHandler`.
+
     `None` leaves whatever logging setup is already in place untouched.
     """
 
