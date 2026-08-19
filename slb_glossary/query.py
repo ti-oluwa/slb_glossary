@@ -448,6 +448,7 @@ async def search(
         if (url and url in seen_urls) or term_key in seen_terms:
             # Already covered by a local result; don't yield it twice.
             continue
+
         seen_urls.add(url or "")
         seen_terms.add(term_key)
         count += 1
@@ -908,11 +909,10 @@ async def _fetch_term(
         ):
             if result.term and result.term.strip().lower() == term:
                 return result
+
         # No exact (case-insensitive) match among the top results;
         # fall back to whatever ranked first, if anything did.
-        async for result in live.search(session, term, limit=1):
-            return result
-        return None
+        return await anext(live.search(session, term, limit=1), None)
 
     # When `with_similar=True`, we drain the whole pool so alternatives are
     # available regardless of where (or whether) the exact match turned up.
@@ -1065,9 +1065,7 @@ async def _fetch_random_term(
         return None
 
     chosen_url = random.choice(urls)
-    async for result in live.get_results_from_url(session, chosen_url, topic=topic):
-        return result
-    return None
+    return await anext(live.get_results_from_url(session, chosen_url, topic=topic), None)
 
 
 async def compare(

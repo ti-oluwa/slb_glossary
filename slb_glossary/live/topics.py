@@ -27,7 +27,7 @@ async def fetch_topics(
     page: Page,
     *,
     base_url: str,
-    settle_delay: float = 0.8,
+    settle_delay: float = 8000,
     retry: RetryPolicy = DEFAULT_RETRY_POLICY,
 ) -> tuple[dict[str, int], int]:
     """
@@ -36,7 +36,7 @@ async def fetch_topics(
     :param page: The page to load the glossary search screen on.
     :param base_url: Base search URL for the target glossary language, as
         returned by `slb_glossary.urls.get_glossary_base_url`.
-    :param settle_delay: Seconds to wait after the facet panel first renders
+    :param settle_delay: Milliseconds to wait after the facet panel first renders
         and after expanding it, giving the site's search widget time to
         finish populating both.
     :param retry: Policy for retrying the page load if the facet panel
@@ -60,7 +60,7 @@ async def fetch_topics(
         )
         return {}, 0
 
-    await asyncio.sleep(settle_delay)
+    await asyncio.sleep(settle_delay / 1000)
 
     expand_button = page.locator(FACET_EXPAND_SELECTOR).first
     if await expand_button.count():
@@ -68,7 +68,7 @@ async def fetch_topics(
             expand_started_at = time.monotonic()
             await expand_button.scroll_into_view_if_needed(timeout=5_000)
             await expand_button.click(timeout=5_000)
-            await asyncio.sleep(settle_delay)
+            await asyncio.sleep(settle_delay / 1000)
             logger.debug("Expanded full topic list in %.3fs", time.monotonic() - expand_started_at)
         except Exception:
             logger.debug("Could not expand the full topic list", exc_info=True)

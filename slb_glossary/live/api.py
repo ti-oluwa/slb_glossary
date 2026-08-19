@@ -19,6 +19,7 @@ from slb_glossary.live.parsers import (
     get_total_term_count,
 )
 from slb_glossary.live.urls import build_pager_query, build_search_url
+from slb_glossary.retries import retry
 from slb_glossary.types import RelatedTerm, SearchResult
 from slb_glossary.utils import as_async_iterator, get_topic_match, log_timed_yields
 
@@ -35,6 +36,13 @@ __all__ = [
 
 
 RELATED_KEYWORDS = ("related term", "see related", "synonyms", "alternate form")
+
+
+async def goto(session: BrowserSession, url: str, timeout: float | None = None) -> None:
+    async def _route() -> None:
+        await session.page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+
+    return await retry(_route, policy=session.retry, raise_exception=True)
 
 
 def _find_related_links(
@@ -97,11 +105,13 @@ async def _wait_for_settle(
         without any observed change.
     """
     goto_started_at = time.monotonic()
-    await session.page.goto(url, wait_until="domcontentloaded")
+    await goto(session, url)
     logger.debug("Loaded %s in %.3fs", url, time.monotonic() - goto_started_at)
 
     settle_started_at = time.monotonic()
-    deadline = settle_started_at + session.settle_timeout
+    settle_timeout = session.settle_timeout / 1000
+    poll_interval = session.poll_interval / 1000
+    deadline = settle_started_at + settle_timeout
     previous_links = list(previous_links)
     polls = 0
     while True:
@@ -118,13 +128,11 @@ async def _wait_for_settle(
 
         if time.monotonic() >= deadline:
             logger.debug(
-                "Results panel did not change within %.2fs of loading %s",
-                session.settle_timeout,
-                url,
+                "Results panel did not change within %.2fs of loading %s", settle_timeout, url
             )
             return current_links, current_header
         polls += 1
-        await asyncio.sleep(session.poll_interval)
+        await asyncio.sleep(poll_interval)
 
 
 async def get_terms_urls(
@@ -273,7 +281,7 @@ async def get_results_from_url(
     resolved_topic = get_topic_match(session.topics, topic) if topic else None
 
     started_at = time.monotonic()
-    await session.page.goto(url, wait_until="domcontentloaded")
+    await goto(session, url)
     term_name = await get_term_name(session.page)
     detail_sections = await get_term_detail_blocks(session.page)
     if not term_name or not detail_sections:

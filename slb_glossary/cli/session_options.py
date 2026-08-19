@@ -170,16 +170,16 @@ def session_options(func: F) -> F:
         click.option(
             "--settle-timeout",
             type=float,
-            default=8.0,
+            default=8000,
             show_default=True,
-            help="Seconds to wait for the results list to update after a search filter changes.",
+            help="Milliseconds to wait for the results list to update after a search filter changes.",
         ),
         click.option(
             "--poll-interval",
             type=float,
-            default=0.3,
+            default=300,
             show_default=True,
-            help="Seconds to wait between polls while waiting on --settle-timeout.",
+            help="Milliseconds to wait between polls while waiting on --settle-timeout.",
         ),
         click.option(
             "--executable-path",

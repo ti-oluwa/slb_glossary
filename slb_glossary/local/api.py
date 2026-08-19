@@ -235,7 +235,7 @@ async def upsert_results_incrementally(
     :raises ValueError: If `batch_size` is less than 1.
     """
     if batch_size < 1:
-        raise ValueError("batch_size must be at least 1")
+        raise ValueError("`batch_size` must be at least 1")
 
     buffer: list[SearchResult] = []
     total_written = 0

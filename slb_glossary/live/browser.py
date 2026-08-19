@@ -124,16 +124,23 @@ class BrowserSession:
     """Request resource types (e.g. `"image"`) dropped for this session."""
 
     retry: RetryPolicy = dataclasses.field(default_factory=RetryPolicy)
-    """Policy used to retry page loads that render before their JavaScript
-    search widget has finished populating."""
+    """
+    Policy used to retry page loads that render before their JavaScript
+    search widget has finished populating.
+    """
 
-    settle_timeout: float = 8.0
-    """Seconds to wait for the results list to update after a search
+    timeout: float = 60_000
+    """Milliseconds to wait for page/element load or lookups, and navigation before timeout"""
+
+    settle_timeout: float = 8000
+    """
+    Milliseconds to wait for the results list to update after a search
     filter changes, since the glossary updates its results via JavaScript
-    rather than a full page navigation."""
+    rather than a full page navigation.
+    """
 
-    poll_interval: float = 0.3
-    """Seconds to wait between polls while waiting on `settle_timeout`."""
+    poll_interval: float = 300
+    """Milliseconds to wait between polls while waiting on `settle_timeout`."""
 
     @classmethod
     async def from_config(
@@ -207,39 +214,37 @@ CHROMIUM_LAUNCH_ARGS = [
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
 
 
-BLOCKED_HOSTS = frozenset(
-    {
-        "google-analytics.com",
-        "googletagmanager.com",
-        "doubleclick.net",
-        "facebook.com",
-        "facebook.net",
-        "connect.facebook.net",
-        "hotjar.com",
-        "segment.io",
-        "segment.com",
-        "clarity.ms",
-        "cookiepro.com",
-        "onetrust.com",
-        "linkedin.com",
-        "googlesyndication.com",
-        "googleadservices.com",
-        "sharethis.com",
-        "csi.slb.com",
-        "segments.company-target.com",
-        "kaltura.com",
-        "peer5.com",
-        "bing.com",
-        "addthis.com",
-        "perk0mean.com",
-        "brightcove.net",
-        "botframework.com",
-        "google.com",
-        "powerplatform.com",
-        "crwdcntrl.net",
-        "arcgis.com",
-    }
-)
+BLOCKED_HOSTS = frozenset({
+    "google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
+    "facebook.com",
+    "facebook.net",
+    "connect.facebook.net",
+    "hotjar.com",
+    "segment.io",
+    "segment.com",
+    "clarity.ms",
+    "cookiepro.com",
+    "onetrust.com",
+    "linkedin.com",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "sharethis.com",
+    "csi.slb.com",
+    "segments.company-target.com",
+    "kaltura.com",
+    "peer5.com",
+    "bing.com",
+    "addthis.com",
+    "perk0mean.com",
+    "brightcove.net",
+    "botframework.com",
+    "google.com",
+    "powerplatform.com",
+    "crwdcntrl.net",
+    "arcgis.com",
+})
 
 
 def should_block_host(hostname: str, blocked_hosts: frozenset[str]) -> bool:
@@ -377,8 +382,8 @@ async def open_session(
     timeout: float = 60_000,
     terms_per_tab: int = 12,
     retry: RetryPolicy = DEFAULT_RETRY_POLICY,
-    settle_timeout: float = 8.0,
-    poll_interval: float = 0.3,
+    settle_timeout: float = 8000,
+    poll_interval: float = 300,
     executable_path: str | None = None,
     proxy: dict[str, str] | None = None,
     viewport: dict[str, int] | None = None,
@@ -409,9 +414,9 @@ async def open_session(
     :param retry: Policy for retrying the initial topic-list load if the
         glossary's search widget briefly renders empty. Also stored on the
         returned session for search functions to reuse.
-    :param settle_timeout: Seconds search functions should wait for the
+    :param settle_timeout: Milliseconds search functions should wait for the
         results list to update after changing a search filter.
-    :param poll_interval: Seconds search functions should wait between polls
+    :param poll_interval: Milliseconds search functions should wait between polls
         while waiting on `settle_timeout`.
     :param executable_path: Path to a specific browser build to launch.
         Defaults to the build patchright installs for `browser_type`.
@@ -471,6 +476,9 @@ async def open_session(
         if viewport is not None:
             context_kwargs["viewport"] = viewport
         context = await browser.new_context(**context_kwargs)
+        # Set timeout once here so all pages created inherit same, except overriden
+        context.set_default_timeout(timeout)
+        context.set_default_navigation_timeout(timeout)
 
         if use_stealth:
             stealth_started_at = time.monotonic()
@@ -478,8 +486,6 @@ async def open_session(
             logger.debug("Applied stealth patches in %.3fs", time.monotonic() - stealth_started_at)
 
         page = await context.new_page()
-        page.set_default_timeout(timeout)
-        page.set_default_navigation_timeout(timeout)
 
         blocked_resources = _resolve_blocked_resources(block)
         if blocked_resources:
@@ -519,6 +525,7 @@ async def open_session(
             terms_per_tab=terms_per_tab,
             blocked_resource_types=blocked_resources,
             retry=retry,
+            timeout=timeout,
             settle_timeout=settle_timeout,
             poll_interval=poll_interval,
         )
@@ -627,8 +634,8 @@ async def session(
     :param timeout: Milliseconds to wait for page loads and element lookups.
     :param terms_per_tab: Number of results returned per glossary results page.
     :param retry: Policy used when retrying the initial topic-list load.
-    :param settle_timeout: Seconds to wait for the results list to settle.
-    :param poll_interval: Poll interval used while waiting for results updates.
+    :param settle_timeout: Milliseconds to wait for the results list to settle.
+    :param poll_interval: Poll interval in milliseconds, used while waiting for results updates.
     :param executable_path: Path to a specific browser build to launch.
     :param proxy: Playwright proxy settings, e.g.
         `{"server": "http://myproxy:3128"}`.

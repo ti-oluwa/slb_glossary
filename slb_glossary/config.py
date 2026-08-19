@@ -119,11 +119,11 @@ class BrowserSessionOptions(Updatable):
     terms_per_tab: int = 12
     """Number of results the glossary site returns per results page."""
 
-    settle_timeout: float = 8.0
-    """Seconds to wait for the results list to update after a search filter changes."""
+    settle_timeout: float = 8000
+    """Milliseconds to wait for the results list to update after a search filter changes."""
 
-    poll_interval: float = 0.3
-    """Seconds to wait between polls while waiting on `settle_timeout`."""
+    poll_interval: float = 300
+    """Milliseconds to wait between polls while waiting on `settle_timeout`."""
 
     executable_path: str | None = None
     """Path to a specific browser build to launch, or `None` for patchright's default."""
@@ -166,7 +166,7 @@ class BrowserSessionOptions(Updatable):
         try:
             language = Language(self.language)
         except ValueError as exc:
-            choices = ", ".join(lang.value for lang in Language)
+            choices = ", ".join(language.value for language in Language)
             raise ConfigError(
                 f"Unknown language {self.language!r}. Expected one of: {choices}."
             ) from exc
