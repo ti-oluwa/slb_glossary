@@ -98,12 +98,6 @@ def score_result(query: str, result: SearchResult) -> float:
     """
     Score `result` against `query`, combining the name and content tiers.
 
-    The Python equivalent of one row of `slb_glossary.local.scored_search`'s
-    SQL query, for a result that didn't come from that query (a live one).
-    Checks the name tier first (`score_name_match`); only falls back to
-    the weaker, capped content tier (`score_content_overlap`) if
-    `result.term` itself isn't an exact/prefix match.
-
     :param query: The free-text query `result` was found for.
     :param result: The result to score.
     :return: A score in `[0.0, 1.0]`.

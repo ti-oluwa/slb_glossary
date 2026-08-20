@@ -78,39 +78,37 @@ CHROMIUM_LAUNCH_ARGS = [
 """Extra launch flags applied when `browser_type` is `BrowserType.CHROMIUM`."""
 
 
-BLOCKED_HOSTS = frozenset(
-    {
-        "google-analytics.com",
-        "googletagmanager.com",
-        "doubleclick.net",
-        "facebook.com",
-        "facebook.net",
-        "connect.facebook.net",
-        "hotjar.com",
-        "segment.io",
-        "segment.com",
-        "clarity.ms",
-        "cookiepro.com",
-        "onetrust.com",
-        "linkedin.com",
-        "googlesyndication.com",
-        "googleadservices.com",
-        "sharethis.com",
-        "csi.slb.com",
-        "segments.company-target.com",
-        "kaltura.com",
-        "peer5.com",
-        "bing.com",
-        "addthis.com",
-        "perk0mean.com",
-        "brightcove.net",
-        "botframework.com",
-        "google.com",
-        "powerplatform.com",
-        "crwdcntrl.net",
-        "arcgis.com",
-    }
-)
+BLOCKED_HOSTS = frozenset({
+    "google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
+    "facebook.com",
+    "facebook.net",
+    "connect.facebook.net",
+    "hotjar.com",
+    "segment.io",
+    "segment.com",
+    "clarity.ms",
+    "cookiepro.com",
+    "onetrust.com",
+    "linkedin.com",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "sharethis.com",
+    "csi.slb.com",
+    "segments.company-target.com",
+    "kaltura.com",
+    "peer5.com",
+    "bing.com",
+    "addthis.com",
+    "perk0mean.com",
+    "brightcove.net",
+    "botframework.com",
+    "google.com",
+    "powerplatform.com",
+    "crwdcntrl.net",
+    "arcgis.com",
+})
 
 
 def should_block_host(hostname: str, blocked_hosts: frozenset[str]) -> bool:
@@ -184,7 +182,8 @@ def _apply_log_sink(log_sink: LogSink | type[LogSink] | str | pathlib.Path | Non
         resolved = resolve_sink(log_sink)
     except Exception as exc:
         raise LoggingError(f"Could not set up log sink {log_sink!r}: {exc}") from exc
-    configure_logging(sinks=resolved)
+    
+    configure_logging(sinks={"slb_glossary.live.*": resolved})
     logger.debug("Session logging routed to %r", resolved)
 
 

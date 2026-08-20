@@ -40,15 +40,22 @@ a real `Context.report_progress` into this shape when wiring tools up.
 
 
 DEFAULT_INSTRUCTIONS = """\
-This server searches the SLB Energy Glossary (glossary.slb.com), a dictionary
-of oil-and-gas/energy industry terminology. It can read from a local cached
-copy, the live site, or both.
+This server is a deterministic source of truth for oil-and-gas/energy
+industry terminology, backed by the SLB Energy Glossary (glossary.slb.com).
+It doesn't generate or paraphrase definitions as every result is the
+glossary's own published wording, looked up exactly (from a local cached
+copy, the live site, or both), never invented or approximated. Call a
+tool whenever a definition, spelling, or topic classification needs to be
+authoritative rather than recalled from your own training - e.g. before
+stating a technical term's definition, disambiguating similar-sounding
+terms, or citing a source for a term used in a report/answer.
 
 Tool selection:
-- Know the exact term name already? Use `glossary_get_term` - it's the
-  cheapest, most precise lookup.
-- Free-text/keyword/partial query, or you're not sure of the exact term?
-  Use `glossary_search`.
+- Know the exact term name already? Use `glossary_get_term`. It's the
+  cheapest, most precise lookup, and the right default for "what does X
+  mean" once you know X exactly.
+- Free-text/keyword/partial query, unsure of the exact term, or checking
+  whether a term exists at all? Use `glossary_search`.
 - Want every term under one subject area (e.g. "Drilling", "Geology")?
   Use `glossary_get_terms_on`; call `glossary_get_topics` first if you
   don't already know the exact topic name.
@@ -62,7 +69,8 @@ Tool selection:
 Every tool accepts a `source` argument ("auto", "local", or "live") when
 this server exposes that choice: "auto" tries the local cache first and
 only reaches out to the live site if nothing local matches. Prefer leaving
-it at "auto" unless you specifically need one or the other.
+it at "auto" unless you specifically need one or the other. A result's
+"source" field in the response tells you which one actually served it.
 """
 
 
@@ -569,12 +577,12 @@ async def _handle_sync(
 
 def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
     """
-    Build the list of `ToolSpec`s to register, given `config.resolved_tools()`.
+    Build the list of `ToolSpec`s to register, given `config.resolve_tools()`.
 
     :param config: The server's `MCPConfig`.
     :return: One `ToolSpec` per enabled tool, in a stable, sensible order.
     """
-    enabled = config.resolved_tools()
+    enabled = config.resolve_tools()
     specs: list[ToolSpec] = []
 
     def add(
@@ -608,9 +616,11 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         Tool.SEARCH,
         name="glossary_search",
         description=(
-            "Free-text search across the SLB Energy Glossary. Use this for keyword or "
-            "partial-name queries, or when you're not sure of a term's exact name. Returns "
-            "the best-matching term definitions, most relevant first."
+            "Authoritative free-text search across the SLB Energy Glossary. Use this for "
+            "keyword/partial-name queries, to check whether a term exists, or when you're not "
+            "sure of a term's exact name. Returns the glossary's own published definitions "
+            "(never generated), best match first. If you already know the exact term name, "
+            "use glossary_get_term instead - it's cheaper and more precise."
         ),
         args_type=SearchArgs,
         tags=frozenset({"read", "search"}),
@@ -621,9 +631,11 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         Tool.GET_TERM,
         name="glossary_get_term",
         description=(
-            "Look up a single glossary term by its exact (case-insensitive) name, or by its "
-            "detail-page URL. Use this instead of glossary_search when you already know the "
-            "precise term name - it's cheaper and more precise."
+            "Get the authoritative, exact definition of a single glossary term by its precise "
+            "(case-insensitive) name, or by its detail-page URL. The deterministic source of "
+            "truth to call before stating what a technical term means, instead of relying on "
+            "your own recollection. Cheaper and more precise than glossary_search when you "
+            "already know the exact term name."
         ),
         args_type=GetTermArgs,
         tags=frozenset({"read", "lookup"}),
@@ -633,8 +645,9 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         Tool.GET_TERMS_ON,
         name="glossary_get_terms_on",
         description=(
-            "List every term filed under one or more glossary topics (subject areas), e.g. "
-            "'Drilling' or 'Geology,Geophysics'. Call glossary_get_topics first if you're not "
+            "List every authoritative glossary term filed under one or more subject-area "
+            "topics, e.g. 'Drilling' or 'Geology,Geophysics'. Use this to enumerate a whole "
+            "category of terminology at once. Call glossary_get_topics first if you're not "
             "sure of the exact topic name."
         ),
         args_type=TermsOnArgs,
@@ -648,7 +661,8 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         description=(
             "List glossary term detail-page URLs matching a query/topic/starting letter, "
             "without fetching full definitions. Lighter-weight than glossary_search - use "
-            "this when you only need to enumerate candidates or count matches."
+            "this when you only need to enumerate or count candidates, or want a citable "
+            "source URL without pulling the whole definition."
         ),
         args_type=TermsUrlsArgs,
         tags=frozenset({"read", "search"}),
@@ -659,7 +673,9 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         name="glossary_get_topics",
         description=(
             "List every glossary topic (subject area) and how many terms are filed under "
-            "each. Use this to discover valid topic names before calling glossary_get_terms_on."
+            "each. The authoritative topic taxonomy this server uses. Call this first "
+            "whenever you need a valid topic name for glossary_get_terms_on, rather than "
+            "guessing one."
         ),
         args_type=TopicsArgs,
         tags=frozenset({"read", "topic"}),
@@ -669,8 +685,9 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         Tool.RELATED_TERMS,
         name="glossary_related_terms",
         description=(
-            "Get the terms linked from within a single term's own definition ('See related "
-            "terms'). Use this to explore concepts adjacent to a term you already looked up."
+            "Get the authoritative list of terms the glossary itself links from within one "
+            "term's own definition ('See related terms'). Use this to explore concepts "
+            "adjacent to a term you already looked up, sourced from the glossary rather than inferred."
         ),
         args_type=RelatedTermsArgs,
         tags=frozenset({"read", "lookup"}),
@@ -680,8 +697,9 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         Tool.RANDOM_TERM,
         name="glossary_random_term",
         description=(
-            "Get one randomly chosen glossary term, optionally restricted to a topic. Use "
-            "this for exploration/discovery, not for looking up something specific."
+            "Get one randomly chosen glossary term (with its authoritative definition), "
+            "optionally restricted to a topic. Use this for exploration/discovery/quizzing, "
+            "not for looking up something specific - use glossary_get_term for that."
         ),
         args_type=RandomTermArgs,
         tags=frozenset({"read", "discovery"}),
@@ -691,9 +709,9 @@ def build_tool_specs(config: MCPConfig) -> list[ToolSpec]:
         Tool.COMPARE,
         name="glossary_compare",
         description=(
-            "Look up several specific glossary terms at once, for side-by-side comparison. "
-            "Use this instead of several glossary_get_term calls when the user wants to "
-            "compare/contrast multiple named terms."
+            "Look up several specific glossary terms at once, each with its authoritative "
+            "definition, for side-by-side comparison. Use this instead of several separate "
+            "glossary_get_term calls when the user wants to compare/contrast multiple named terms."
         ),
         args_type=CompareArgs,
         tags=frozenset({"read", "lookup"}),

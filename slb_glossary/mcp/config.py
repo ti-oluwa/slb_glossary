@@ -422,7 +422,7 @@ class Logging(Updatable):
     Where to route logging. Any single `slb_glossary.logging.resolve_sink`
     spec (a `LogSink` instance/class, `"stderr"`/`"stdout"`, a file path, or
     a `"module:ClassName"` import path), several, or a `{filter: sink(s)}`
-    mapping to send only matching log records to each sink - e.g. everything
+    mapping to send only matching log records to each sink, e.g. everything
     from a live session/the query API to one file, everything else to
     another. See `slb_glossary.logging.SinkHandler`.
 
@@ -609,9 +609,9 @@ class MCPConfig(Updatable):
                 f"{type(self).__name__}: `session.max_concurrent` must be at least 1."
             )
 
-    def resolved_tools(self) -> Tool:
+    def resolve_tools(self) -> Tool:
         """
-        The actual set of tools to build, after gating `Tool.SYNC` on write access.
+        Return the actual set of tools to build, after gating `Tool.SYNC` on write access.
 
         `Tool.SYNC` is stripped out unless *both* `Tool.SYNC` is in `tools`
         *and* `local.allow_write` is `True`. So flipping on a
@@ -637,6 +637,7 @@ class MCPConfig(Updatable):
 
         ```python
         config = MCPConfig.default(language="es")
+
         # instead of:
         config = MCPConfig.default().update(
             session=SessionAccess().update(

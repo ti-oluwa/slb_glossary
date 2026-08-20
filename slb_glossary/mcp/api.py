@@ -71,7 +71,7 @@ class MCPApp(NamedComponent):
         Build (if not already built) and return the underlying `fastmcp.FastMCP` server.
 
         Idempotent: repeated calls return the same instance. Building
-        registers every tool `self.config.resolved_tools()` selects and
+        registers every tool `self.config.resolve_tools()` selects and
         attaches `slb_glossary.mcp.middleware.MCPMiddleware`, but does
         not open any resources yet (database/session). That happens in `start()`.
         """

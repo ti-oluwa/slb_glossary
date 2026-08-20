@@ -1,7 +1,10 @@
 """Utilities shared across the package."""
 
+import builtins
 import dataclasses
+import enum
 import logging
+import os
 import sys
 import time
 import typing
@@ -20,12 +23,79 @@ __all__ = [
     "print_async_records",
     "log_timed_yields",
     "Updatable",
+    "env",
+    "EnvVarError",
+    "Lookup",
 ]
 
 logger = logging.getLogger(__name__)
 
 T = typing.TypeVar("T")
 UpdatableT = typing.TypeVar("UpdatableT", bound="Updatable")
+
+
+class EnvVarError(ValueError):
+    """Raised when an environment variable is set but can't be cast/validated to its expected type."""
+
+
+_ENV_CASTERS: dict[type, typing.Callable[[str], typing.Any]] = {
+    bool: lambda raw: raw.strip().lower() in ("1", "true", "yes", "on"),
+    int: int,
+    float: float,
+    str: str,
+}
+
+
+def env(
+    name: str,
+    default: T,
+    *,
+    type: type[T] | None = None,
+    validate: typing.Callable[[T], bool] | None = None,
+) -> T:
+    """
+    Read environment variable `name` at call time, cast it, and validate it.
+
+    Meant for module-level constants that should be overridable without
+    editing code, e.g.:
+
+    ```python
+    DEFAULT_RELEVANCE_THRESHOLD = env(
+        "SLB_GLOSSARY_RELEVANCE_THRESHOLD", 0.55, validate=lambda v: 0.0 <= v <= 1.0
+    )
+    ```
+
+    :param name: Environment variable name to read.
+    :param default: Value used when `name` isn't set in the environment.
+        Also determines the expected type when `type` isn't given explicitly.
+    :param type: Expected type to cast the raw string value to. Defaults
+        to `type(default)`. Supports `bool`, `int`, `float`, `str`, and
+        any `enum.Enum` subclass (matched by value).
+    :param validate: Optional extra check run on the cast value. A
+        `False` return is treated the same as a cast failure.
+    :return: The cast, validated value, or `default` if `name` isn't set.
+    :raises EnvVarError: If `name` is set but its value can't be cast to
+        the expected type, or fails `validate`.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+
+    expected = type if type is not None else builtins.type(default)
+    try:
+        if isinstance(expected, builtins.type) and issubclass(expected, enum.Enum):
+            value = expected(raw)  # type: ignore[call-arg]
+        else:
+            caster = _ENV_CASTERS.get(expected, expected)
+            value = caster(raw)
+    except (ValueError, TypeError) as exc:
+        raise EnvVarError(
+            f"Environment variable {name}={raw!r} is not a valid {expected.__name__}."
+        ) from exc
+
+    if validate is not None and not validate(value):  # type: ignore[arg-type]
+        raise EnvVarError(f"Environment variable {name}={raw!r} is not a valid value.")
+    return typing.cast(T, value)
 
 
 class Updatable:
@@ -386,8 +456,11 @@ def _format_generic_row(
     return row
 
 
+RecordT = typing.TypeVar("RecordT", bound=RecordLike)
+
+
 @typing.runtime_checkable
-class _Lookup(typing.Protocol):
+class _Lookup(typing.Protocol[RecordT]):
     """
     Structural shape `annotate=True` table/JSON output needs from each
     item: satisfied by `slb_glossary.query.LookupResult`, without
@@ -395,17 +468,21 @@ class _Lookup(typing.Protocol):
     on this module, so importing it back here would be circular).
     """
 
-    value: typing.Any
+    value: RecordT
     source: typing.Any
     """A `slb_glossary.query.Source` member; only `.value` (its string name) is used."""
     score: float | None
 
 
-RecordT = typing.TypeVar("RecordT", bound=RecordLike)
+Lookup = _Lookup
+"""
+Public name for `_Lookup`, for other modules that need to type-annotate an `annotate=True` caller's input without a
+circular import on `slb_glossary.query.LookupResult` itself.
+"""
 
 
 def _make_table_and_formatter(
-    sample: RecordT,
+    sample: typing.Any,
     *,
     title: str | None,
     show_url: bool,
@@ -414,7 +491,7 @@ def _make_table_and_formatter(
     show_image: bool,
     show_related: bool,
     annotate: bool = False,
-) -> tuple[Table, typing.Callable[[RecordT], list[str]]]:
+) -> tuple[Table, typing.Callable[[typing.Any], list[str]]]:
     """
     Choose a table layout and row formatter suited to `sample`'s record type.
 
@@ -435,7 +512,7 @@ def _make_table_and_formatter(
     :return: A `(table, formatter)` pair; call `formatter(record)` for
         every record (including `sample`) to get its row cells.
     """
-    record_sample = sample.value if annotate else sample  # type: ignore[union-attr]
+    record_sample = sample.value if annotate else sample
 
     if isinstance(record_sample, SearchResult):
         table = _make_result_table(
@@ -449,7 +526,7 @@ def _make_table_and_formatter(
             show_score=annotate,
         )
 
-        def _result_formatter(record: RecordT) -> list[str]:
+        def _result_formatter(record: typing.Any) -> list[str]:
             result, origin, score = _unwrap(record, annotate=annotate)
             return _format_result_row(
                 result,
@@ -469,7 +546,7 @@ def _make_table_and_formatter(
     fields = list(getattr(record_sample, "fields", None) or record_sample.asdict().keys())
     table = _make_generic_table(fields, title=title, show_origin=annotate, show_score=annotate)
 
-    def _generic_formatter(record: RecordT) -> list[str]:
+    def _generic_formatter(record: typing.Any) -> list[str]:
         rec, origin, score = _unwrap(record, annotate=annotate)
         return _format_generic_row(
             rec, fields, show_origin=annotate, show_score=annotate, origin=origin, score=score
@@ -486,8 +563,40 @@ def _unwrap(record: typing.Any, *, annotate: bool) -> tuple[typing.Any, str | No
     return lookup.value, lookup.source.value, lookup.score
 
 
+@typing.overload
 def print_records(
-    results: typing.Iterable[RecordLike],
+    results: typing.Iterable[RecordT],
+    *,
+    title: str | None = None,
+    out: typing.TextIO | None = None,
+    limit: int | None = None,
+    show_url: bool = True,
+    show_topic: bool = True,
+    show_grammar: bool = True,
+    show_image: bool = False,
+    show_related: bool = False,
+    annotate: typing.Literal[False] = False,
+) -> int: ...
+
+
+@typing.overload
+def print_records(
+    results: typing.Iterable[_Lookup[RecordT]],
+    *,
+    title: str | None = None,
+    out: typing.TextIO | None = None,
+    limit: int | None = None,
+    show_url: bool = True,
+    show_topic: bool = True,
+    show_grammar: bool = True,
+    show_image: bool = False,
+    show_related: bool = False,
+    annotate: typing.Literal[True],
+) -> int: ...
+
+
+def print_records(
+    results: typing.Iterable[typing.Any],
     *,
     title: str | None = None,
     out: typing.TextIO | None = None,
@@ -508,8 +617,9 @@ def print_records(
     including lazily produced generators.
 
     :param results: The records to print. May be empty. With
-        `annotate=True`, each item is expected to be `_Lookup`-shaped
-        (e.g. a `slb_glossary.query.LookupResult`) rather than a bare record.
+        `annotate=True`, each item is a `slb_glossary.query.LookupResult`
+        (or anything else `_Lookup`-shaped) wrapping the record, rather
+        than the bare record itself.
     :param title: Title shown above the table, e.g. `"Terms under Drilling"`.
         Defaults to `"Search Results"` for `SearchResult`s, or `"Results"`
         for any other record type.
@@ -572,8 +682,40 @@ def print_records(
     return count
 
 
+@typing.overload
 async def print_async_records(
-    results: typing.AsyncIterable[RecordLike],
+    results: typing.AsyncIterable[RecordT],
+    *,
+    title: str | None = None,
+    out: typing.TextIO | None = None,
+    limit: int | None = None,
+    show_url: bool = True,
+    show_topic: bool = True,
+    show_grammar: bool = True,
+    show_image: bool = False,
+    show_related: bool = False,
+    annotate: typing.Literal[False] = False,
+) -> int: ...
+
+
+@typing.overload
+async def print_async_records(
+    results: typing.AsyncIterable[_Lookup[RecordT]],
+    *,
+    title: str | None = None,
+    out: typing.TextIO | None = None,
+    limit: int | None = None,
+    show_url: bool = True,
+    show_topic: bool = True,
+    show_grammar: bool = True,
+    show_image: bool = False,
+    show_related: bool = False,
+    annotate: typing.Literal[True],
+) -> int: ...
+
+
+async def print_async_records(
+    results: typing.AsyncIterable[typing.Any],
     *,
     title: str | None = None,
     out: typing.TextIO | None = None,

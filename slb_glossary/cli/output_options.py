@@ -10,7 +10,7 @@ import typing
 import click
 
 from slb_glossary.types import RecordLike
-from slb_glossary.utils import print_async_records
+from slb_glossary.utils import Lookup, print_async_records
 from slb_glossary.writers import records_to_dicts, save
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ __all__ = ["output_options", "output_results"]
 
 
 F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
+RecordT = typing.TypeVar("RecordT", bound=RecordLike)
 
 
 def output_options(func: F) -> F:
@@ -69,8 +70,46 @@ def output_options(func: F) -> F:
     return func
 
 
+@typing.overload
 async def output_results(
-    results: typing.AsyncIterable[RecordLike] | typing.AsyncIterator[RecordLike],
+    results: typing.AsyncIterable[RecordT] | typing.AsyncIterator[RecordT],
+    *,
+    title: str | None = None,
+    save_paths: typing.Sequence[pathlib.Path],
+    format: str | None,
+    quiet: bool,
+    json_output: bool = False,
+    print_limit: int | None = None,
+    show_url: bool = True,
+    show_topic: bool = True,
+    show_grammar: bool = True,
+    show_image: bool = False,
+    show_related: bool = False,
+    annotate: typing.Literal[False] = False,
+) -> int: ...
+
+
+@typing.overload
+async def output_results(
+    results: typing.AsyncIterable[Lookup[RecordT]] | typing.AsyncIterator[Lookup[RecordT]],
+    *,
+    title: str | None = None,
+    save_paths: typing.Sequence[pathlib.Path],
+    format: str | None,
+    quiet: bool,
+    json_output: bool = False,
+    print_limit: int | None = None,
+    show_url: bool = True,
+    show_topic: bool = True,
+    show_grammar: bool = True,
+    show_image: bool = False,
+    show_related: bool = False,
+    annotate: typing.Literal[True],
+) -> int: ...
+
+
+async def output_results(
+    results: typing.AsyncIterable[typing.Any] | typing.AsyncIterator[typing.Any],
     *,
     title: str | None = None,
     save_paths: typing.Sequence[pathlib.Path],
@@ -161,7 +200,7 @@ async def output_results(
 
 
 async def _collect_and_output(
-    results: typing.AsyncIterator[RecordLike],
+    results: typing.AsyncIterator[typing.Any],
     *,
     title: str | None,
     save_paths: typing.Sequence[pathlib.Path],
@@ -177,13 +216,13 @@ async def _collect_and_output(
     annotate: bool = False,
 ) -> int:
     """The body of `output_results`, run inside its `contextlib.aclosing(results)` block."""
-    collected: list[RecordLike] = []
+    collected: list[typing.Any] = []
     count = 0
     was_collected = False
 
     if not quiet:
 
-        async def _async_gen() -> typing.AsyncIterator[RecordLike]:
+        async def _async_gen() -> typing.AsyncIterator[typing.Any]:
             nonlocal collected, count, was_collected
             was_collected = True
             async for record in results:
@@ -209,11 +248,11 @@ async def _collect_and_output(
             output: list[dict[str, typing.Any]] = []
             output_count = 0
             async for record in iter_records:
-                item = record.value if annotate else record  # type: ignore[union-attr]
+                item = record.value if annotate else record
                 item_dict = records_to_dicts([item], exclude=exclude)[0]
                 if annotate:
-                    item_dict["source"] = record.source.value  # type: ignore[union-attr]
-                    item_dict["score"] = record.score  # type: ignore[union-attr]
+                    item_dict["source"] = record.source.value
+                    item_dict["score"] = record.score
                 output.append(item_dict)
                 output_count += 1
                 if print_limit and output_count >= print_limit:
@@ -249,7 +288,7 @@ async def _collect_and_output(
         count = len(targets)  # Make sure to update count
 
         if annotate:
-            targets = [record.value for record in targets]  # type: ignore[union-attr]
+            targets = [record.value for record in targets]
 
         for path in save_paths:
             await save(targets, path, format=format)

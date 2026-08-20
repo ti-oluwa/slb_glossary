@@ -150,21 +150,19 @@ class LookupResult(typing.Generic[T]):
     `persist=True`). For a streamed lookup (`search`, `get_terms_on`),
     this reflects whether persistence was requested for the call as a
     whole, not whether this specific item's own database write has been
-    confirmed yet. Live results are written incrementally in batches
-    (see `slb_glossary.local.upsert_results_incrementally`), so an
-    individual item's write may still be pending in its batch when it's
-    yielded.
+    confirmed yet. 
+    
+    Live results are written incrementally in batches so an individual 
+    item's write may still be pending in its batch when it's yielded.
     """
 
     score: float | None = None
     """
     A relevance score in `[0.0, 1.0]` for this value against the query it
-    was found for, where that's meaningful. Computed by
-    `slb_glossary.local.scored_search` for a local result, or
-    `slb_glossary.relevance.score_result` for a live one, so a local
-    score and a live score mean roughly the same thing. `None` where
-    scoring doesn't apply (a topic listing, a related-terms lookup, and
-    so on).
+    was found for, where that's meaningful. 
+    
+    `None` where scoring doesn't apply (a topic listing, a related-terms lookup, 
+    and so on).
     """
 
 
@@ -224,9 +222,7 @@ def resolve_source(db: Database | None, session: Session | None, source: Source)
 async def _maybe_persist(
     db: Database | None, results: typing.Sequence[SearchResult], *, persist: bool, language: str
 ) -> bool:
-    """
-    Upsert `results` into `db` in one shot, for single-value lookups (`get_term` et al).
-    """
+    """Upsert `results` into `db` in one shot."""
     if not persist or db is None or not results:
         return False
     started_at = time.monotonic()
@@ -313,13 +309,12 @@ async def search(
     as "water saturation" against both `db` and `session`.
 
     With `source=Source.AUTO` (the default when both `db` and `session`
-    are given), the local database is searched first and scored (see
-    `slb_glossary.local.scored_search`). If its best result meets
-    `relevance_threshold`, those local results are served alone. Otherwise
-    the live glossary is queried too, and its results (each scored with
-    `slb_glossary.relevance.score_result`) are added on after the local
-    ones. Local results aren't thrown away just because they weren't
-    confident, they're just not trusted as the whole answer.
+    are given), the local database is searched first and scored. 
+    If its best result meets `relevance_threshold`, those local results 
+    are served alone. Otherwise the live glossary is queried too, and 
+    its results are added on after the local ones. Local results aren't 
+    thrown away just because they weren't confident, they're just not 
+    trusted as the whole answer.
 
     :param query: Free-text query.
     :param db: An open local `Database`. Required for `Source.LOCAL`, and
@@ -933,7 +928,7 @@ def _local_term_lookup(result: SearchResult | None, *, with_similar: bool) -> Lo
 async def _finalize_live_term_lookup(
     db: Database | None,
     session: Session,
-    fetched: "LookupResult[SearchResult] | None | SimilarResult",
+    fetched: LookupResult[SearchResult] | None | SimilarResult,
     *,
     with_similar: bool,
     persist: bool,
@@ -964,7 +959,7 @@ async def _finalize_live_term_lookup(
 
 
 def _flatten_results(
-    fetched: "LookupResult[SearchResult] | None | SimilarResult", *, with_similar: bool
+    fetched: LookupResult[SearchResult] | None | SimilarResult, *, with_similar: bool
 ) -> list[SearchResult]:
     """Flatten a `_fetch_term` result into the `SearchResult`(s) `_maybe_persist` should cache."""
     if not with_similar:
