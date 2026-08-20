@@ -30,7 +30,19 @@ def _prefill_schema(command_schema: typing.Any, ctx: click.Context) -> None:
     so the form trogon builds from `command_schema` opens pre-filled
     instead of blank/click's-own-defaults.
 
-    Best-effort: `ctx.command.params` and `command_schema.options`/
+    A param whose resolved value is `None` (an optional option/argument
+    that wasn't actually given on this run, e.g. `--topic`/`--source`
+    left unset) is skipped rather than prefilled: trogon already built
+    `schema.default` from that option's own click-level default when it
+    first introspected the command, and that's a value trogon knows how
+    to preselect. Overwriting it with a processed `None` instead leaves a
+    choice-backed field (rendered as a `Select` widget) with nothing it
+    can map back to a real option and the field is then stuck showing no
+    selection, which only surfaces as an error once the form is submitted
+    and trogon/click tries to convert that non-selection into a string
+    argument. Skipping it here just leaves trogon's own working default in place.
+
+    Best-effort otherwise: `ctx.command.params` and `command_schema.options`/
     `.arguments` are expected to zip up one-to-one in order, matching
     trogon's own construction. If a future trogon version changes that,
     this just stops pairing correctly rather than raising - the caller
@@ -55,7 +67,23 @@ def _prefill_schema(command_schema: typing.Any, ctx: click.Context) -> None:
             continue
         if schema is None or param.name not in ctx.params:
             continue
-        schema.default = MultiValueParamData.process_cli_option(ctx.params[param.name])
+
+        value = ctx.params[param.name]
+        if value is None:
+            if param.required:
+                # Shouldn't normally happen as click resolves required
+                # params (or fails) before `launch_tui` is ever reached.
+                # But if it does, there's nothing meaningful to prefill
+                # with; leave it for the user to fill in in the form
+                # rather than forcing a default that isn't there.
+                logger.debug(
+                    "Required param %r has no resolved value to prefill the TUI with; "
+                    "leaving its field for the user to fill in",
+                    param.name,
+                )
+            continue
+
+        schema.default = MultiValueParamData.process_cli_option(value)
 
 
 def _find_node(node: typing.Any, path: typing.Sequence[str]) -> typing.Any:
