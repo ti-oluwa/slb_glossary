@@ -65,10 +65,10 @@ def update(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
     config = get_loaded_config(params)
     db_path = resolve_db_path(config, params["db_path"])
 
-    async def _run() -> SyncSummary:
+    async def run() -> SyncSummary:
         async with local.database(db_path) as db:
             async with browser_session(**resolve_session_kwargs(ctx, params)) as session:
                 return await run_configured_sync(db, session, params)
 
-    summary = run_async(_run())
+    summary = run_async(run())
     print_sync_summary(summary)

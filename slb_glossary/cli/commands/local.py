@@ -49,13 +49,13 @@ def show_path(**params: typing.Any) -> None:
       slb-glossary local path
     """
 
-    async def _run() -> tuple[typing.Any, typing.Any]:
+    async def run() -> tuple[typing.Any, typing.Any]:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
         async with local_pkg.database(db_path) as db:
             return db.db_path, db.metadata_path
 
-    db_path, metadata_path = run_async(_run())
+    db_path, metadata_path = run_async(run())
     click.echo(f"Database: {db_path}")
     click.echo(f"Metadata: {metadata_path}")
     click.echo(
@@ -85,7 +85,7 @@ def stats(**params: typing.Any) -> None:
       slb-glossary local stats --json
     """
 
-    async def _run() -> tuple[int, dict[str, int], Metadata]:
+    async def run() -> tuple[int, dict[str, int], Metadata]:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
         async with local_pkg.database(db_path) as db:
@@ -94,7 +94,7 @@ def stats(**params: typing.Any) -> None:
             metadata = Metadata.load(db.metadata_path)
             return total, topics, metadata
 
-    total, topics, metadata = run_async(_run())
+    total, topics, metadata = run_async(run())
 
     if params["json_output"]:
         click.echo(
@@ -168,7 +168,7 @@ def local_search(query: str, **params: typing.Any) -> None:
     if params["topic"]:
         title += f" (topic: {params['topic']})"
 
-    async def _run() -> int:
+    async def run() -> int:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
         async with local_pkg.database(db_path) as db:
@@ -184,7 +184,7 @@ def local_search(query: str, **params: typing.Any) -> None:
                 json_output=params["json_output"],
             )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo("No local results found.", err=True)
 
@@ -206,7 +206,7 @@ def local_get(term_or_url: str, **params: typing.Any) -> None:
     if not term_or_url.strip():
         raise click.BadParameter("Missing term or URL.")
 
-    async def _run() -> int:
+    async def run() -> int:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
         async with local_pkg.database(db_path) as db:
@@ -226,7 +226,7 @@ def local_get(term_or_url: str, **params: typing.Any) -> None:
                 json_output=params["json_output"],
             )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo(f"{term_or_url!r} was not found locally.", err=True)
 
@@ -247,13 +247,13 @@ def flush(**params: typing.Any) -> None:
     if not params["assume_yes"]:
         click.confirm("Delete every term stored in the local database?", abort=True)
 
-    async def _run() -> None:
+    async def run() -> None:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
         async with local_pkg.database(db_path) as db:
             await local_pkg.flush(db)
 
-    run_async(_run())
+    run_async(run())
     click.echo("Local database flushed.")
 
 
@@ -275,13 +275,13 @@ def reset(**params: typing.Any) -> None:
             "Delete every term and reset sync history in the local database?", abort=True
         )
 
-    async def _run() -> None:
+    async def run() -> None:
         config = get_loaded_config(params)
         db_path = resolve_db_path(config, params["db_path"])
         async with local_pkg.database(db_path) as db:
             await local_pkg.reset(db)
 
-    run_async(_run())
+    run_async(run())
     click.echo("Local database reset.")
 
 

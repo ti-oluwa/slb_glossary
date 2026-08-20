@@ -104,7 +104,7 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
         async for record in iter_topic_records(topics):
             yield record
 
-    async def _run() -> int:
+    async def run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             records = resolve_stream(
                 ctx,
@@ -128,7 +128,7 @@ def list_topics(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
                 show_related=False,
             )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo("No topics found.", err=True)
 
@@ -161,7 +161,7 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
         launch_tui(ctx, command_path=("topics", "refresh"))
         return
 
-    async def _run() -> int:
+    async def run() -> int:
         async with browser_session(**resolve_session_kwargs(ctx, params)) as session:
             session = await refresh_topics(session)
             return await output_results(
@@ -178,6 +178,6 @@ def refresh(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
                 show_related=False,
             )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo("No topics found.", err=True)

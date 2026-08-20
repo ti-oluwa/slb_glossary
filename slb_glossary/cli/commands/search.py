@@ -57,7 +57,7 @@ def _should_annotate(annotate: str, source: Source) -> bool:
     return source is Source.AUTO
 
 
-async def _stream_auto_search(
+async def auto_search_stream(
     ctx: click.Context,
     params: typing.Mapping[str, typing.Any],
     db: Database | None,
@@ -304,10 +304,10 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     if params["topic"]:
         title += f" (topic: {params['topic']})"
 
-    async def _run() -> int:
+    async def run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             if source is Source.AUTO:
-                lookups: typing.AsyncIterator[LookupResult[SearchResult]] = _stream_auto_search(
+                lookups = auto_search_stream(
                     ctx,
                     params,
                     db,
@@ -346,8 +346,8 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
 
             annotate = _should_annotate(params["annotate"], source)
             stream = lookups if annotate else (lookup.value async for lookup in lookups)
-            return await output_results(
-                stream,
+            return await output_results(  # type: ignore
+                stream,  # type: ignore[arg-type]
                 title=title,
                 save_paths=params["save_paths"],
                 format=params["format"],
@@ -358,9 +358,9 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                 show_grammar=params["show_grammar"],
                 show_image=params["show_image"],
                 show_related=params["show_related"],
-                annotate=annotate,
+                annotate=annotate,  # type: ignore[arg-type]
             )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo("No results found.", err=True)

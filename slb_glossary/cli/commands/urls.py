@@ -130,7 +130,7 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
         title_bits.append(f"start_letter={params['start_letter']!r}")
     title = f"Term URLs ({', '.join(title_bits)})" if title_bits else "Term URLs"
 
-    async def _run() -> int:
+    async def run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             url_iter = resolve_stream(
                 ctx,
@@ -169,7 +169,7 @@ def list_urls(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None:
                 show_grammar=False,
             )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo("No URLs found.", err=True)
 
@@ -250,7 +250,7 @@ def fetch_url(ctx: click.Context, url: str, use_tui: bool, **params: typing.Any)
         launch_tui(ctx, command_path=("urls", "fetch"))
         return
 
-    async def _run() -> int:
+    async def run() -> int:
         async with browser_session(**resolve_session_kwargs(ctx, params)) as session:
             results = get_results_from_url(session, url, topic=params["topic"])
             return await output_results(
@@ -267,6 +267,6 @@ def fetch_url(ctx: click.Context, url: str, use_tui: bool, **params: typing.Any)
                 show_related=params["show_related"],
             )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo("No definitions found at that URL.", err=True)

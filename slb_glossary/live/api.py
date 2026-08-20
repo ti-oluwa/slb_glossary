@@ -177,6 +177,7 @@ async def get_terms_urls(
     if limit is not None and limit < 1:
         raise ValueError("`limit` must be greater than 0")
     if not topic and not (query or start_letter):
+        print("Nothing")
         return
 
     started_at = time.monotonic()

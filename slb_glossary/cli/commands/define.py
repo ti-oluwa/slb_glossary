@@ -98,7 +98,7 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
 
     suggest_similar = params["suggest_similar"]
 
-    async def _run() -> tuple[int, tuple[SearchResult, ...]]:
+    async def run() -> tuple[int, tuple[SearchResult, ...]]:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             lookup = await resolve_lookup(
                 ctx,
@@ -152,7 +152,7 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
         )
         return count, similar
 
-    count, similar = run_async(_run())
+    count, similar = run_async(run())
     if count > 0 or params["quiet"]:
         return
 

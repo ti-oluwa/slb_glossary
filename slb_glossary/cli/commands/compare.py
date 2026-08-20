@@ -105,7 +105,7 @@ def compare(
                 elif not params["quiet"]:
                     click.secho(f"Not found: {term!r}", fg="yellow", err=True)
 
-    async def _run() -> int:
+    async def run() -> int:
         return await output_results(
             _stream(),
             title=title,
@@ -117,7 +117,7 @@ def compare(
         )
 
     sources_seen: set[str] = set()
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and sources_seen:
         click.secho(f"(source: {', '.join(sorted(sources_seen))})", fg="bright_black", err=True)
     if not params["quiet"] and count == 0:

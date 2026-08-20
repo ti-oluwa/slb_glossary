@@ -369,4 +369,4 @@ async def resolve_stream(
 
     async with live_session(ctx, params) as session:
         async for item in live_call(session):
-            yield item  # noqa: ASYNC119 - see the Source.LIVE branch above.
+            yield item  # noqa: ASYNC119

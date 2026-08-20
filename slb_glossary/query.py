@@ -212,9 +212,9 @@ def validate_source(db: Database | None, session: Session | None, source: Source
 
 
 def resolve_source(db: Database | None, session: Session | None, source: Source) -> Source:
-    """Narrow `Source.AUTO` to a starting concrete source given what's available."""
+    """Attempt to narrow `Source.AUTO` to a starting concrete source given what's available."""
     validate_source(db, session, source)
-    if source is not Source.AUTO:
+    if source is not Source.AUTO or (db is not None and session is not None):
         return source
     return Source.LOCAL if db is not None else Source.LIVE
 
@@ -309,11 +309,11 @@ async def search(
     as "water saturation" against both `db` and `session`.
 
     With `source=Source.AUTO` (the default when both `db` and `session`
-    are given), the local database is searched first and scored. 
-    If its best result meets `relevance_threshold`, those local results 
-    are served alone. Otherwise the live glossary is queried too, and 
-    its results are added on after the local ones. Local results aren't 
-    thrown away just because they weren't confident, they're just not 
+    are given), the local database is searched first and scored.
+    If its best result meets `relevance_threshold`, those local results
+    are served alone. Otherwise the live glossary is queried too, and
+    its results are added on after the local ones. Local results aren't
+    thrown away just because they weren't confident, they're just not
     trusted as the whole answer.
 
     :param query: Free-text query.

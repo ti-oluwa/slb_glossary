@@ -154,7 +154,7 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
     if start_letter:
         title += f" starting with {start_letter!r}"
 
-    async def _run() -> int:
+    async def run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             results = resolve_stream(
                 ctx,
@@ -194,6 +194,6 @@ def terms(ctx: click.Context, topic: str, use_tui: bool, **params: typing.Any) -
                 show_related=params["show_related"],
             )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo("No terms found for that topic.", err=True)

@@ -83,7 +83,7 @@ def related(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) 
     source = resolve_source(params)
     config = get_loaded_config(params)
 
-    async def _run() -> int:
+    async def run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             lookup = await resolve_lookup(
                 ctx,
@@ -116,6 +116,6 @@ def related(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) 
             json_output=params["json_output"],
         )
 
-    count = run_async(_run())
+    count = run_async(run())
     if not params["quiet"] and count == 0:
         click.echo(f"No related terms found for {term!r}.", err=True)

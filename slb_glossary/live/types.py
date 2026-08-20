@@ -183,14 +183,12 @@ class Session:
     """
     An open, ready-to-query browser session against the SLB glossary.
 
-    Obtain one with `slb_glossary.browser.open_session`, `session`,
-    or `Session.from_config`, then pass it to the search functions in
-    `slb_glossary.live`.
+    Obtain one with `slb_glossary.browser.open_session` or `session`,
+    then pass it to the search functions in `slb_glossary.live`.
 
     A session owns one browser context shared by however many pages are
-    open at once (bounded by `max_pages`), not a single page. Operations
-    that need their own page - the tab-paging search page, each
-    concurrent term-fetch worker - check one out via `new_page()`, so a
+    open at once (bounded by `max_pages`). Operations
+    that need their own page check one out via `new_page()`, so a
     session is safe to drive concurrently as long as `max_pages` covers
     however many pages those operations need open at the same time.
     """
@@ -281,7 +279,7 @@ class Session:
         once, e.g. defensively before a search function that requires it.
         `open_session(..., initialize=True)` (the default) calls this for
         you before returning the session; call it yourself only if you
-        opened one with `initialize=False`.
+        opened one with `initialize=FalseINFO`.
 
         :param page: A page to load the glossary search screen on. When
             given, it's assumed to be owned by the caller and is left open
@@ -316,7 +314,7 @@ class Session:
                 await new_page.close()
 
         logger.debug(
-            "Loaded topics/size for %s in %.3fs", self.base_url, time.monotonic() - started_at
+            "Loaded topics and size for %s in %.3fs", self.base_url, time.monotonic() - started_at
         )
 
     async def new_page(self) -> Page:

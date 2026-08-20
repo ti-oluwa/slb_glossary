@@ -5,6 +5,7 @@ import logging
 import time
 
 from patchright.async_api import Page
+from patchright.async_api import TimeoutError as PWTimeoutError
 
 from slb_glossary.live.browser import Session
 from slb_glossary.live.parsers import (
@@ -49,7 +50,7 @@ async def fetch_topics(
 
     async def _get_facet_header() -> str:
         await page.goto(base_url, wait_until="domcontentloaded")
-        return await get_element_text(page, FACET_HEADER_SELECTOR)
+        return await get_element_text(page, FACET_HEADER_SELECTOR, timeout=settle_delay)
 
     header_text = await retry_func(_get_facet_header, policy=retry, until=bool)
     if not header_text:
@@ -60,18 +61,19 @@ async def fetch_topics(
         )
         return {}, 0
 
-    await asyncio.sleep(settle_delay / 1000)
+    # await asyncio.sleep(settle_delay / 1000)
 
     expand_button = page.locator(FACET_EXPAND_SELECTOR).first
     if await expand_button.count():
         try:
             expand_started_at = time.monotonic()
             await expand_button.scroll_into_view_if_needed(timeout=5_000)
-            await expand_button.click(timeout=5_000)
-            await asyncio.sleep(settle_delay / 1000)
+            await expand_button.click(timeout=5_000, delay=300)
             logger.debug("Expanded full topic list in %.3fs", time.monotonic() - expand_started_at)
-        except Exception:
-            logger.debug("Could not expand the full topic list", exc_info=True)
+        except PWTimeoutError:
+            logger.warning("Could not expand the full topic list", exc_info=True)
+        else:
+            await asyncio.sleep(settle_delay / 1000)
 
     topics = await get_facet_topics(page)
     size = await get_glossary_size(page)

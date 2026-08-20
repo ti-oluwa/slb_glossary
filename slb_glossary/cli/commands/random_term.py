@@ -112,7 +112,7 @@ def random_term(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
                     # on an early break/cancel.
                     yield lookup.value  # noqa: ASYNC119
 
-    async def _run() -> int:
+    async def run() -> int:
         return await output_results(
             _stream(),
             title=title,
@@ -124,7 +124,7 @@ def random_term(ctx: click.Context, use_tui: bool, **params: typing.Any) -> None
         )
 
     sources_seen: set[str] = set()
-    count_printed = run_async(_run())
+    count_printed = run_async(run())
     if not params["quiet"] and sources_seen:
         click.secho(f"(source: {', '.join(sorted(sources_seen))})", fg="bright_black", err=True)
     if not params["quiet"] and count_printed == 0:
