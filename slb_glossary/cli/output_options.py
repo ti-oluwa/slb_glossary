@@ -83,22 +83,32 @@ async def output_results(
     show_grammar: bool = True,
     show_image: bool = False,
     show_related: bool = False,
+    annotate: bool = False,
 ) -> int:
     """
     Collect, display, and optionally persist an async stream of results.
 
     Results are collected once so the same records can be displayed on the
     console and written to one or more files without re-running the
-    network-bound operation that produced them.
+    network-bound operation that produced them. The console table (and
+    JSON, when requested) streams/updates as `results` is consumed,
+    rather than waiting to buffer everything before showing anything;
+    "collected once" is about not re-iterating `results` a second time
+    for saving, not about delaying output until the stream ends.
 
-    :param results: The async stream of records to consume.
+    :param results: The async stream of records to consume. With
+        `annotate=True`, each item is a `slb_glossary.query.LookupResult`
+        rather than a bare record.
     :param title: Title shown above the printed table, e.g.
         `f"Terms under {topic}"`. Passed straight through to
         `slb_glossary.utils.print_async_records`; ignored when
         `json_output` is `True` (JSON output has no table to title).
-        Defaults to a generic type-based title - see `print_records`.
+        Defaults to a generic type-based title. See `print_records`.
     :param save_paths: File paths to save the collected results to. Each
         path's format is inferred from its extension unless `format` is given.
+        Always the plain record fields, even with `annotate=True` - the
+        file formats here have fixed columns, with no natural place for
+        per-row source/score metadata.
     :param format: File format to use for every path in `save_paths`,
         overriding each path's extension.
     :param quiet: If `True`, don't print results to the console. Results are
@@ -113,6 +123,11 @@ async def output_results(
     :param show_grammar: For `SearchResult`s, whether to print the grammatical label column.
     :param show_image: For `SearchResult`s, whether to print the image URL column.
     :param show_related: For `SearchResult`s, whether to print the related-terms column.
+    :param annotate: If `True`, `results` is a stream of
+        `slb_glossary.query.LookupResult`s, and both the table and JSON
+        output get "source"/"score" alongside each record's own fields
+        (the table as extra columns, JSON as extra keys). `save_paths`
+        output is unaffected either way, see `save_paths` above.
     :return: The total number of results collected.
     :raises slb_glossary.UnsupportedFormatError: If a save path (or
         `format`) resolves to a file format with no registered writer.
@@ -133,6 +148,7 @@ async def output_results(
             show_grammar=show_grammar,
             show_image=show_image,
             show_related=show_related,
+            annotate=annotate,
         )
     elapsed = time.monotonic() - started_at
     logger.debug(
@@ -158,6 +174,7 @@ async def _collect_and_output(
     show_grammar: bool,
     show_image: bool,
     show_related: bool,
+    annotate: bool = False,
 ) -> int:
     """The body of `output_results`, run inside its `contextlib.aclosing(results)` block."""
     collected: list[RecordLike] = []
@@ -176,14 +193,6 @@ async def _collect_and_output(
 
         iter_records = _async_gen()
         if json_output:
-            output = []
-            output_count = 0
-            async for record in iter_records:
-                output.append(record)
-                output_count += 1
-                if print_limit and output_count >= print_limit:
-                    break
-
             exclude = []
             if not show_url:
                 exclude.append("url")
@@ -197,13 +206,20 @@ async def _collect_and_output(
             if not show_related:
                 exclude.append("related")
 
-            click.echo(
-                json.dumps(
-                    records_to_dicts(output, exclude=exclude),
-                    indent=2,
-                    ensure_ascii=False,
-                )
-            )
+            output: list[dict[str, typing.Any]] = []
+            output_count = 0
+            async for record in iter_records:
+                item = record.value if annotate else record  # type: ignore[union-attr]
+                item_dict = records_to_dicts([item], exclude=exclude)[0]
+                if annotate:
+                    item_dict["source"] = record.source.value  # type: ignore[union-attr]
+                    item_dict["score"] = record.score  # type: ignore[union-attr]
+                output.append(item_dict)
+                output_count += 1
+                if print_limit and output_count >= print_limit:
+                    break
+
+            click.echo(json.dumps(output, indent=2, ensure_ascii=False))
         else:
             printed_count = await print_async_records(
                 iter_records,
@@ -214,6 +230,7 @@ async def _collect_and_output(
                 show_grammar=show_grammar,
                 show_image=show_image,
                 show_related=show_related,
+                annotate=annotate,
             )
             assert printed_count == count
 
@@ -229,7 +246,10 @@ async def _collect_and_output(
             targets = collected + [record async for record in results]
         else:
             targets = [record async for record in results]
-        count = len(targets)  # Make to update count
+        count = len(targets)  # Make sure to update count
+
+        if annotate:
+            targets = [record.value for record in targets]  # type: ignore[union-attr]
 
         for path in save_paths:
             await save(targets, path, format=format)

@@ -71,6 +71,7 @@ def term_lookup_to_dict(lookup: LookupResult[SearchResult | None]) -> dict[str, 
         "value": lookup.value.asdict() if lookup.value is not None else None,
         "source": lookup.source.value,
         "persisted": lookup.persisted,
+        "score": lookup.score,
     }
 
 
@@ -346,7 +347,7 @@ async def _handle_search(
     async with runtime.acquire(source) as (db, session):
         results: list[dict[str, typing.Any]] = []
         count = 0
-        async for result in query_api.search(
+        async for lookup in query_api.search(
             args.query,
             db=db,
             session=session,
@@ -357,7 +358,12 @@ async def _handle_search(
             persist=get_effective_persist(args.persist, config),
             fuzzy=args.fuzzy,
         ):
-            results.append(result.asdict())
+            result = {
+                **lookup.value.asdict(),
+                "source": lookup.source.value,
+                "score": lookup.score,
+            }
+            results.append(result)
             count += 1
             if stream:
                 await report_progress(count, args.limit)

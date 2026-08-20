@@ -10,6 +10,8 @@ from difflib import get_close_matches
 import aiosqlite
 
 from slb_glossary.local.types import Database
+from slb_glossary.natural_language import strip_wrapper
+from slb_glossary.relevance import CONTENT_MATCH_SCORE_CAP, EXACT_MATCH_SCORE, PREFIX_MATCH_SCORE
 from slb_glossary.types import RelatedTerm, SearchResult
 from slb_glossary.utils import as_async_iterator
 
@@ -36,15 +38,15 @@ FTS_COLUMN_WEIGHTS: tuple[float, float, float] = (10.0, 1.0, 3.0)
 """
 bm25() column weights for `terms_fts`'s `(term, definition, topic)` columns,
 in that order. FTS5's default is `1.0` for every column, which lets a
-result whose *definition* happens to repeat the query outrank one whose
-*term name* actually matches it. 
+result whose definition happens to repeat the query outrank one whose
+term name actually matches it.
 
-Weighting `term` well above the others still doesn't fully fix 
-this as bm25 also rewards a column for how *often* the query appears in it, 
-so a term whose definition just says the query word a lot can still out-score 
-the term actually named that. `scored_search` sidesteps this with an 
-exact/prefix name-match tier computed directly in SQL, ahead of bm25 entirely, 
-see its docstring.
+Weighting `term` well above the others still doesn't fully fix this,
+since bm25 also rewards a column for how often the query appears in it,
+so a term whose definition just says the query word a lot can still
+out-score the term actually named that. `scored_search` sidesteps this
+with an exact/prefix name-match tier computed directly in SQL, ahead of
+bm25 entirely (see its docstring).
 """
 
 
@@ -405,31 +407,51 @@ async def scored_search(
     Ranking happens entirely in SQL, in two tiers:
 
     1. An exact (case/whitespace-insensitive) match against `term` scores
-       `1.0`; `term` starting with `query` scores `0.9`. Computed directly
-       against `terms.term`, so this tier is never affected by how often
-       `query` happens to appear elsewhere.
+       `EXACT_MATCH_SCORE`; `term` starting with `query` scores
+       `PREFIX_MATCH_SCORE`. Computed directly against `terms.term`, so
+       this tier is never affected by how often `query` happens to appear
+       elsewhere.
     2. Everything else is ordered by `bm25()`, weighted toward the `term`
-       column, see `FTS_COLUMN_WEIGHTS`, and scored by normalizing that
-       result set's own bm25 spread into `(0.0, 0.85]`, worst match to
-       best. bm25 isn't comparable *across* different queries, only within
-       one, which is exactly what this needs it for.
+       column (see `FTS_COLUMN_WEIGHTS`), and scored by normalizing that
+       result set's own bm25 spread into `(0.0, CONTENT_MATCH_SCORE_CAP]`,
+       worst match to best. bm25 isn't comparable across different
+       queries, only within one, which is exactly what this needs it for.
 
     Tier 1 is always ordered ahead of tier 2, so a term named after the
     query is never outranked by an unrelated term whose definition just
-    happens to mention it a lot (e.g. searching "mud" surfacing "Drilling
-    fluid" ahead of "Mud" itself, because "mud" is repeated throughout
-    that definition) which is the failure mode a purely bm25/word-count-driven
-    ranking is prone to.
+    happens to mention it a lot. For example, searching "mud" surfacing
+    "Drilling fluid" ahead of "Mud" itself, because "mud" is repeated
+    throughout that definition, is the failure mode a purely
+    bm25/word-count-driven ranking is prone to. Tier 2's score is also
+    capped below `slb_glossary.query.DEFAULT_RELEVANCE_THRESHOLD` (see
+    `CONTENT_MATCH_SCORE_CAP`), so a query that only ever matches by
+    content, never an actual term name, reads as unconfident by default.
+    A real name match should generally be trusted over content overlap alone.
+
+    These are the same tiers and the same `CONTENT_MATCH_SCORE_CAP`
+    `slb_glossary.relevance.score_result` uses to score a live result, so a
+    local score and a live score mean roughly the same thing.
+
+    Before any of that, `query` is passed through
+    `slb_glossary.natural_language.strip_wrapper`, which reduces a
+    plain-English question like "what is X" or "define X" down to just
+    `X`. Local matching works against actual term names and words, not
+    conversational phrasing, so this is what lets a question like "what
+    is porosity" find "Porosity" via the exact-match tier, the same as
+    searching "porosity" directly would. Unstripped, the extra words
+    would usually just make the FTS match come back empty.
 
     `search` is a thin wrapper around this. Pass `scored=True` to it
     instead if you want results and scores together without a second call.
-    Reach for this function directly when you only need the scores. For example,
-    `slb_glossary.query.search`'s `Source.AUTO` uses it to decide whether
-    the local database's results are good enough to serve alone, or worth
-    augmenting with a live search.
+    Reach for this function directly when you only need the scores. For
+    example, `slb_glossary.query.search`'s `Source.AUTO` uses it to decide
+    whether the local database's results are good enough to serve alone,
+    or worth augmenting with a live search.
 
     :param db: The local database to search.
-    :param query: Free-text query, matched against term, definition, and topic.
+    :param query: Free-text query, matched against term, definition, and
+        topic, or, for a recognized natural-language phrasing, matched
+        against the term-like phrase extracted from it.
     :param topic: Restrict results to this topic, or several
         comma-separated topics (case-insensitive exact match by default).
     :param start_letter: Restrict results to terms starting with this letter.
@@ -439,16 +461,19 @@ async def scored_search(
         Has no effect if `topic` is falsy.
     :return: `(result, score)` pairs, best match first. `score` is in `[0.0, 1.0]`.
     """
+    normalized_query = strip_wrapper(query)
     logger.debug(
-        "Local `search` (scored): query=%r topic=%r start_letter=%r limit=%r fuzzy=%r",
+        "Local `search` (scored): query=%r (normalized=%r) topic=%r start_letter=%r "
+        "limit=%r fuzzy=%r",
         query,
+        normalized_query,
         topic,
         start_letter,
         limit,
         fuzzy,
     )
     started_at = time.monotonic()
-    query_norm = _normalize(query)
+    query_norm = _normalize(normalized_query)
     weights = ", ".join(str(weight) for weight in FTS_COLUMN_WEIGHTS)
     sql = f"""
         SELECT terms.*,
@@ -459,7 +484,12 @@ async def scored_search(
         JOIN terms_fts ON terms.rowid = terms_fts.rowid
         WHERE terms_fts MATCH ?
     """
-    params: list[typing.Any] = [query_norm, query_norm, query_norm, _to_fts_query(query)]
+    params: list[typing.Any] = [
+        query_norm,
+        query_norm,
+        query_norm,
+        _to_fts_query(normalized_query),
+    ]
 
     resolved_topic = await resolve_topic(db, topic, fuzzy)
     if resolved_topic:
@@ -493,17 +523,17 @@ async def scored_search(
     scored: list[tuple[SearchResult, float]] = []
     for row in rows:
         if row["is_exact"]:
-            score = 1.0
+            score = EXACT_MATCH_SCORE
         elif row["is_prefix"]:
-            score = 0.9
+            score = PREFIX_MATCH_SCORE
         else:
-            score = round(0.85 * (worst - row["bm25_score"]) / spread, 4)
+            score = round(CONTENT_MATCH_SCORE_CAP * (worst - row["bm25_score"]) / spread, 4)
         scored.append((_row_to_result(row), score))
 
     elapsed = time.monotonic() - started_at
     logger.debug(
         "Local `search` (scored) for %r yielded %d candidate(s) in %.3fs (best score %.3f)",
-        query,
+        normalized_query,
         len(scored),
         elapsed,
         scored[0][1] if scored else 0.0,

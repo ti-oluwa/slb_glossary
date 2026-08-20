@@ -264,6 +264,8 @@ def _make_result_table(
     show_grammar: bool = True,
     show_image: bool = False,
     show_related: bool = False,
+    show_origin: bool = False,
+    show_score: bool = False,
 ) -> Table:
     """Build the specialized table used to display `SearchResult`s."""
     table = Table(
@@ -285,6 +287,10 @@ def _make_result_table(
         table.add_column("Image", style="blue", overflow="fold")
     if show_url:
         table.add_column("Source", style="blue", overflow="fold")
+    if show_origin:
+        table.add_column("Origin", style="bright_black", no_wrap=True)
+    if show_score:
+        table.add_column("Score", style="bright_black", no_wrap=True)
     return table
 
 
@@ -296,8 +302,24 @@ def _format_result_row(
     show_grammar: bool = True,
     show_image: bool = False,
     show_related: bool = False,
+    show_origin: bool = False,
+    show_score: bool = False,
+    origin: str | None = None,
+    score: float | None = None,
 ) -> list[str]:
-    """Build one table row for a `SearchResult`, matching `_make_result_table`'s columns."""
+    """
+    Build one table row for a `SearchResult`, matching `_make_result_table`'s columns.
+
+    :param show_origin: Whether to append an "Origin" cell. Must match
+        whatever `_make_result_table` was built with.
+    :param show_score: Whether to append a "Score" cell. Must match
+        whatever `_make_result_table` was built with.
+    :param origin: Text for the "Origin" cell, e.g. `"local"`/`"live"`.
+        Rendered as `"-"` if `None`. Ignored unless `show_origin=True`.
+    :param score: Value for the "Score" cell, e.g. a `LookupResult.score`.
+        Rendered as `"-"` if `None` (expected for a result with no
+        comparable score, e.g. most live ones). Ignored unless `show_score=True`.
+    """
     definition = result.definition.strip() if result.definition else "(no definition parsed)"
     row: list[str] = [result.term]
     if show_grammar:
@@ -314,10 +336,20 @@ def _format_result_row(
             row.append(f"{result.image_caption} - {result.image}")
     if show_url:
         row.append(result.url or "-")
+    if show_origin:
+        row.append(origin or "-")
+    if show_score:
+        row.append(f"{score:.2f}" if score is not None else "-")
     return row
 
 
-def _make_generic_table(fields: typing.Sequence[str], *, title: str | None = None) -> Table:
+def _make_generic_table(
+    fields: typing.Sequence[str],
+    *,
+    title: str | None = None,
+    show_origin: bool = False,
+    show_score: bool = False,
+) -> Table:
     """Build a plain table with one humanized column per field, for non-`SearchResult` records."""
     table = Table(
         title=title or DEFAULT_GENERIC_TABLE_TITLE,
@@ -328,13 +360,45 @@ def _make_generic_table(fields: typing.Sequence[str], *, title: str | None = Non
     )
     for field in fields:
         table.add_column(humanize_field(field), style="white", overflow="fold")
+    if show_origin:
+        table.add_column("Origin", style="bright_black", no_wrap=True)
+    if show_score:
+        table.add_column("Score", style="bright_black", no_wrap=True)
     return table
 
 
-def _format_generic_row(record: typing.Any, fields: typing.Sequence[str]) -> list[str]:
+def _format_generic_row(
+    record: typing.Any,
+    fields: typing.Sequence[str],
+    *,
+    show_origin: bool = False,
+    show_score: bool = False,
+    origin: str | None = None,
+    score: float | None = None,
+) -> list[str]:
     """Build one table row for an arbitrary `RecordLike`, matching `_make_generic_table`'s columns."""
     record_dict = record.asdict()
-    return [_format_cell(record_dict.get(field)) for field in fields]
+    row = [_format_cell(record_dict.get(field)) for field in fields]
+    if show_origin:
+        row.append(origin or "-")
+    if show_score:
+        row.append(f"{score:.2f}" if score is not None else "-")
+    return row
+
+
+@typing.runtime_checkable
+class _Lookup(typing.Protocol):
+    """
+    Structural shape `annotate=True` table/JSON output needs from each
+    item: satisfied by `slb_glossary.query.LookupResult`, without
+    importing that class directly (`slb_glossary.query` itself depends
+    on this module, so importing it back here would be circular).
+    """
+
+    value: typing.Any
+    source: typing.Any
+    """A `slb_glossary.query.Source` member; only `.value` (its string name) is used."""
+    score: float | None
 
 
 RecordT = typing.TypeVar("RecordT", bound=RecordLike)
@@ -349,6 +413,7 @@ def _make_table_and_formatter(
     show_grammar: bool,
     show_image: bool,
     show_related: bool,
+    annotate: bool = False,
 ) -> tuple[Table, typing.Callable[[RecordT], list[str]]]:
     """
     Choose a table layout and row formatter suited to `sample`'s record type.
@@ -358,14 +423,21 @@ def _make_table_and_formatter(
     dispatches on the *first* item seen rather than assuming every caller
     is printing `SearchResult`s.
 
-    :param sample: The first record to be printed, used only to pick a layout.
+    :param sample: The first record to be printed, used only to pick a
+        layout. With `annotate=True`, this is a `_Lookup`-shaped item
+        (e.g. a `slb_glossary.query.LookupResult`), not the bare record itself.
     :param title: Table/section title to use instead of the type-based
         default (`"Search Results"` for `SearchResult`s, `"Results"`
         otherwise). `None` keeps that default.
+    :param annotate: If `True`, add "Origin"/"Score" columns, and expect
+        every record passed to the returned formatter to be `_Lookup`-shaped
+        (`.value`/`.source`/`.score`) rather than a bare record.
     :return: A `(table, formatter)` pair; call `formatter(record)` for
         every record (including `sample`) to get its row cells.
     """
-    if isinstance(sample, SearchResult):
+    record_sample = sample.value if annotate else sample  # type: ignore[union-attr]
+
+    if isinstance(record_sample, SearchResult):
         table = _make_result_table(
             title=title,
             show_url=show_url,
@@ -373,27 +445,45 @@ def _make_table_and_formatter(
             show_grammar=show_grammar,
             show_image=show_image,
             show_related=show_related,
+            show_origin=annotate,
+            show_score=annotate,
         )
 
-        def _result_formatter(record: SearchResult) -> list[str]:
+        def _result_formatter(record: RecordT) -> list[str]:
+            result, origin, score = _unwrap(record, annotate=annotate)
             return _format_result_row(
-                record,
+                result,
                 show_url=show_url,
                 show_topic=show_topic,
                 show_grammar=show_grammar,
                 show_image=show_image,
                 show_related=show_related,
+                show_origin=annotate,
+                show_score=annotate,
+                origin=origin,
+                score=score,
             )
 
-        return table, typing.cast(typing.Callable[[RecordT], list[str]], _result_formatter)
+        return table, _result_formatter
 
-    fields = list(getattr(sample, "fields", None) or sample.asdict().keys())
-    table = _make_generic_table(fields, title=title)
+    fields = list(getattr(record_sample, "fields", None) or record_sample.asdict().keys())
+    table = _make_generic_table(fields, title=title, show_origin=annotate, show_score=annotate)
 
     def _generic_formatter(record: RecordT) -> list[str]:
-        return _format_generic_row(record, fields)
+        rec, origin, score = _unwrap(record, annotate=annotate)
+        return _format_generic_row(
+            rec, fields, show_origin=annotate, show_score=annotate, origin=origin, score=score
+        )
 
     return table, _generic_formatter
+
+
+def _unwrap(record: typing.Any, *, annotate: bool) -> tuple[typing.Any, str | None, float | None]:
+    """Split a possibly `_Lookup`-wrapped `record` into `(record, origin, score)`."""
+    if not annotate:
+        return record, None, None
+    lookup = typing.cast(_Lookup, record)
+    return lookup.value, lookup.source.value, lookup.score
 
 
 def print_records(
@@ -407,6 +497,7 @@ def print_records(
     show_grammar: bool = True,
     show_image: bool = False,
     show_related: bool = False,
+    annotate: bool = False,
 ) -> int:
     """
     Pretty-print a sequence of records to `out` as a table.
@@ -416,7 +507,9 @@ def print_records(
     gets a generic table with one column per field), and with any iterable,
     including lazily produced generators.
 
-    :param results: The records to print. May be empty.
+    :param results: The records to print. May be empty. With
+        `annotate=True`, each item is expected to be `_Lookup`-shaped
+        (e.g. a `slb_glossary.query.LookupResult`) rather than a bare record.
     :param title: Title shown above the table, e.g. `"Terms under Drilling"`.
         Defaults to `"Search Results"` for `SearchResult`s, or `"Results"`
         for any other record type.
@@ -428,6 +521,8 @@ def print_records(
     :param show_grammar: For `SearchResult`s, whether to show the grammatical label column.
     :param show_image: For `SearchResult`s, whether to show the image URL column.
     :param show_related: For `SearchResult`s, whether to show the related-terms column.
+    :param annotate: If `True`, add "Origin"/"Score" columns, reading them
+        off each `_Lookup`-shaped item, instead of printing bare records.
     :return: The number of records printed.
     """
     if out is None:
@@ -449,6 +544,7 @@ def print_records(
         show_grammar=show_grammar,
         show_image=show_image,
         show_related=show_related,
+        annotate=annotate,
     )
 
     def _records() -> typing.Iterator[RecordLike]:
@@ -487,6 +583,7 @@ async def print_async_records(
     show_grammar: bool = True,
     show_image: bool = False,
     show_related: bool = False,
+    annotate: bool = False,
 ) -> int:
     """Pretty-print an async stream of records as they are yielded. See `print_records`."""
     if out is None:
@@ -508,6 +605,7 @@ async def print_async_records(
         show_grammar=show_grammar,
         show_image=show_image,
         show_related=show_related,
+        annotate=annotate,
     )
 
     async def _records() -> typing.AsyncIterator[RecordLike]:

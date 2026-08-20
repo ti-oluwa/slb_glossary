@@ -123,16 +123,17 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
 
         if suggest_similar:
             assert isinstance(lookup.value, SimilarResult)
-            exact = lookup.value.exact
+            exact_lookup = lookup.value.exact
             similar = lookup.value.similar
         else:
             assert not isinstance(lookup.value, SimilarResult)
-            exact = lookup.value
+            exact_lookup = lookup
             similar = ()
 
-        if exact is None:
+        if exact_lookup is None or exact_lookup.value is None:
             return 0, similar
 
+        exact = exact_lookup.value
         if not params["quiet"]:
             click.secho(f"(source: {lookup.source.value})", fg="bright_black", err=True)
 
@@ -161,11 +162,13 @@ def define(ctx: click.Context, term: str, use_tui: bool, **params: typing.Any) -
         click.echo(f"{term!r} was not found.", err=True)
         if similar:
             click.echo("Did you mean:", err=True)
-            for result in similar:
-                click.echo(f"  • {result.term}", err=True)
+            for candidate in similar:
+                click.echo(f"  - {candidate.value.term}", err=True)
 
 
-def _show_similar_prompt(term: str, similar: typing.Sequence[SearchResult]) -> None:
+def _show_similar_prompt(
+    term: str, similar: typing.Sequence["query.LookupResult[SearchResult]"]
+) -> None:
     """
     Print `similar` as a "Did you mean" list and let the user interactively view one.
 
@@ -174,12 +177,13 @@ def _show_similar_prompt(term: str, similar: typing.Sequence[SearchResult]) -> N
 
     :param term: The originally looked-up term, only used for messaging.
     :param similar: Similarly-named live results to offer as alternatives,
-        best match first.
+        each already wrapped in its own `LookupResult` (with its own
+        score), best match first.
     """
     click.echo(f'No exact definition found for "{term}".')
     click.echo("Did you mean:")
-    for index, result in enumerate(similar, start=1):
-        click.echo(f"  {index}. {result.term}")
+    for index, candidate in enumerate(similar, start=1):
+        click.echo(f"  {index}. {candidate.value.term}")
     click.echo(
         f"\nUse `slb-glossary search {term}` to search for related terms. "
         f"Or enter a number (1-{len(similar)}) to view that term's definition (q to quit): ",
@@ -196,7 +200,7 @@ def _show_similar_prompt(term: str, similar: typing.Sequence[SearchResult]) -> N
             click.echo(f"Enter a number between 1 and {len(similar)}, or q to quit: ", nl=False)
             continue
 
-        picked = similar[int(choice) - 1]
+        picked = similar[int(choice) - 1].value
         click.echo()
         click.secho(picked.term, bold=True)
         click.echo(picked.definition or "(no definition available)")

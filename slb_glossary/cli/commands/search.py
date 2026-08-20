@@ -22,7 +22,7 @@ from slb_glossary.cli.source_options import (
 from slb_glossary.cli.tui import launch_tui
 from slb_glossary.local import scored_search as scored_search
 from slb_glossary.local.types import Database
-from slb_glossary.query import DEFAULT_RELEVANCE_THRESHOLD, Source
+from slb_glossary.query import DEFAULT_RELEVANCE_THRESHOLD, LookupResult, Source
 from slb_glossary.types import SearchResult
 
 __all__ = ["search"]
@@ -39,6 +39,24 @@ def _validate_query(
     return value
 
 
+def _should_annotate(annotate: str, source: Source) -> bool:
+    """
+    Resolve `--annotate`'s tri-state value against the resolved `source`.
+
+    :param annotate: The raw `--annotate` choice: `"always"`, `"never"`, or `"auto"`.
+    :param source: The command's resolved `Source` (after `--local`/`--live`/`--auto`).
+    :return: Whether to show each result's origin/score. `"auto"` shows
+        them only for `Source.AUTO`. A search pinned to one source with
+        `--local`/`--live` is already unambiguous about where results
+        came from, so `"auto"` leaves those unannotated.
+    """
+    if annotate == "always":
+        return True
+    if annotate == "never":
+        return False
+    return source is Source.AUTO
+
+
 async def _stream_auto_search(
     ctx: click.Context,
     params: typing.Mapping[str, typing.Any],
@@ -48,7 +66,7 @@ async def _stream_auto_search(
     limit: int | None,
     concurrency: int,
     relevance_threshold: float,
-) -> typing.AsyncIterator[SearchResult]:
+) -> typing.AsyncIterator[LookupResult[SearchResult]]:
     """
     Stream `Source.AUTO` results for the `search` command, opening a live
     session only if the local database doesn't have a confident match.
@@ -69,11 +87,11 @@ async def _stream_auto_search(
     :param limit: Maximum number of terms to look up. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches, if a live fetch happens.
     :param relevance_threshold: See `slb_glossary.query.search`'s parameter of the same name.
-    :yield: Matching `SearchResult`s, local results first if a live fetch also happens.
+    :yield: `LookupResult[SearchResult]`s, local results first if a live fetch also happens.
     """
     if db is None:
         async with live_session(ctx, params) as session:
-            async for result in query_api.search(
+            async for lookup in query_api.search(
                 query,
                 session=session,
                 source=Source.LIVE,
@@ -83,7 +101,7 @@ async def _stream_auto_search(
                 concurrency=concurrency,
                 **persist_kwargs(params),
             ):
-                yield result  # noqa: ASYNC119
+                yield lookup  # noqa: ASYNC119
         return
 
     scored = await scored_search(
@@ -96,12 +114,12 @@ async def _stream_auto_search(
     )
     best_score = scored[0][1] if scored else 0.0
     if scored and best_score >= relevance_threshold:
-        for result, _ in scored:
-            yield result
+        for result, score in scored:
+            yield LookupResult(value=result, source=Source.LOCAL, persisted=False, score=score)
         return
 
     async with live_session(ctx, params) as session:
-        async for result in query_api.search(
+        async for lookup in query_api.search(
             query,
             db=db,
             session=session,
@@ -114,7 +132,7 @@ async def _stream_auto_search(
             relevance_threshold=relevance_threshold,
             **persist_kwargs(params),
         ):
-            yield result  # noqa: ASYNC119
+            yield lookup  # noqa: ASYNC119
 
 
 @click.command("search")
@@ -152,6 +170,23 @@ async def _stream_auto_search(
         "added after the local ones, rather than replacing them. Lower it "
         "to trust local results more readily (fewer live fetches); raise "
         "it to augment with live results more often."
+    ),
+)
+@click.option(
+    "--annotate",
+    "annotate",
+    type=click.Choice(["auto", "always", "never"], case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help=(
+        "Show each result's origin (local/live) and relevance score, as "
+        "extra table columns or, with --json, extra JSON keys. 'auto' "
+        "shows them only for an --auto search, where results can "
+        "genuinely come from either source, or be content-only matches "
+        "worth a second look. A search pinned to --local/--live is "
+        "already unambiguous about its source, so 'auto' leaves those "
+        "unannotated. Has no effect on --save output, whose file formats "
+        "have fixed columns."
     ),
 )
 @click.option(
@@ -221,6 +256,10 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     """
     Search the glossary for QUERY and print (or save) the matching definitions.
 
+    QUERY can be a plain term ("porosity") or a plain-English question
+    ("what is porosity", "define porosity", "tell me about porosity") -
+    the latter is reduced to the term it's actually about before matching.
+
     A matched term can carry several definitions (one per topic it's filed
     under), so more results than --limit may be printed; --limit bounds the
     number of terms looked up, not the number of definitions returned.
@@ -230,17 +269,18 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     available, its results are ranked and scored, and used alone if the
     best of them meets --relevance-threshold; otherwise the live site is
     also searched and its results are added on rather than replacing the
-    local ones.
+    local ones. Add --annotate always to see each result's origin and
+    score even for a --local/--live search.
 
     With --cache (the default), live results are saved to the local
     database as they arrive, --cache-batch-size at a time, rather than all
-    at once at the end - so a long-running fetch that gets interrupted
+    at once at the end, so a long-running fetch that gets interrupted
     still keeps whatever it already fetched (see --cache-on-error).
 
     \b
     Examples:
       slb-glossary search porosity
-      slb-glossary search "drilling fluid" --topic Drilling --limit 10
+      slb-glossary search "what is drilling fluid" --topic Drilling --limit 10
       slb-glossary search viscosity --save results.csv --quiet
       slb-glossary search viscosity --show-related --show-image
       slb-glossary search porosity --local
@@ -248,6 +288,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
       slb-glossary search porosity --live --cache
       slb-glossary search porosity --live --limit 0 --cache-batch-size 5
       slb-glossary search porosity --relevance-threshold 0.8
+      slb-glossary search porosity --annotate always
       slb-glossary search porosity --config ~/my-config.toml
       slb-glossary search porosity --config none --headed
     """
@@ -266,7 +307,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
     async def _run() -> int:
         async with open_configured_db(config, db_path_override=params["db_path"]) as db:
             if source is Source.AUTO:
-                results: typing.AsyncIterator[SearchResult] = _stream_auto_search(
+                lookups: typing.AsyncIterator[LookupResult[SearchResult]] = _stream_auto_search(
                     ctx,
                     params,
                     db,
@@ -276,7 +317,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                     relevance_threshold=params["relevance_threshold"],
                 )
             else:
-                results = resolve_stream(
+                lookups = resolve_stream(
                     ctx,
                     params,
                     db,
@@ -302,8 +343,11 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                         **persist_kwargs(params),
                     ),
                 )
+
+            annotate = _should_annotate(params["annotate"], source)
+            stream = lookups if annotate else (lookup.value async for lookup in lookups)
             return await output_results(
-                results,
+                stream,
                 title=title,
                 save_paths=params["save_paths"],
                 format=params["format"],
@@ -314,6 +358,7 @@ def search(ctx: click.Context, query: str, use_tui: bool, **params: typing.Any) 
                 show_grammar=params["show_grammar"],
                 show_image=params["show_image"],
                 show_related=params["show_related"],
+                annotate=annotate,
             )
 
     count = run_async(_run())
