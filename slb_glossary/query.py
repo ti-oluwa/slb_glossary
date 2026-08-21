@@ -219,6 +219,36 @@ def resolve_source(db: Database | None, session: Session | None, source: Source)
     return Source.LOCAL if db is not None else Source.LIVE
 
 
+def validate_language(session: Session | None, language: str | None) -> None:
+    """
+    Validate that `language`, if given, matches `session`'s own language.
+
+    A `Session` is bound to one glossary language edition for its whole
+    lifetime, set when it was opened. So a live fetch can't honor a
+    different `language` on a per-call basis the way a local read can;
+    there's no "search this session in Spanish just this once". Raising
+    here, instead of silently searching in the session's own language
+    while ignoring what was actually asked for, keeps a caller from
+    getting a same-looking-but-wrong-language result set without
+    realizing why. To search a different language live, open a second
+    `Session` with that language instead.
+
+    :param session: The live session about to be used, or `None` if this
+        call has none (e.g. a local-only read).
+    :param language: The language requested for this call, if any.
+    :raises slb_glossary.QueryError: If `session` and `language` are both
+        given and don't match.
+    """
+    if session is None or language is None:
+        return
+    if language != session.language.value:
+        raise QueryError(
+            f"Requested language {language!r} does not match this session's own "
+            f"language {session.language.value!r}. Open a new Session with "
+            f"language={language!r} to search that edition live instead."
+        )
+
+
 async def _maybe_persist(
     db: Database | None, results: typing.Sequence[SearchResult], *, persist: bool, language: str
 ) -> bool:
@@ -293,6 +323,7 @@ async def search(
     source: Source = Source.AUTO,
     topic: str | None = None,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = 3,
     concurrency: int = 1,
     persist: bool = False,
@@ -324,6 +355,13 @@ async def search(
     :param source: Which source(s) to read from. See the module docstring.
     :param topic: Restrict results to this topic, or several comma-separated topics.
     :param start_letter: Restrict results to terms starting with this letter.
+    :param language: Restrict results to this glossary language edition
+        (e.g. `"en"`/`"es"`). For a local read, this filters stored
+        results by their `.language`; `None` (the default) doesn't
+        filter. For a live read, `session` is already bound to one
+        language for its whole lifetime, so `language` here is only
+        validated against it, not applied as a filter. See
+        `validate_language`.
     :param limit: Maximum number of terms to look up. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches, only relevant when a
         live fetch happens. See `slb_glossary.live.search`.
@@ -350,8 +388,10 @@ async def search(
         with live results more often.
     :yield: `LookupResult[SearchResult]`s, best match first.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
-        or the requested `source` needs one that wasn't given.
+        the requested `source` needs one that wasn't given, or `language`
+        doesn't match `session`'s own language.
     """
+    validate_language(session, language)
     normalized_query = strip_wrapper(query)
     started_at = time.monotonic()
     resolved = resolve_source(db, session, source)
@@ -363,6 +403,7 @@ async def search(
             normalized_query,
             topic=topic,
             start_letter=start_letter,
+            language=language,
             limit=limit,
             fuzzy=fuzzy,
             scored=True,
@@ -411,7 +452,13 @@ async def search(
     # source is `Source.AUTO`, resolved started as `LOCAL`: score it, then decide.
     assert db is not None
     scored = await local_api.scored_search(
-        db, normalized_query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+        db,
+        normalized_query,
+        topic=topic,
+        start_letter=start_letter,
+        language=language,
+        limit=limit,
+        fuzzy=fuzzy,
     )
     results = [result for result, _ in scored]
     best_score = scored[0][1] if scored else 0.0
@@ -800,6 +847,7 @@ async def get_term(
     session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
+    language: str | None = None,
     with_similar: typing.Literal[False] = False,
     similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
     max_similar_terms: int = MAX_SIMILAR_TERMS,
@@ -814,6 +862,7 @@ async def get_term(
     session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
+    language: str | None = None,
     with_similar: typing.Literal[True],
     similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
     max_similar_terms: int = MAX_SIMILAR_TERMS,
@@ -827,6 +876,7 @@ async def get_term(
     session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
+    language: str | None = None,
     with_similar: bool = False,
     similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
     max_similar_terms: int = MAX_SIMILAR_TERMS,
@@ -844,14 +894,20 @@ async def get_term(
         one result to write. Batching doesn't apply here the way it does
         for `search`/`get_terms_on`. With `with_similar=True`, every
         alternative gathered alongside the exact match is cached too.
+    :param language: Restrict the lookup to this glossary language edition
+        (e.g. `"en"`/`"es"`). For a local read, this filters by each
+        stored result's `.language`; `None` (the default) doesn't filter.
+        For a live read, `session` is already bound to one language for
+        its whole lifetime, so `language` here is only validated against
+        it, not applied as a filter. See `validate_language`.
     :param with_similar: If `True`, resolve to a `LookupResult[SimilarResult]`
         instead: `SimilarResult.exact` holds what a plain call would have
         returned, and `SimilarResult.similar` holds up to `max_similar_terms`
         other results found for `term_or_url` along the way, best match
-        first and is only ever populated by a live lookup, since that's the
-        only source with anything to compare against. Handy for a "did you
-        mean" prompt when the exact match turns out to be `None`.
-    :param similar_pool_size: Live results to pull while looking for the
+        first, whether that's a local `scored_search` pass or a live one.
+        Handy for a "did you mean" prompt when the exact match turns out
+        to be `None`.
+    :param similar_pool_size: Candidates pulled while looking for the
         exact match, and, with `with_similar=True`, to draw alternatives
         from. Defaults to `SIMILAR_TERMS_POOL_SIZE`.
     :param max_similar_terms: Max alternatives returned in
@@ -862,13 +918,21 @@ async def get_term(
         found. Or, with `with_similar=True`, a `SimilarResult`, where each
         of `.exact`/`.similar` carries its own score.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
-        or the requested `source` needs one that wasn't given.
+        the requested `source` needs one that wasn't given, or `language`
+        doesn't match `session`'s own language.
     """
+    validate_language(session, language)
     resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
-        result = await local_api.get_term(db, term_or_url)
-        return _local_term_lookup(result, with_similar=with_similar)
+        return await _local_term_lookup(
+            db,
+            term_or_url,
+            language=language,
+            with_similar=with_similar,
+            similar_pool_size=similar_pool_size,
+            max_similar_terms=max_similar_terms,
+        )
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
@@ -884,13 +948,24 @@ async def get_term(
         )
 
     assert db is not None
-    result = await local_api.get_term(db, term_or_url)
-    if result is not None:
-        return _local_term_lookup(result, with_similar=with_similar)
+    local_lookup = await _local_term_lookup(
+        db,
+        term_or_url,
+        language=language,
+        with_similar=with_similar,
+        similar_pool_size=similar_pool_size,
+        max_similar_terms=max_similar_terms,
+    )
+    if with_similar:
+        assert isinstance(local_lookup.value, SimilarResult)
+        found = local_lookup.value.exact is not None
+    else:
+        found = local_lookup.value is not None
+    if found:
+        return local_lookup
 
     if session is None:
-        empty = SimilarResult(exact=None) if with_similar else None
-        return LookupResult(value=empty, source=Source.LOCAL, persisted=False)
+        return local_lookup
 
     fetched = await _fetch_term(
         session,
@@ -904,25 +979,49 @@ async def get_term(
     )
 
 
-def _local_term_lookup(result: SearchResult | None, *, with_similar: bool) -> LookupResult:
+async def _local_term_lookup(
+    db: Database,
+    term_or_url: str,
+    *,
+    language: str | None,
+    with_similar: bool,
+    similar_pool_size: int,
+    max_similar_terms: int,
+) -> LookupResult:
     """
-    Build `get_term`'s return value for a local hit (or miss).
+    Look up `term_or_url` in `db` and build `get_term`'s return value from it.
 
-    A local lookup is always an exact-name match by construction (there's
-    no "similar" concept locally), so a hit always scores `EXACT_MATCH_SCORE`.
+    A local lookup's exact match is always a name match by construction,
+    so a hit always scores `EXACT_MATCH_SCORE`. With `with_similar=True`,
+    alternatives come from `slb_glossary.local.get_term`'s own
+    `with_similar` support (backed by `scored_search`), scored the same
+    way `search` itself scores local results.
     """
-    if with_similar:
-        exact = (
-            LookupResult(
-                value=result, source=Source.LOCAL, persisted=False, score=EXACT_MATCH_SCORE
-            )
-            if result is not None
-            else None
-        )
-        return LookupResult(value=SimilarResult(exact=exact), source=Source.LOCAL, persisted=False)
+    if not with_similar:
+        result = await local_api.get_term(db, term_or_url, language=language)
+        score = EXACT_MATCH_SCORE if result is not None else None
+        return LookupResult(value=result, source=Source.LOCAL, persisted=False, score=score)
 
-    score = EXACT_MATCH_SCORE if result is not None else None
-    return LookupResult(value=result, source=Source.LOCAL, persisted=False, score=score)
+    result, similar_pairs = await local_api.get_term(
+        db,
+        term_or_url,
+        language=language,
+        with_similar=True,
+        similar_pool_size=similar_pool_size,
+        max_similar_terms=max_similar_terms,
+    )
+    exact = (
+        LookupResult(value=result, source=Source.LOCAL, persisted=False, score=EXACT_MATCH_SCORE)
+        if result is not None
+        else None
+    )
+    similar = tuple(
+        LookupResult(value=candidate, source=Source.LOCAL, persisted=False, score=score)
+        for candidate, score in similar_pairs
+    )
+    return LookupResult(
+        value=SimilarResult(exact=exact, similar=similar), source=Source.LOCAL, persisted=False
+    )
 
 
 async def _finalize_live_term_lookup(
@@ -1096,6 +1195,7 @@ async def related_terms(
     session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
+    language: str | None = None,
 ) -> LookupResult[tuple[RelatedTerm, ...]]:
     """
     Look up the related terms linked from a single term's definition.
@@ -1110,12 +1210,17 @@ async def related_terms(
     :param source: Which source(s) to read from. See the module docstring.
     :param persist: If `True`, and a live fetch happens, cache the looked-up
         term's own result into `db`.
+    :param language: Restrict the lookup to this glossary language
+        edition. See `get_term`'s parameter of the same name.
     :return: A `LookupResult` wrapping the related terms found (empty if
         `term_or_url` wasn't found, or was found but links to nothing).
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
-        or the requested `source` needs one that wasn't given.
+        the requested `source` needs one that wasn't given, or `language`
+        doesn't match `session`'s own language.
     """
-    lookup = await get_term(term_or_url, db=db, session=session, source=source, persist=persist)
+    lookup = await get_term(
+        term_or_url, db=db, session=session, source=source, persist=persist, language=language
+    )
     related = lookup.value.related if lookup.value is not None else None
     return LookupResult(value=related or (), source=lookup.source, persisted=lookup.persisted)
 
@@ -1236,6 +1341,7 @@ async def compare(
     session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
+    language: str | None = None,
     concurrency: int = DEFAULT_COMPARE_CONCURRENCY,
     with_similar: typing.Literal[False] = False,
 ) -> dict[str, LookupResult[SearchResult | None]]: ...
@@ -1249,6 +1355,7 @@ async def compare(
     session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
+    language: str | None = None,
     concurrency: int = DEFAULT_COMPARE_CONCURRENCY,
     with_similar: typing.Literal[True],
 ) -> dict[str, LookupResult[SimilarResult]]: ...
@@ -1261,6 +1368,7 @@ async def compare(
     session: Session | None = None,
     source: Source = Source.AUTO,
     persist: bool = False,
+    language: str | None = None,
     concurrency: int = DEFAULT_COMPARE_CONCURRENCY,
     with_similar: bool = False,
 ) -> dict[str, LookupResult]:
@@ -1286,6 +1394,8 @@ async def compare(
         is looked up (and, on a live fetch, persisted) individually via
         `get_term`, so an error partway through this call still leaves
         earlier terms' results saved.
+    :param language: Restrict every lookup to this glossary language
+        edition. See `get_term`'s parameter of the same name.
     :param concurrency: Number of terms to look up in parallel. `1` (the
         default) looks them up one at a time.
     :param with_similar: If `True`, each entry is a `LookupResult[SimilarResult]`
@@ -1295,7 +1405,8 @@ async def compare(
         falsy `SimilarResult`) means that term wasn't found by the
         resolved source(s).
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
-        or the requested `source` needs one that wasn't given, or `terms` is empty.
+        the requested `source` needs one that wasn't given, `terms` is
+        empty, or `language` doesn't match `session`'s own language.
     :raises ValueError: If `concurrency` is less than 1.
     """
     if not terms:
@@ -1304,6 +1415,7 @@ async def compare(
         raise ValueError("concurrency must be at least 1")
 
     validate_source(db, session, source)
+    validate_language(session, language)
     started_at = time.monotonic()
 
     semaphore = asyncio.Semaphore(concurrency)
@@ -1316,6 +1428,7 @@ async def compare(
                 session=session,
                 source=source,
                 persist=persist,
+                language=language,
                 with_similar=with_similar,
             )
         return term, lookup

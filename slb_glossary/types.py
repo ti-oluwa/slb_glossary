@@ -84,6 +84,9 @@ class SearchResult(typing.NamedTuple):
     """Terms linked from this definition's "See related terms" list, or
     `None` if the page has none."""
 
+    language: str = "en"
+    """Glossary language edition (`Language.value`, e.g. `"en"`/`"es"`) this result was found in."""
+
     @property
     def fields(self) -> list[str]:
         """Return a list of the field names in this result."""

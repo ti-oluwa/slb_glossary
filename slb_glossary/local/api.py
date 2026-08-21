@@ -75,6 +75,7 @@ def _row_to_result(row: aiosqlite.Row) -> SearchResult:
         image=row["image"],
         image_caption=row["image_caption"],
         related=_load_related(row["related_json"]),
+        language=row["language"],
     )
 
 
@@ -101,7 +102,7 @@ async def upsert_results(
     db: Database,
     results: typing.Iterable[SearchResult] | typing.AsyncIterable[SearchResult],
     *,
-    language: str = "en",
+    language: str | None = None,
     source: str = "glossary",
 ) -> int:
     """
@@ -120,8 +121,11 @@ async def upsert_results(
     :param results: Results to store - a plain or async iterable of
         `SearchResult`, e.g. from `slb_glossary.live.search`,
         `slb_glossary.live.get_terms_on`, or `slb_glossary.local.loaders`.
-    :param language: Glossary language edition these results were fetched
-        in, stored alongside each row.
+    :param language: If given, force-store every result under this
+        language, overriding each result's own `.language`. Left as
+        `None` (the default), each result is stored under its own
+        `.language` instead - the normal case, since a `SearchResult`
+        already knows which glossary edition it came from.
     :param source: Provenance tag stored alongside each row: `"glossary"`
         for results fetched live from the site (the default), or a
         caller-chosen value such as `"user"` for imported data.
@@ -141,7 +145,7 @@ async def upsert_results(
             result.definition,
             result.grammatical_label,
             result.topic,
-            language,
+            language if language is not None else result.language,
             result.image,
             result.image_caption,
             _dump_related(result.related),
@@ -190,7 +194,7 @@ async def upsert_results_incrementally(
     db: Database,
     results: typing.Iterable[SearchResult] | typing.AsyncIterable[SearchResult],
     *,
-    language: str = "en",
+    language: str | None = None,
     source: str = "glossary",
     batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
     persist_on_error: bool = True,
@@ -211,8 +215,9 @@ async def upsert_results_incrementally(
 
     :param db: The local database to write to.
     :param results: The result stream to wrap. A plain or async iterable.
-    :param language: Glossary language edition these results were fetched
-        in. Passed straight through to `upsert_results`.
+    :param language: Passed straight through to `upsert_results`; see its
+        docstring. `None` (the default) stores each result under its own
+        `.language` rather than forcing one language on the whole stream.
     :param source: Provenance tag stored alongside each row. Passed
         straight through to `upsert_results`.
     :param batch_size: Number of results to buffer before writing an
@@ -398,6 +403,7 @@ async def scored_search(
     *,
     topic: str | None = None,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = 20,
     fuzzy: bool = False,
 ) -> list[tuple[SearchResult, float]]:
@@ -455,6 +461,9 @@ async def scored_search(
     :param topic: Restrict results to this topic, or several
         comma-separated topics (case-insensitive exact match by default).
     :param start_letter: Restrict results to terms starting with this letter.
+    :param language: Restrict results to this glossary language edition
+        (e.g. `"en"`/`"es"`), matched exactly against each stored result's
+        `.language`. `None` (the default) doesn't filter by language.
     :param limit: Maximum number of results to return. `None` for unlimited.
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
         `topic` by resolving it against locally stored topic names first.
@@ -464,11 +473,12 @@ async def scored_search(
     normalized_query = strip_wrapper(query)
     logger.debug(
         "Local `search` (scored): query=%r (normalized=%r) topic=%r start_letter=%r "
-        "limit=%r fuzzy=%r",
+        "language=%r limit=%r fuzzy=%r",
         query,
         normalized_query,
         topic,
         start_letter,
+        language,
         limit,
         fuzzy,
     )
@@ -502,6 +512,10 @@ async def scored_search(
     if start_letter:
         sql += " AND terms.term COLLATE NOCASE LIKE ?"
         params.append(f"{start_letter}%")
+
+    if language:
+        sql += " AND terms.language = ?"
+        params.append(language)
 
     sql += " ORDER BY is_exact DESC, is_prefix DESC, bm25_score ASC"
     if limit:
@@ -547,12 +561,13 @@ async def _search(
     *,
     topic: str | None,
     start_letter: str | None,
+    language: str | None,
     limit: int | None,
     fuzzy: bool,
     scored: bool,
 ) -> typing.AsyncIterator[typing.Any]:
     results = await scored_search(
-        db, query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+        db, query, topic=topic, start_letter=start_letter, language=language, limit=limit, fuzzy=fuzzy
     )
     for result, score in results:
         yield (result, score) if scored else result
@@ -565,6 +580,7 @@ def search(
     *,
     topic: str | None = None,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = 20,
     fuzzy: bool = False,
     scored: typing.Literal[False] = False,
@@ -578,6 +594,7 @@ def search(
     *,
     topic: str | None = None,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = 20,
     fuzzy: bool = False,
     scored: typing.Literal[True],
@@ -590,6 +607,7 @@ def search(
     *,
     topic: str | None = None,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = 20,
     fuzzy: bool = False,
     scored: bool = False,
@@ -609,6 +627,8 @@ def search(
     :param topic: Restrict results to this topic, or several
         comma-separated topics (case-insensitive exact match by default).
     :param start_letter: Restrict results to terms starting with this letter.
+    :param language: Restrict results to this glossary language edition
+        (e.g. `"en"`/`"es"`). `None` (the default) doesn't filter by language.
     :param limit: Maximum number of results. `None` for unlimited.
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
         `topic` by resolving it against locally stored topic names first.
@@ -623,6 +643,7 @@ def search(
         query,
         topic=topic,
         start_letter=start_letter,
+        language=language,
         limit=limit,
         fuzzy=fuzzy,
         scored=scored,
@@ -697,26 +718,98 @@ async def get_terms_on(
     )
 
 
-async def get_term(db: Database, term_or_url: str) -> SearchResult | None:
+DEFAULT_SIMILAR_POOL_SIZE = 5
+"""
+Default `similar_pool_size` for `get_term(with_similar=True)`: how many
+scored candidates `scored_search` pulls before drawing alternatives from them.
+"""
+
+DEFAULT_MAX_SIMILAR_TERMS = 3
+"""Default `max_similar_terms` for `get_term(with_similar=True)`."""
+
+
+@typing.overload
+async def get_term(
+    db: Database,
+    term_or_url: str,
+    *,
+    language: str | None = None,
+    with_similar: typing.Literal[False] = False,
+    similar_pool_size: int = DEFAULT_SIMILAR_POOL_SIZE,
+    max_similar_terms: int = DEFAULT_MAX_SIMILAR_TERMS,
+) -> SearchResult | None: ...
+
+
+@typing.overload
+async def get_term(
+    db: Database,
+    term_or_url: str,
+    *,
+    language: str | None = None,
+    with_similar: typing.Literal[True],
+    similar_pool_size: int = DEFAULT_SIMILAR_POOL_SIZE,
+    max_similar_terms: int = DEFAULT_MAX_SIMILAR_TERMS,
+) -> tuple[SearchResult | None, list[tuple[SearchResult, float]]]: ...
+
+
+async def get_term(
+    db: Database,
+    term_or_url: str,
+    *,
+    language: str | None = None,
+    with_similar: bool = False,
+    similar_pool_size: int = DEFAULT_SIMILAR_POOL_SIZE,
+    max_similar_terms: int = DEFAULT_MAX_SIMILAR_TERMS,
+) -> SearchResult | None | tuple[SearchResult | None, list[tuple[SearchResult, float]]]:
     """
     Look up a single locally stored term by exact URL or exact term name.
 
     :param db: The local database to read from.
     :param term_or_url: A glossary term detail-page URL, or an exact
         (case-insensitive) term name.
+    :param language: Restrict the lookup (and, with `with_similar=True`,
+        the alternatives search) to this glossary language edition (e.g.
+        `"en"`/`"es"`). `None` (the default) doesn't filter by language.
+    :param with_similar: If `True`, also search for up to `max_similar_terms`
+        other locally stored results, via `scored_search` on `term_or_url`
+        itself, best match first, the exact match (if any) excluded. Each
+        paired with its own relevance score, the same shape `scored_search`
+        itself returns. Handy for a "did you mean" prompt when the exact
+        match turns out to be `None`, or just to see what else is nearby.
+    :param similar_pool_size: Candidates `scored_search` pulls before
+        alternatives are drawn from them. Only used when `with_similar=True`.
+    :param max_similar_terms: Max alternatives returned. Only used when `with_similar=True`.
     :return: The stored `SearchResult`, or `None` if not found locally.
+        With `with_similar=True`, a `(result, similar)` pair instead,
+        `similar` being `(alternative, score)` pairs.
     """
-    logger.debug("Local get_term: %r", term_or_url)
-    async with db.connection.execute(
-        "SELECT * FROM terms WHERE url = ? OR term = ? COLLATE NOCASE LIMIT 1",
-        (term_or_url, term_or_url),
-    ) as cursor:
+    logger.debug("Local get_term: %r (language=%r)", term_or_url, language)
+    sql = "SELECT * FROM terms WHERE (url = ? OR term = ? COLLATE NOCASE)"
+    params: list[typing.Any] = [term_or_url, term_or_url]
+    if language:
+        sql += " AND language = ?"
+        params.append(language)
+    sql += " LIMIT 1"
+
+    async with db.connection.execute(sql, params) as cursor:
         row = await cursor.fetchone()
 
-    if row is None:
+    result = _row_to_result(row) if row is not None else None
+    if result is None:
         logger.debug("No local term found for %r", term_or_url)
-        return None
-    return _row_to_result(row)
+
+    if not with_similar:
+        return result
+
+    scored = await scored_search(
+        db, term_or_url, language=language, limit=similar_pool_size
+    )
+    similar = [
+        (candidate, score)
+        for candidate, score in scored
+        if result is None or candidate.url != result.url
+    ][:max_similar_terms]
+    return result, similar
 
 
 async def get_random_term(

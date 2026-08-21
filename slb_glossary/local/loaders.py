@@ -88,6 +88,8 @@ def _record_to_result(
     topic_field: str | None,
     url_field: str | None,
     grammatical_label_field: str | None,
+    language_field: str | None,
+    default_language: str,
 ) -> SearchResult | None:
     """Build a `SearchResult` from one imported row, or `None` if it has no term."""
     term = _get_field(row, term_field)
@@ -106,6 +108,7 @@ def _record_to_result(
     definition = _get_field(row, definition_field)
     grammatical_label = _get_field(row, grammatical_label_field)
     topic = _get_field(row, topic_field)
+    language = _get_field(row, language_field)
 
     return SearchResult(
         term=str(term),
@@ -113,6 +116,7 @@ def _record_to_result(
         grammatical_label=str(grammatical_label) if grammatical_label is not None else None,
         topic=str(topic) if topic is not None else None,
         url=str(url),
+        language=str(language) if language is not None else default_language,
     )
 
 
@@ -157,6 +161,8 @@ async def load_file(
     topic_field: str | None = "topic",
     url_field: str | None = "url",
     grammatical_label_field: str | None = "grammatical_label",
+    language_field: str | None = "language",
+    default_language: str = "en",
     embedding_field: str | None = None,
     embedding_model: str = "custom",
     source: str = "user",
@@ -181,6 +187,12 @@ async def load_file(
         needed since `url` is the local database's primary key.
     :param grammatical_label_field: Column/key holding each row's
         grammatical label (e.g. "Noun"), or `None` to leave it unset.
+    :param language_field: Column/key holding each row's language edition
+        (e.g. `"en"`/`"es"`), or `None` to always use `default_language`
+        instead. A row with this column present but empty still falls
+        back to `default_language`.
+    :param default_language: Language stored for a row with no usable
+        `language_field` value.
     :param embedding_field: Column/key holding a precomputed embedding
         vector for each row - either a JSON array, or a delimiter-separated
         (comma, semicolon, or whitespace) string of numbers. If given, a
@@ -224,6 +236,8 @@ async def load_file(
             topic_field=topic_field,
             url_field=url_field,
             grammatical_label_field=grammatical_label_field,
+            language_field=language_field,
+            default_language=default_language,
         )
         if result is None or not result.url:
             continue
@@ -234,7 +248,9 @@ async def load_file(
             if parsed_embedding:
                 embeddings[result.url] = parsed_embedding
 
-    written = await upsert_results(db, results, source=source)
+    # `language=None`: store each result's own `.language` field (set
+    # above, per row) rather than forcing one language on the whole batch.
+    written = await upsert_results(db, results, language=None, source=source)
     for url, embedding in embeddings.items():
         await upsert_vector(db, url, embedding, model=embedding_model)
     return written

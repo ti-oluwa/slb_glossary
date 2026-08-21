@@ -373,6 +373,7 @@ async def get_results_from_url(
                 image=image_url,
                 image_caption=image_caption,
                 related=related,
+                language=session.language.value,
             )
 
         logger.debug(
