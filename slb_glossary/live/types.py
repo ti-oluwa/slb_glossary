@@ -79,9 +79,9 @@ class PageHandle:
     ```
 
     Either way, the pool's slot for this page is freed automatically as
-    soon as the underlying page closes - whether that happens via this
+    soon as the underlying page closes, whether that happens via this
     handle, a direct `page.close()`, or the browser context closing the
-    page out from under you. There's nothing else to release.
+    page out from under you.
     """
 
     page: Page
@@ -100,10 +100,9 @@ class Pages:
     """
     A bounded pool of browser pages opened on a single `BrowserContext`.
 
-    Callers that each want an independently-owned page - an SPA search
-    page paging through tabs, a term detail page, one page per concurrent
-    worker - acquire one with `get()` instead of sharing (and racing over)
-    a single page. `max_size` caps how many pages can be open on `context`
+    Callers that each want an independently-owned page should acquire 
+    one with `get()` instead of sharing (and racing over) a single page. 
+    `max_size` caps how many pages can be open on `context`
     at once; once that many are checked out, further `get()` calls wait
     for one to close.
 
@@ -187,10 +186,12 @@ class Session:
     then pass it to the search functions in `slb_glossary.live`.
 
     A session owns one browser context shared by however many pages are
-    open at once (bounded by `max_pages`). Operations
-    that need their own page check one out via `new_page()`, so a
-    session is safe to drive concurrently as long as `max_pages` covers
-    however many pages those operations need open at the same time.
+    open at once (bounded by `max_pages`). 
+
+    Operations that need their own page check one out via `pages.get()` 
+    or `new_page()`, so a session is safe to drive concurrently as 
+    long as `max_pages` covers however many pages those operations need 
+    open at the same time.
     """
 
     playwright: Playwright
@@ -215,12 +216,7 @@ class Session:
     """Total number of terms in the glossary, as reported by the site."""
 
     browser_type: BrowserType = BrowserType.CHROMIUM
-    """
-    Playwright browser family this session launched. A `BrowserType` is a
-    `str` subclass (`enum.StrEnum`), so it still compares/formats/hashes
-    exactly like the plain `"chromium"`/`"firefox"`/`"webkit"` values it
-    used to be typed as - this is a stricter type, not a behavior change.
-    """
+    """Playwright browser family this session launched."""
 
     terms_per_tab: int = 12
     """Number of results the glossary site returns per results page."""
@@ -229,11 +225,12 @@ class Session:
     """
     Request resource types dropped for this session, as the literal
     strings Playwright's own `Request.resource_type` produces (e.g.
-    `"image"`), not `ResourceType` members. Resolved once from whatever
-    `open_session`'s `block` argument was (a `bool`, a `ResourceType`, or
-    an iterable of names) so that blocking a request is a single `in`
-    check against this frozenset on every intercepted request, with no
-    per-request enum conversion in that hot path.
+    `"image"`), not `ResourceType` members. 
+    
+    Resolved once from whatever `open_session`'s `block` argument was 
+    (a `bool`, a `ResourceType`, or an iterable of names) so that blocking 
+    a request is a single `in` check against this frozenset on every intercepted 
+    request, with no per-request enum conversion in that (hot) path.
     """
 
     retry: RetryPolicy = dataclasses.field(default_factory=RetryPolicy)
@@ -282,9 +279,11 @@ class Session:
     The glossary site blocks requests that don't originate from a page
     that's already been interacted with, so a brand-new page has to run a
     throwaway search first before it can be trusted with a real one.
+
     `base_page` has already paid that cost during `initialize()`.
     `slb_glossary.live.get_terms_urls` reuses it automatically when
-    available, falling back to opening and warming up a fresh page otherwise.
+    available, and falling back to opening and warming up a fresh page 
+    otherwise.
 
     Two concurrent `Session`s tasks must never try to use it (they'd 
     each be navigating out from under the other), and `base_page` itself 

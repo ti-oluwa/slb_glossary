@@ -31,7 +31,7 @@ async def materialize_records(
     Collect `records` into a list, consuming it if it is a lazy iterable.
 
     :param records: A sync iterable, or an async iterable such as the
-        generators `slb_glossary.search` yields results from.
+        generators `slb_glossary.query` yields results from.
     :return: `records` as a plain list.
     """
     if isinstance(records, AsyncIterable):

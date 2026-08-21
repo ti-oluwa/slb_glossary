@@ -10,7 +10,7 @@ from difflib import get_close_matches
 import aiosqlite
 
 from slb_glossary.local.types import Database
-from slb_glossary.natural_language import strip_wrapper
+from slb_glossary.natural_language import clean_query
 from slb_glossary.relevance import CONTENT_MATCH_SCORE_CAP, EXACT_MATCH_SCORE, PREFIX_MATCH_SCORE
 from slb_glossary.types import RelatedTerm, SearchResult
 from slb_glossary.utils import as_async_iterator
@@ -440,7 +440,7 @@ async def scored_search(
     local score and a live score mean roughly the same thing.
 
     Before any of that, `query` is passed through
-    `slb_glossary.natural_language.strip_wrapper`, which reduces a
+    `slb_glossary.natural_language.clean_query`, which reduces a
     plain-English question like "what is X" or "define X" down to just
     `X`. Local matching works against actual term names and words, not
     conversational phrasing, so this is what lets a question like "what
@@ -471,7 +471,7 @@ async def scored_search(
         Has no effect if `topic` is falsy.
     :return: `(result, score)` pairs, best match first. `score` is in `[0.0, 1.0]`.
     """
-    normalized_query = strip_wrapper(query)
+    normalized_query = clean_query(query)
     logger.debug(
         "Local `search` (scored): query=%r (normalized=%r) topic=%r start_letter=%r "
         "language=%r limit=%r fuzzy=%r",

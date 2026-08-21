@@ -1,4 +1,4 @@
-"""Exceptions raised by the package."""
+"""`slb_glossary` Exceptions"""
 
 import pathlib
 

@@ -67,7 +67,7 @@ from slb_glossary.errors import QueryError
 from slb_glossary.live.browser import Session
 from slb_glossary.local import api as local_api
 from slb_glossary.local.types import Database
-from slb_glossary.natural_language import strip_wrapper
+from slb_glossary.natural_language import clean_query
 from slb_glossary.relevance import EXACT_MATCH_SCORE, score_result
 from slb_glossary.types import RelatedTerm, SearchResult
 
@@ -93,7 +93,7 @@ Default `persist_batch_size` for `search`/`get_terms_on`: how many
 live results to buffer before writing an incremental upsert batch.
 """
 
-DEFAULT_RELEVANCE_THRESHOLD = 0.55
+DEFAULT_RELEVANCE_THRESHOLD = 0.45
 """
 Default `relevance_threshold` for `search`'s `Source.AUTO` behavior:
 below this score (see `slb_glossary.local.scored_search`), the local
@@ -335,7 +335,7 @@ async def search(
     """
     Search for `query`, reading from `db`/`session` according to `source`.
 
-    `query` is first passed through `slb_glossary.natural_language.strip_wrapper`,
+    `query` is first passed through `slb_glossary.natural_language.clean_query`,
     so a plain-English question like "what is water saturation" is searched
     as "water saturation" against both `db` and `session`.
 
@@ -395,7 +395,7 @@ async def search(
         doesn't match `session`'s own language.
     """
     validate_language(session, language)
-    normalized_query = strip_wrapper(query)
+    normalized_query = clean_query(query)
     started_at = time.monotonic()
     resolved = resolve_source(db, session, source)
     count = 0
@@ -939,7 +939,7 @@ async def get_term(
     resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
-        return await _local_term_lookup(
+        return await _lookup_local_term(
             db,
             term_or_url,
             language=language,
@@ -950,7 +950,7 @@ async def get_term(
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
-        fetched = await _fetch_term(
+        fetched = await _lookup_live_term(
             session,
             term_or_url,
             with_similar=with_similar,
@@ -962,7 +962,7 @@ async def get_term(
         )
 
     assert db is not None
-    local_lookup = await _local_term_lookup(
+    local_lookup = await _lookup_local_term(
         db,
         term_or_url,
         language=language,
@@ -981,7 +981,7 @@ async def get_term(
     if session is None:
         return local_lookup
 
-    fetched = await _fetch_term(
+    fetched = await _lookup_live_term(
         session,
         term_or_url,
         with_similar=with_similar,
@@ -993,7 +993,7 @@ async def get_term(
     )
 
 
-async def _local_term_lookup(
+async def _lookup_local_term(
     db: Database,
     term_or_url: str,
     *,
@@ -1047,11 +1047,11 @@ async def _finalize_live_term_lookup(
     persist: bool,
 ) -> LookupResult:
     """
-    Persist `_fetch_term`'s result if requested, then build `get_term`'s return value from it.
+    Persist `_lookup_live_term`'s result if requested, then build `get_term`'s return value from it.
 
     Shared by `get_term`'s `Source.LIVE` branch and its `Source.AUTO`
     live-fallback branch, since both do the same persist-then-wrap work
-    once they have a `fetched` value from `_fetch_term`.
+    once they have a `fetched` value from `_lookup_live_term`.
     """
     persisted = await _maybe_persist(
         db,
@@ -1074,7 +1074,7 @@ async def _finalize_live_term_lookup(
 def _flatten_results(
     fetched: LookupResult[SearchResult] | None | SimilarResult, *, with_similar: bool
 ) -> list[SearchResult]:
-    """Flatten a `_fetch_term` result into the `SearchResult`(s) `_maybe_persist` should cache."""
+    """Flatten a `_lookup_live_term` result into the `SearchResult`(s) `_maybe_persist` should cache."""
     if not with_similar:
         assert not isinstance(fetched, SimilarResult)
         return [fetched.value] if fetched is not None else []
@@ -1085,7 +1085,7 @@ def _flatten_results(
 
 
 @typing.overload
-async def _fetch_term(
+async def _lookup_live_term(
     session: Session,
     term_or_url: str,
     *,
@@ -1096,7 +1096,7 @@ async def _fetch_term(
 
 
 @typing.overload
-async def _fetch_term(
+async def _lookup_live_term(
     session: Session,
     term_or_url: str,
     *,
@@ -1106,7 +1106,7 @@ async def _fetch_term(
 ) -> SimilarResult: ...
 
 
-async def _fetch_term(
+async def _lookup_live_term(
     session: Session,
     term_or_url: str,
     *,
@@ -1214,7 +1214,7 @@ async def related_terms(
     """
     Look up the related terms linked from a single term's definition.
 
-    A thin convenience wrapper around `get_term`: fetches the term, then
+    A thin convenience wrapper around `get_term`. Fetches the term, then
     returns just its `SearchResult.related` links.
 
     :param term_or_url: An exact (case-insensitive) term name, or a
@@ -1392,11 +1392,10 @@ async def compare(
     Terms are looked up concurrently via `asyncio.gather`, up to
     `concurrency` at a time, bounded by a semaphore. Each lookup that
     actually reaches the live glossary checks out its own page from
-    `session.pages` for the duration of its own fetch (the same pooled
-    pattern `slb_glossary.live.get_results_from_urls` uses for its own
-    `concurrency`), so concurrent lookups never race over a single shared
-    page. `session.max_pages` should comfortably cover `concurrency`. A
-    local-only lookup never touches a page at all.
+    `session.pages` for the duration of its own fetch, so concurrent
+    lookups never race over a single shared page. `session.max_pages`
+    should comfortably cover `concurrency`. A local-only lookup never
+    touches a page at all.
 
     :param terms: Term names (or detail-page URLs) to look up. Order is
         preserved in the returned dict, regardless of which order lookups
@@ -1416,8 +1415,7 @@ async def compare(
         instead of `LookupResult[SearchResult | None]`, the same as `get_term`'s.
     :return: `{term_or_url: LookupResult}`, in the order `terms` was given.
         A `LookupResult.value` of `None` (or, with `with_similar=True`, a
-        falsy `SimilarResult`) means that term wasn't found by the
-        resolved source(s).
+        falsy `SimilarResult`) means that term wasn't found by the resolved source(s).
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         the requested `source` needs one that wasn't given, `terms` is
         empty, or `language` doesn't match `session`'s own language.
@@ -1454,11 +1452,12 @@ async def compare(
     results = dict(pairs)
 
     elapsed = time.monotonic() - started_at
+    terms_count = len(terms)
     logger.debug(
         "`compare(%d term(s), concurrency=%d)` done in %.3fs (avg %.3fs/term)",
-        len(terms),
+        terms_count,
         concurrency,
         elapsed,
-        elapsed / len(terms),
+        elapsed / terms_count,
     )
     return results

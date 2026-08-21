@@ -1,9 +1,4 @@
-"""
-Low-level DOM extraction for glossary pages.
-
-Every CSS selector the scraper depends on lives in this module, so a change
-to the glossary site's markup only ever needs to be fixed here.
-"""
+"""Low-level DOM extractors and parsers for glossary pages."""
 
 import logging
 import typing
@@ -12,7 +7,7 @@ from urllib.parse import urljoin
 from patchright.async_api import Page
 
 from slb_glossary.live.urls import BASE_URL
-from slb_glossary.types import RelatedTerm
+from slb_glossary.types import Language, RelatedTerm
 from slb_glossary.utils import parse_int
 
 logger = logging.getLogger(__name__)
@@ -41,6 +36,7 @@ __all__ = [
     "get_term_images",
     "get_term_name",
     "get_total_term_count",
+    "resolve_grammatical_label",
 ]
 
 
@@ -113,7 +109,7 @@ async def get_facet_topics(page: Page) -> dict[str, int]:
     :param page: A page currently showing the glossary search screen.
     :return: Mapping of topic name to number of terms filed under it.
     """
-    raw_entries = await page.eval_on_selector_all(
+    entries = await page.eval_on_selector_all(
         TOPIC_VALUE_SELECTOR,
         """
         (elements) => elements.map((element) => {
@@ -131,11 +127,11 @@ async def get_facet_topics(page: Page) -> dict[str, int]:
         """,
     )
     topics: dict[str, int] = {}
-    for name, count_text in raw_entries:
+    for name, count in entries:
         try:
-            topics[name] = parse_int(count_text)
+            topics[name] = parse_int(count)
         except ValueError:
-            logger.debug("Could not parse term count %r for topic %r", count_text, name)
+            logger.debug("Could not parse term count %r for topic %r", count, name)
             continue
     logger.debug("Read %d topics from the facet panel", len(topics))
     return topics
@@ -311,3 +307,55 @@ async def get_term_images(page: Page) -> list[TermImage | None]:
         else None
         for section in sections
     ]
+
+
+GRAMMATICAL_LABELS: dict[Language, dict[str, str]] = {
+    Language.ENGLISH: {
+        "n.": "Noun",
+        "pron.": "Pronoun",
+        "vb.": "Verb",
+        "adj.": "Adjective",
+        "adv.": "Adverb",
+        "prep.": "Preposition",
+        "conj.": "Conjunction",
+        "interj.": "Interjection",
+        "art.": "Article",
+        "det.": "Determiner",
+        "num.": "Numeral",
+        "aux.": "Auxiliary Verb",
+        "modal": "Modal Verb",
+        "participle": "Participle",
+        "gerund": "Gerund",
+    },
+    Language.SPANISH: {
+        "s.": "Sustantivo",
+        "pron.": "Pronombre",
+        "v.": "Verbo",
+        "adj.": "Adjetivo",
+        "adv.": "Adverbio",
+        "prep.": "Preposición",
+        "conj.": "Conjunción",
+        "interj.": "Interjección",
+        "art.": "Artículo",
+        "det.": "Determinante",
+        "num.": "Número",
+        "aux.": "Verbo Auxiliar",
+        "modal": "Verbo Modal",
+        "participio": "Participio",
+        "gerundio": "Gerundio",
+    },
+}
+"""Abbreviation-to-full-label mappings, keyed by glossary language."""
+
+
+def resolve_grammatical_label(language: Language, abbreviation: str) -> str:
+    """
+    Return the non-abbreviated grammatical label for `abbreviation`.
+
+    :param language: The glossary language `abbreviation` was found in.
+    :param abbreviation: The abbreviated grammatical label as it appears on
+        the glossary page, e.g. `"n."`.
+    :return: The full label, e.g. `"Noun"`. Returns `abbreviation` unchanged
+        if there is no known mapping for it.
+    """
+    return GRAMMATICAL_LABELS[language].get(abbreviation.lower(), abbreviation)

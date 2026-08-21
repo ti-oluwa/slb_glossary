@@ -7,7 +7,7 @@ async def main() -> None:
     async with slb.local.database() as db, slb.live.session() as session:
         # Local first; only opens a live page if the local DB has nothing.
         # `persist=True` writes whatever came back live into `db`.
-        async for result in slb.search("logging", db=db, session=session, persist=True, source=slb.Source.LIVE):
+        async for result in slb.search("logging", db=db, session=session, persist=True):
             print(result.value.term, "-", result.value.definition)
 
         # A repeat call for the same query is now served from `db` alone.

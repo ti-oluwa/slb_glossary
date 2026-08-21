@@ -159,10 +159,10 @@ class BrowserSessionOptions(Updatable):
     """
     Where to route the application's logging for this run. Can be a file path,
     `"stderr"`/`"stdout"`, or a `"module:ClassName"` import path to a
-    custom `slb_glossary.logging.LogSink`. `None` (the default) leaves
-    whatever logging setup is already in place untouched. See
-    `slb_glossary.browser.open_session`'s `log_sink` parameter and the
-    CLI's `--log-to`/`--log-sink` options.
+    custom `slb_glossary.logging.LogSink`. `
+    
+    None` (the default) leaves whatever logging setup is already in place 
+    untouched.
     """
 
     retry: RetryOptions = dataclasses.field(default_factory=RetryOptions)
@@ -170,10 +170,9 @@ class BrowserSessionOptions(Updatable):
 
     def session_kwargs(self) -> dict[str, typing.Any]:
         """
-        Build keyword arguments for `slb_glossary.browser.open_session`/`session`.
+        Build keyword arguments for `slb_glossary.browser.open_session`.
 
-        :return: A kwargs dict ready to splat into `open_session` or
-            `session`.
+        :return: A kwargs dict ready to splat into `open_session`.
         """
         block: bool | frozenset[str]
         if self.block_resources:
@@ -223,21 +222,27 @@ class DatabaseOptions(Updatable):
     """Whether commands/functions that offer local-database fallback should use it."""
 
     data_dir: str | None = None
-    """Directory the local database and its metadata are stored in. Defaults
-    to the OS-appropriate user data directory (see `slb_glossary.paths`)."""
+    """
+    Directory the local database and its metadata are stored in. Defaults
+    to the OS-appropriate user data directory (see `slb_glossary.paths`).
+    """
 
     db_filename: str = "glossary.db"
     """Filename of the local SQLite database within `data_dir`."""
 
     prefer_local: bool = False
-    """If `True`, functions that can fall back to the local database (e.g.
-    the CLI's `db` commands) prefer it over opening a live browser session."""
+    """
+    If `True`, functions that can fall back to the local database (e.g.
+    the CLI's `db` commands) prefer it over opening a live browser session.
+    """
 
     sync_max_age_days: float | None = 7.0
-    """Age, in days, after which `slb_glossary.local.sync` should be told
+    """
+    Age, in days, after which `slb_glossary.local.sync` should be told
     the local database is stale. `None` means it is never considered stale
     by age alone. This is purely advisory and nothing here syncs automatically,
-    keeping this package's traffic to the live glossary opt-in only."""
+    keeping this package's traffic to the live glossary opt-in only.
+    """
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
@@ -269,13 +274,14 @@ def _is_dataclass_type(candidate: typing.Any) -> bool:
     return isinstance(candidate, type) and dataclasses.is_dataclass(candidate)
 
 
-def _dataclass_from_mapping(cls: type[T], data: Mapping[str, typing.Any]) -> T:
+def _load_dataclass(cls: type[T], data: Mapping[str, typing.Any]) -> T:
     """
     Build a `cls` instance from `data`, recursing into nested dataclass fields.
 
     Keys in `data` with no matching field are ignored (forward-compatible
     with newer config files which may have been acceptable by an older
-    `slb_glossary`); fields absent from `data` fall back to the dataclass's own defaults.
+    package version); fields absent from `data` fall back to the dataclass's
+    own defaults.
 
     :param cls: The dataclass type to build.
     :param data: A mapping of field name to value, as parsed from a config file.
@@ -287,7 +293,7 @@ def _dataclass_from_mapping(cls: type[T], data: Mapping[str, typing.Any]) -> T:
             continue
         value = data[field.name]
         if _is_dataclass_type(field.type) and isinstance(value, Mapping):
-            kwargs[field.name] = _dataclass_from_mapping(typing.cast(type, field.type), value)
+            kwargs[field.name] = _load_dataclass(typing.cast(type, field.type), value)
         else:
             kwargs[field.name] = value
     return cls(**kwargs)
@@ -344,7 +350,7 @@ def _strip_none(data: typing.Any) -> typing.Any:
     `BrowserSessionOptions.executable_path`, `DatabaseOptions.data_dir`), so those
     need to be dropped rather than written before a TOML dump can succeed.
 
-    A dropped key round-trips safely: `_dataclass_from_mapping` falls back
+    A dropped key round-trips safely as `_load_dataclass` falls back
     to the field's own default for any key missing from a loaded config,
     and every field this can drop already defaults to `None`.
 
@@ -409,7 +415,7 @@ class Config(Updatable):
 
     ```python
     config = Config.load()  # default path if it exists, else built-in defaults
-    async with Session.from_config(config) as session:
+    async with session_from_config(config) as session:
         ...
     ```
     """
@@ -432,7 +438,7 @@ class Config(Updatable):
             Unknown keys are ignored; missing keys use their field defaults.
         :return: The built `Config`.
         """
-        return _dataclass_from_mapping(cls, data)
+        return _load_dataclass(cls, data)
 
     def to_dict(self) -> dict[str, typing.Any]:
         """Return this config as a plain, JSON/TOML/YAML-safe nested dict."""
@@ -540,7 +546,7 @@ class Config(Updatable):
             raise ConfigError(f"Unknown config key {key!r} (failed at {leaf!r}).")
 
         current = getattr(target, leaf)
-        setattr(target, leaf, _coerce_value(value, like=current))
+        setattr(target, leaf, _cast(value, like=current))
         logger.debug("Set config key %s = %r", key, getattr(target, leaf))
 
     @classmethod
@@ -549,7 +555,7 @@ class Config(Updatable):
         return default_config_path()
 
 
-def _coerce_value(value: typing.Any, *, like: typing.Any) -> typing.Any:
+def _cast(value: typing.Any, *, like: typing.Any) -> typing.Any:
     """
     Coerce a string `value` to the type of `like`, for CLI-style key=value input.
 

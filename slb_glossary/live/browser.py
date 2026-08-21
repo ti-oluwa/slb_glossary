@@ -241,7 +241,7 @@ async def _launch_browser(
 async def open_session(
     session_cls: type[SessionT] = Session,
     *,
-    language: Language = Language.ENGLISH,
+    language: Language | str = Language.ENGLISH,
     browser_type: BrowserType | str = BrowserType.CHROMIUM,
     headless: bool = True,
     block: bool | typing.Iterable[str] | ResourceType = True,
@@ -332,11 +332,18 @@ async def open_session(
     _apply_log_sink(log_sink)
 
     if browser_type not in BrowserType:
-        raise BrowserError(
+        raise ValueError(
             f"Unsupported `browser_type` {browser_type!r}. "
             f"Supported types: {', '.join(BrowserType.__members__)}."
         )
+    if language not in Language:
+        raise ValueError(
+            f"Unsupported `language` {language!r}. "
+            f"Supported options: {', '.join(Language.__members__)}."
+        )
+
     browser_type = BrowserType(browser_type)
+    language = Language(language)
 
     session_started_at = time.monotonic()
     logger.info("Opening a %r glossary search session over %s", language.value, browser_type)
@@ -444,7 +451,7 @@ async def close_session(session: Session) -> None:
 async def session(
     session_cls: type[SessionT] = Session,
     *,
-    language: Language = Language.ENGLISH,
+    language: Language | str = Language.ENGLISH,
     browser_type: BrowserType | str = BrowserType.CHROMIUM,
     headless: bool = True,
     block: bool | typing.Iterable[str] | ResourceType = True,
@@ -546,10 +553,6 @@ async def open_session_from_config(
 ) -> SessionT:
     """
     Open a `Session` using a `Config`, or a path to a config file.
-
-    Equivalent to `Session.from_config`; provided here as well so
-    `slb_glossary.browser` stays a complete, self-contained entry point for
-    opening sessions without needing an import from `slb_glossary.models`.
 
     :param config: A `slb_glossary.config.Config`, or a path to a JSON/
         TOML/YAML file `Config.from_file` can load.

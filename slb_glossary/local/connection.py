@@ -36,15 +36,15 @@ async def _enable_wal(connection: aiosqlite.Connection) -> str:
     living next to the main database file for as long as it's in active
     use: `<db>-wal` (the write-ahead log itself) and `<db>-shm` (the
     shared-memory index into it). Both are ordinary SQLite bookkeeping
-    files, not optional extras - see `open_db`'s docstring for what that
+    files, not optional extras. See `open_db`'s docstring for what that
     means for backing up or moving a database.
 
     :param connection: An open `aiosqlite` connection, not yet used for
         any other statement.
     :return: The journal mode SQLite reports after the request, e.g.
-        `"wal"`. Not always what was asked for - some filesystems (network
-        shares in particular) don't support WAL and SQLite silently falls
-        back to another mode instead of erroring.
+        `"wal"`. May not always return what was asked for as some 
+        filesystems (network shares in particular) don't support WAL 
+        and SQLite silently falls back to another mode instead of erroring.
     """
     cursor = await connection.execute("PRAGMA journal_mode=WAL")
     row = await cursor.fetchone()
@@ -77,23 +77,24 @@ async def open_db(
     unflushed writes is missing data. Move `metadata_path` (or its
     default, `<path>.metadata.json` / `metadata.json`) along with it too;
     it's a separate file and won't follow the `.db` file automatically.
-    `slb_glossary.local.flush`/`reset` checkpoint and truncate the WAL
-    file as part of what they do, so a freshly flushed/reset database has
-    little or nothing outstanding in `-wal` to lose. But closing the
-    database first (`close_db`, or exiting a `database(...)` block) is
-    still the simplest way to guarantee a clean, single-file snapshot,
-    since SQLite folds the WAL back into the main file and removes the
-    sidecar files itself once the last connection to it closes.
+
+    `flush`/`reset` checkpoint and truncate the WAL file as part of what 
+    they do, so a freshly flushed/reset database has little or nothing 
+    outstanding in `-wal` to lose. But closing the database first 
+    (`close_db`, or exiting a `database(...)` block) is still the simplest 
+    way to guarantee a clean, single-file snapshot, since SQLite folds the 
+    WAL back into the main file and removes the sidecar files itself once 
+    the last connection to it closes.
 
     :param path: Path to the SQLite database file. Defaults to
         `slb_glossary.paths.default_db_path()` (the OS-appropriate user
-        data directory - see `slb_glossary.paths`).
+        data directory. See `slb_glossary.paths`).
     :param metadata_path: Path to the metadata JSON file. Defaults to
         `slb_glossary.paths.default_metadata_path()` when `path` is also
         left at its default, or `<path stem>.metadata.json` next to a
         custom `path`.
-    :return: An open `Database`. Close it with `close_db`, or use
-        `database` instead of calling this function directly.
+    :return: An open `Database`. Close it with `close_db`, or use the
+        `database` context manager instead of calling this function directly.
     :raises DatabaseError: If the installed SQLite build lacks FTS5.
     """
     resolved_db_path = pathlib.Path(path) if path is not None else default_db_path()
@@ -128,12 +129,15 @@ async def close_db(db: Database) -> None:
     """
     Close `db`'s connection.
 
-    Safe to call more than once; later calls are no-ops. If this is the
-    last open connection to `db.db_path`, SQLite folds its `-wal` sidecar
-    file back into the main database file and removes both `-wal`/`-shm`
-    as part of closing - so a database closed this way is a clean,
-    single-file snapshot, safe to copy or back up as just `db_path` (plus
-    `metadata_path`) with nothing else to bring along.
+    Safe to call more than once; later calls are no-ops. 
+    
+    If this is the last open connection to `db.db_path`, 
+    SQLite folds its `-wal` sidecar file back into the main database 
+    file and removes both `-wal`/`-shm` as part of closing. 
+    
+    A database closed this way is a clean, single-file snapshot, 
+    safe to copy or back up as just `db_path` (plus `metadata_path`) 
+    with nothing else to bring along.
 
     :param db: The local database to close.
     """

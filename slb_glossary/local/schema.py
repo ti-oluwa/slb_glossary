@@ -9,7 +9,7 @@ __all__ = ["SCHEMA_VERSION", "initialize"]
 SCHEMA_VERSION = 1
 """
 Local database schema version. Bumped (by developer) alongside any DDL change below
-that isn't purely additive, so `slb_glossary.local.models.Metadata` can eventually 
+that isn't purely additive, so `slb_glossary.local.types.Metadata` can eventually 
 gate migrations on it.
 """
 

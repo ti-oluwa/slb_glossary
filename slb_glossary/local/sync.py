@@ -1,7 +1,7 @@
 """
 Sync the local database from a live `Session`.
 
-Call one of these functions as often (or as rarely) as fits your own use of the glossary; see the
+Call these functions as often (or as rarely) as fits your own use of the glossary; see the
 responsible-use note on `sync_all` in particular.
 """
 
@@ -329,8 +329,8 @@ async def sync_letter(
     Fetch every term starting with `start_letter` from the live glossary and store them locally.
 
     Useful for incremental updates keyed by the alphabet instead of by
-    topic, e.g. syncing `slb-glossary update --start-letter a` through `z`
-    over several separate, spaced-out runs.
+    topic, e.g. syncing by start-letter "a" through "z" over several 
+    separate, spaced-out runs.
 
     :param db: The local database to write to.
     :param session: An open `Session` to fetch from.
@@ -408,8 +408,7 @@ async def sync_all(
 
     This walks every topic `session` knows about and fetches every term
     filed under it. This is the heaviest sync this module offers, and the one
-    most likely to draw attention from the glossary site's own rate
-    limiting.
+    most likely to draw attention from the glossary site.
 
     Use it sparingly, and mind the local-data disclaimer in
     `slb_glossary.local`'s package docstring; `sync_query`/`sync_topic`

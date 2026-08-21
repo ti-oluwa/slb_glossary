@@ -10,7 +10,6 @@ from patchright.async_api import Page
 
 from slb_glossary.errors import SessionNotInitializedError
 from slb_glossary.live.browser import Session
-from slb_glossary.live.grammar import resolve_grammatical_label
 from slb_glossary.live.parsers import (
     TermBlock,
     get_result_links,
@@ -19,6 +18,7 @@ from slb_glossary.live.parsers import (
     get_term_images,
     get_term_name,
     get_total_term_count,
+    resolve_grammatical_label,
 )
 from slb_glossary.live.topics import fetch_topics
 from slb_glossary.live.urls import build_pager_query, build_search_url
@@ -452,8 +452,7 @@ async def get_results_from_urls(
     :param concurrency: Number of term detail pages to fetch in parallel.
         `1` (the default) fetches sequentially on a single page.
     :param first_only: If `True`, yield only the first definition found on
-        each page rather than every definition on it (used by
-        `get_terms_on`, which wants one result per term).
+        each page rather than every definition on it.
     :param exclude: URLs to skip fetching entirely, e.g. ones already
         stored locally, so a sync doesn't pay to re-fetch them. Checked
         once per URL in `urls`, before it's ever queued for a worker, so
@@ -579,6 +578,7 @@ async def search(
     start_letter: str | None = None,
     limit: int | None = 3,
     concurrency: int = 1,
+    first_only: bool = False,
     exclude: typing.AbstractSet[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
@@ -597,6 +597,8 @@ async def search(
         matching term if `None`. Defaults to `3`.
     :param concurrency: Number of term detail pages to fetch in parallel.
         See `get_results_from_urls`. Defaults to `1` (sequential).
+    :param first_only: If `True`, yield only the first definition found on
+        each page rather than every definition on it.
     :param exclude: Term URLs to skip over, e.g. ones already stored
         locally. See `get_terms_urls`/`get_results_from_urls`. `None`
         (the default) excludes nothing.
@@ -617,7 +619,12 @@ async def search(
     count = 0
     async for result in log_timed_yields(
         get_results_from_urls(
-            session, urls, topic=topic, concurrency=concurrency, exclude=exclude
+            session,
+            urls,
+            topic=topic,
+            concurrency=concurrency,
+            first_only=first_only,
+            exclude=exclude,
         ),
         logger=logger,
         label=f"search({query!r})",
@@ -642,6 +649,7 @@ async def get_terms_on(
     start_letter: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
+    first_only: bool = False,
     exclude: typing.AbstractSet[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
@@ -655,6 +663,8 @@ async def get_terms_on(
         under `topic` if `None`.
     :param concurrency: Number of term detail pages to fetch in parallel.
         See `get_results_from_urls`. Defaults to `1` (sequential).
+    :param first_only: If `True`, yield only the first definition found on
+        each page rather than every definition on it.
     :param exclude: Term URLs to skip over, e.g. ones already stored
         locally. See `get_terms_urls`/`get_results_from_urls`. `None`
         (the default) excludes nothing.
@@ -682,6 +692,7 @@ async def get_terms_on(
             urls,
             topic=topic,
             concurrency=concurrency,
+            first_only=first_only,
             exclude=exclude,
         ),
         logger=logger,

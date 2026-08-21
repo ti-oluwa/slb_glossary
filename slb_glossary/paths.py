@@ -1,5 +1,5 @@
 """
-Platform-appropriate filesystem locations for the MCPApps's local data.
+Platform-appropriate filesystem locations for the application's local data.
 
 **Disclaimer**: the SLB Energy Glossary's content and data are
 owned by SLB. Anything cached locally via the paths in this module; the local

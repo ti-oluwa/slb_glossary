@@ -1,4 +1,4 @@
-"""Configurable backoff strategies for retrying flaky page loads."""
+"""Configurable backoff strategies for retrying flaky API calls."""
 
 import asyncio
 import dataclasses

@@ -6,7 +6,7 @@ phrase they're actually about.
 
 import re
 
-__all__ = ["strip_wrapper"]
+__all__ = ["clean_query"]
 
 _PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern, re.IGNORECASE)
@@ -26,12 +26,11 @@ _PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 Recognized phrasings. Each is matched whole-string (not just a prefix),
 so a query that merely contains one of these words somewhere ("geometric
 mean", "explain and give an example") isn't mangled. Only a query that
-is one of these phrasings, start to end, gets stripped down to its
-`term` group.
+is one of these phrasings, start to end, gets stripped down to its `term` group.
 """
 
 
-def strip_wrapper(query: str) -> str:
+def clean_query(query: str) -> str:
     """
     Strip a recognized natural-language wrapper off `query`, leaving just the term.
 
