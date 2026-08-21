@@ -342,10 +342,13 @@ async def search(
     With `source=Source.AUTO` (the default when both `db` and `session`
     are given), the local database is searched first and scored.
     If its best result meets `relevance_threshold`, those local results
-    are served alone. Otherwise the live glossary is queried too, and
-    its results are added on after the local ones. Local results aren't
-    thrown away just because they weren't confident, they're just not
-    trusted as the whole answer.
+    are served alone. Otherwise the live glossary is queried too - and
+    queried *first*, ahead of the (unconfident) local results, on the
+    theory that a live result is generally more trustworthy than a local
+    match that wasn't confident enough to stand alone. Local results
+    aren't thrown away, they still fill out any of `limit` that live
+    couldn't, just no longer shown ahead of the live ones once local
+    itself wasn't confident.
 
     :param query: Free-text query.
     :param db: An open local `Database`. Required for `Source.LOCAL`, and
@@ -491,34 +494,20 @@ async def search(
 
     logger.debug(
         "`search(%r)`: local database's best score %.3f is below threshold %.3f "
-        "(or empty); augmenting with the live glossary",
+        "(or empty); trying the live glossary first, filling out with local results",
         normalized_query,
         best_score,
         relevance_threshold,
     )
-    for result, score in scored:
-        count += 1
-        yield LookupResult(value=result, source=Source.LOCAL, persisted=False, score=score)
-
-    remaining = None if limit is None else max(limit - len(results), 0)
-    if remaining == 0:
-        logger.debug(
-            "`query.search(%r, source=AUTO)` yielded %d result(s) in %.3fs total "
-            "(local quota already filled; not augmenting further)",
-            normalized_query,
-            count,
-            time.monotonic() - started_at,
-        )
-        return
-
-    seen_urls = {result.url for result in results if result.url}
-    seen_terms = {(result.term or "").strip().lower() for result in results}
+    seen_urls: set[str] = set()
+    seen_terms: set[str] = set()
+    live_count = 0
     live_stream = live.search(
         session,
         normalized_query,
         topic=topic,
         start_letter=start_letter,
-        limit=remaining if remaining is not None else limit,
+        limit=limit,
         concurrency=concurrency,
     )
     async for result in persist_incrementally(
@@ -529,22 +518,47 @@ async def search(
         batch_size=persist_batch_size,
         persist_on_error=persist_on_error,
     ):
-        url = result.url
-        term_key = (result.term or "").strip().lower()
-        if (url and url in seen_urls) or term_key in seen_terms:
-            # Already covered by a local result; don't yield it twice.
-            continue
-
-        seen_urls.add(url or "")
-        seen_terms.add(term_key)
+        seen_urls.add(result.url or "")
+        seen_terms.add((result.term or "").strip().lower())
+        live_count += 1
         count += 1
         score = score_result(normalized_query, result)
         yield LookupResult(value=result, source=Source.LIVE, persisted=persist, score=score)
 
+    remaining = None if limit is None else max(limit - live_count, 0)
+    if remaining == 0:
+        logger.debug(
+            "`query.search(%r, source=AUTO)` yielded %d result(s) in %.3fs total "
+            "(live quota already filled; not falling back to local)",
+            normalized_query,
+            count,
+            time.monotonic() - started_at,
+        )
+        return
+
+    local_count = 0
+    for result, score in scored:
+        if remaining is not None and local_count >= remaining:
+            break
+        url = result.url
+        term_key = (result.term or "").strip().lower()
+        if (url and url in seen_urls) or term_key in seen_terms:
+            # Already covered by a live result; don't yield it twice.
+            continue
+
+        seen_urls.add(url or "")
+        seen_terms.add(term_key)
+        local_count += 1
+        count += 1
+        yield LookupResult(value=result, source=Source.LOCAL, persisted=False, score=score)
+
     logger.debug(
-        "`query.search(%r, source=AUTO->LOCAL+LIVE)` yielded %d result(s) in %.3fs total",
+        "`query.search(%r, source=AUTO->LIVE+LOCAL)` yielded %d result(s) "
+        "(%d live, %d local) in %.3fs total",
         normalized_query,
         count,
+        live_count,
+        local_count,
         time.monotonic() - started_at,
     )
 

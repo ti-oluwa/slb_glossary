@@ -182,7 +182,7 @@ def _apply_log_sink(log_sink: LogSink | type[LogSink] | str | pathlib.Path | Non
         resolved = resolve_sink(log_sink)
     except Exception as exc:
         raise LoggingError(f"Could not set up log sink {log_sink!r}: {exc}") from exc
-    
+
     configure_logging(sinks={"slb_glossary.live.*": resolved})
     logger.debug("Session logging routed to %r", resolved)
 
@@ -336,6 +336,7 @@ async def open_session(
             f"Unsupported `browser_type` {browser_type!r}. "
             f"Supported types: {', '.join(BrowserType.__members__)}."
         )
+    browser_type = BrowserType(browser_type)
 
     session_started_at = time.monotonic()
     logger.info("Opening a %r glossary search session over %s", language.value, browser_type)

@@ -180,14 +180,15 @@ async def upsert_results(
     await db.connection.executemany(UPSERT_STATEMENT, rows)
     await db.connection.commit()
     elapsed = time.monotonic() - started_at
+    row_count = len(rows)
     logger.info(
         "Upserted %d row(s) into the local database in %.3fs (avg %.3fs/row, source=%r)",
-        len(rows),
+        row_count,
         elapsed,
-        elapsed / len(rows),
+        elapsed / row_count,
         source,
     )
-    return len(rows)
+    return row_count
 
 
 async def upsert_results_incrementally(
@@ -567,7 +568,13 @@ async def _search(
     scored: bool,
 ) -> typing.AsyncIterator[typing.Any]:
     results = await scored_search(
-        db, query, topic=topic, start_letter=start_letter, language=language, limit=limit, fuzzy=fuzzy
+        db,
+        query,
+        topic=topic,
+        start_letter=start_letter,
+        language=language,
+        limit=limit,
+        fuzzy=fuzzy,
     )
     for result, score in results:
         yield (result, score) if scored else result
@@ -801,9 +808,7 @@ async def get_term(
     if not with_similar:
         return result
 
-    scored = await scored_search(
-        db, term_or_url, language=language, limit=similar_pool_size
-    )
+    scored = await scored_search(db, term_or_url, language=language, limit=similar_pool_size)
     similar = [
         (candidate, score)
         for candidate, score in scored

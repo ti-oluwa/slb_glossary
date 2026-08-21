@@ -20,6 +20,7 @@ from slb_glossary.local.api import (
     upsert_results_incrementally,
 )
 from slb_glossary.local.api import count as count_terms
+from slb_glossary.local.api import get_terms_urls as get_known_urls
 from slb_glossary.local.types import Database, Metadata
 from slb_glossary.types import SearchResult
 
@@ -33,6 +34,27 @@ __all__ = [
     "sync_letter",
     "sync_all",
 ]
+
+
+async def get_known_urls_set(
+    db: Database,
+    *,
+    query: str | None = None,
+    topic: str | None = None,
+    start_letter: str | None = None,
+) -> frozenset[str]:
+    """
+    Collect every locally stored URL matching the given filters, as a `frozenset`.
+
+    Used to build `exclude` sets for the live fetches below, so a sync
+    doesn't pay to re-fetch a term already stored locally under the same
+    filter. `frozenset` keeps membership checks against it (one per URL
+    the live site returns) cheap regardless of how many URLs are excluded.
+    """
+    return frozenset([
+        url
+        async for url in get_known_urls(db, query=query, topic=topic, start_letter=start_letter)
+    ])
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
@@ -161,6 +183,7 @@ async def sync_query(
     concurrency: int = 1,
     batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
     persist_on_error: bool = True,
+    skip_existing: bool = True,
 ) -> SyncSummary:
     """
     Fetch `query`'s results from the live glossary and store them locally.
@@ -175,6 +198,8 @@ async def sync_query(
         comma-separated topics.
     :param start_letter: Restrict the fetch to terms starting with this letter.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
+        Counts only terms actually fetched; a term already stored locally
+        and skipped (see `skip_existing`) doesn't use up this budget.
     :param concurrency: Concurrent term-page fetches. Keep this low; see
         `slb_glossary.live.get_results_from_urls`'s own note on server load.
     :param batch_size: Number of results to buffer before each incremental
@@ -183,10 +208,20 @@ async def sync_query(
         buffered so far if the fetch raises partway through, instead of
         losing it (the resulting `SyncSummary.interrupted` is then `True`,
         and the original exception is still re-raised after saving).
+    :param skip_existing: If `True` (the default), don't re-fetch a term
+        already stored locally under this same `query`/`topic`/`start_letter`
+        filter; the live site is only asked for terms not already known.
+        Pass `False` to force a full re-fetch, e.g. to refresh
+        already-stored definitions that may have changed live.
     :return: A summary of the sync.
     """
     started_at = time.monotonic()
     logger.info("Syncing query %r to the local database", query)
+    exclude = (
+        await get_known_urls_set(db, query=query, topic=topic, start_letter=start_letter)
+        if skip_existing
+        else None
+    )
     results = live_search(
         session,
         query,
@@ -194,6 +229,7 @@ async def sync_query(
         start_letter=start_letter,
         limit=limit,
         concurrency=concurrency,
+        exclude=exclude,
     )
     written, interrupted = await _drain_and_upsert(
         db,
@@ -226,6 +262,7 @@ async def sync_topic(
     concurrency: int = 1,
     batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
     persist_on_error: bool = True,
+    skip_existing: bool = True,
 ) -> SyncSummary:
     """
     Fetch every term filed under `topic` from the live glossary and store them locally.
@@ -234,6 +271,8 @@ async def sync_topic(
     :param session: An open `Session` to fetch from.
     :param topic: Topic name, or several comma-separated topic names.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
+        Counts only terms actually fetched; a term already stored locally
+        and skipped (see `skip_existing`) doesn't use up this budget.
     :param concurrency: Concurrent term-page fetches.
     :param batch_size: Number of results to buffer before each incremental
         write to `db`. See `slb_glossary.local.upsert_results_incrementally`.
@@ -241,11 +280,17 @@ async def sync_topic(
         buffered so far if the fetch raises partway through, instead of
         losing it (the resulting `SyncSummary.interrupted` is then `True`,
         and the original exception is still re-raised after saving).
+    :param skip_existing: If `True` (the default), don't re-fetch a term
+        already stored locally under `topic`; the live site is only asked
+        for terms not already known. Pass `False` to force a full
+        re-fetch, e.g. to refresh already-stored definitions that may
+        have changed live.
     :return: A summary of the sync.
     """
     started_at = time.monotonic()
     logger.info("Syncing topic %r to the local database", topic)
-    results = get_terms_on(session, topic, limit=limit, concurrency=concurrency)
+    exclude = await get_known_urls_set(db, topic=topic) if skip_existing else None
+    results = get_terms_on(session, topic, limit=limit, concurrency=concurrency, exclude=exclude)
     written, interrupted = await _drain_and_upsert(
         db,
         results,
@@ -278,6 +323,7 @@ async def sync_letter(
     concurrency: int = 1,
     batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
     persist_on_error: bool = True,
+    skip_existing: bool = True,
 ) -> SyncSummary:
     """
     Fetch every term starting with `start_letter` from the live glossary and store them locally.
@@ -292,6 +338,8 @@ async def sync_letter(
     :param topic: Also restrict the fetch to this topic, or several
         comma-separated topics.
     :param limit: Maximum number of terms to fetch. `None` for unlimited.
+        Counts only terms actually fetched; a term already stored locally
+        and skipped (see `skip_existing`) doesn't use up this budget.
     :param concurrency: Concurrent term-page fetches.
     :param batch_size: Number of results to buffer before each incremental
         write to `db`. See `slb_glossary.local.upsert_results_incrementally`.
@@ -299,17 +347,30 @@ async def sync_letter(
         buffered so far if the fetch raises partway through, instead of
         losing it (the resulting `SyncSummary.interrupted` is then `True`,
         and the original exception is still re-raised after saving).
+    :param skip_existing: If `True` (the default), don't re-fetch a term
+        already stored locally under this `start_letter`/`topic` filter;
+        the live site is only asked for terms not already known. Pass
+        `False` to force a full re-fetch, e.g. to refresh already-stored
+        definitions that may have changed live.
     :return: A summary of the sync.
     """
     started_at = time.monotonic()
     logger.info("Syncing letter %r (topic=%r) to the local database", start_letter, topic)
-    urls = get_terms_urls(session, topic=topic, start_letter=start_letter, limit=limit)
+    exclude = (
+        await get_known_urls_set(db, topic=topic, start_letter=start_letter)
+        if skip_existing
+        else None
+    )
+    urls = get_terms_urls(
+        session, topic=topic, start_letter=start_letter, limit=limit, exclude=exclude
+    )
     results = get_results_from_urls(
         session,
         urls,
         topic=topic,
         concurrency=concurrency,
         first_only=True,
+        exclude=exclude,
     )
     written, interrupted = await _drain_and_upsert(
         db,
@@ -340,6 +401,7 @@ async def sync_all(
     concurrency: int = 1,
     batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
     persist_on_error: bool = True,
+    skip_existing: bool = True,
 ) -> SyncSummary:
     """
     Fetch the entire glossary from the live site and store it locally.
@@ -372,17 +434,24 @@ async def sync_all(
         partway through, instead of losing it (the resulting
         `SyncSummary.interrupted` is then `True`, and the original
         exception is still re-raised after saving).
+    :param skip_existing: If `True` (the default), don't re-fetch a term
+        already stored locally under the topic currently being synced;
+        each topic only asks the live site for terms it doesn't already
+        have. Pass `False` to force a full re-fetch of every topic, e.g.
+        to refresh already-stored definitions that may have changed live.
     :return: A summary of the sync.
     """
     started_at = time.monotonic()
     topic_names = sorted(session.topics)
-    logger.info("Syncing entire glossary (%d topics) to local database", len(topic_names))
+    topics_count = len(topic_names)
+    logger.info("Syncing entire glossary (%d topics) to local database", topics_count)
     total_written = 0
     interrupted = False
     try:
         for index, topic_name in enumerate(topic_names, start=1):
             topic_started_at = time.monotonic()
-            results = get_terms_on(session, topic_name, concurrency=concurrency)
+            exclude = await get_known_urls_set(db, topic=topic_name) if skip_existing else None
+            results = get_terms_on(session, topic_name, concurrency=concurrency, exclude=exclude)
             written, _ = await _drain_and_upsert(
                 db,
                 results,
@@ -395,7 +464,7 @@ async def sync_all(
             logger.debug(
                 "Synced topic %d/%d (%r): %d term(s) in %.3fs (%d total so far, %.3fs elapsed, avg %.3fs/topic)",
                 index,
-                len(topic_names),
+                topics_count,
                 topic_name,
                 written,
                 time.monotonic() - topic_started_at,
@@ -418,8 +487,8 @@ async def sync_all(
     logger.info(
         "Synced entire glossary: %d term(s) written across %d topic(s) in %.3fs (avg %.3fs/topic)",
         total_written,
-        len(topic_names),
+        topics_count,
         elapsed,
-        elapsed / len(topic_names) if topic_names else 0.0,
+        elapsed / topics_count if topic_names else 0.0,
     )
     return summary

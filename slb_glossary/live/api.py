@@ -150,6 +150,7 @@ async def get_terms_urls(
     topic: str | None = None,
     start_letter: str | None = None,
     limit: int | None = None,
+    exclude: typing.AbstractSet[str] | None = None,
 ) -> typing.AsyncIterator[str]:
     """
     Yield term detail page URLs matching the given filters.
@@ -164,8 +165,17 @@ async def get_terms_urls(
         not be an exact match; the closest topic(s) in `session.topics` are
         used. See `slb_glossary.utils.get_topic_match`.
     :param start_letter: Restrict results to terms starting with this letter.
-    :param limit: Maximum number of URLs to yield. Yields every matching URL if `None`.
-    :yield: Term detail page URLs, in the order the glossary site returns them.
+    :param limit: Maximum number of URLs to yield. Yields every matching
+        URL if `None`. An excluded URL (see `exclude`) doesn't count
+        against this: `limit` is a count of what's actually yielded.
+    :param exclude: URLs to skip over instead of yielding, e.g. ones
+        already stored locally, so a sync doesn't pay to re-fetch them.
+        Membership is checked once per URL seen, so pass a `set`/`frozenset`
+        for that to stay cheap; some other `AbstractSet` works too, just
+        possibly slower depending on what it is. `None` (the default)
+        excludes nothing.
+    :yield: Term detail page URLs, in the order the glossary site returns
+        them, `exclude`d ones skipped.
     :raises ValueError: If `limit` is given and is less than 1.
     """
     if not session.initialized:
@@ -181,14 +191,16 @@ async def get_terms_urls(
     started_at = time.monotonic()
     topic_match = get_topic_match(session.topics, topic=topic) if topic else None
     logger.debug(
-        "Iterating term URLs: query=%r topic=%r start_letter=%r limit=%r",
+        "Iterating term URLs: query=%r topic=%r start_letter=%r limit=%r exclude=%d url(s)",
         query,
         topic,
         start_letter,
         limit,
+        len(exclude) if exclude else 0,
     )
 
     yielded = 0
+    skipped = 0
     tab = 1
     max_tabs: int | None = None
 
@@ -253,15 +265,21 @@ async def get_terms_urls(
                 logger.debug("Search matched %d terms across %d tabs", total_terms, max_tabs)
 
             tab_started_at = time.monotonic()
+            skipped_this_tab = 0
             for href in links:
+                if exclude and href in exclude:
+                    skipped += 1
+                    skipped_this_tab += 1
+                    continue
                 yield href
                 yielded += 1
                 if limit is not None and yielded >= limit:
                     return
 
             logger.debug(
-                "Yielded %d url(s) from tab %d/%d in %.3fs",
-                len(links),
+                "Yielded %d url(s) (skipped %d excluded) from tab %d/%d in %.3fs",
+                len(links) - skipped_this_tab,
+                skipped_this_tab,
                 tab,
                 max_tabs,
                 time.monotonic() - tab_started_at,
@@ -276,8 +294,10 @@ async def get_terms_urls(
         await page.close()
         elapsed = time.monotonic() - started_at
         logger.debug(
-            "`get_terms_urls` done: %d url(s) across %d tab(s) in %.3fs (avg %.3fs/url)",
+            "`get_terms_urls` done: %d url(s) yielded, %d skipped (excluded), "
+            "across %d tab(s) in %.3fs (avg %.3fs/url)",
             yielded,
+            skipped,
             tab,
             elapsed,
             elapsed / yielded if yielded else 0.0,
@@ -285,7 +305,12 @@ async def get_terms_urls(
 
 
 async def get_results_from_url(
-    session: Session, url: str, *, topic: str | None = None, page: Page | None = None
+    session: Session,
+    url: str,
+    *,
+    topic: str | None = None,
+    page: Page | None = None,
+    exclude: typing.AbstractSet[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Load a term detail page and lazily yield each definition found on it.
@@ -304,6 +329,10 @@ async def get_results_from_url(
         several calls) and is left open when this generator finishes. When
         omitted, a page is checked out from `session` for this call alone
         and closed before returning.
+    :param exclude: If `url` is in this set, return immediately without
+        navigating anywhere, e.g. a term already stored locally that a
+        sync doesn't need to re-fetch. Pass a `set`/`frozenset` to keep
+        the check cheap. `None` (the default) excludes nothing.
     :yield: One `SearchResult` per definition found on the page. Each
         result's `image`/`image_caption` reflect *that definition's own*
         section, independently of any other section on the page, and is `None`
@@ -311,6 +340,9 @@ async def get_results_from_url(
         if a sibling section does. `related` is empty when that section
         has no related-term links.
     """
+    if exclude and url in exclude:
+        logger.debug("Skipping excluded url %r", url)
+        return
     if not session.initialized:
         raise SessionNotInitializedError(
             "Session is not initialized; call `session.initialize()` first "
@@ -395,6 +427,7 @@ async def get_results_from_urls(
     topic: str | None = None,
     concurrency: int = 1,
     first_only: bool = False,
+    exclude: typing.AbstractSet[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Fetch term detail pages for `urls` and yield their definitions.
@@ -421,7 +454,12 @@ async def get_results_from_urls(
     :param first_only: If `True`, yield only the first definition found on
         each page rather than every definition on it (used by
         `get_terms_on`, which wants one result per term).
-    :yield: `SearchResult`s as they're fetched.
+    :param exclude: URLs to skip fetching entirely, e.g. ones already
+        stored locally, so a sync doesn't pay to re-fetch them. Checked
+        once per URL in `urls`, before it's ever queued for a worker, so
+        pass a `set`/`frozenset` to keep that cheap. `None` (the default)
+        excludes nothing.
+    :yield: `SearchResult`s as they're fetched, `exclude`d URLs skipped.
     :raises ValueError: If `concurrency` is less than 1.
     """
     if not session.initialized:
@@ -434,7 +472,17 @@ async def get_results_from_urls(
 
     started_at = time.monotonic()
     yielded = 0
-    url_iter = as_async_iterator(urls)
+    skipped = 0
+
+    async def _filtered_urls() -> typing.AsyncIterator[str]:
+        nonlocal skipped
+        async for url in as_async_iterator(urls):
+            if exclude and url in exclude:
+                skipped += 1
+                continue
+            yield url
+
+    url_iter = _filtered_urls()
 
     if concurrency == 1:
         page = await session.new_page()
@@ -449,8 +497,10 @@ async def get_results_from_urls(
             await page.close()
             elapsed = time.monotonic() - started_at
             logger.debug(
-                "`get_results_from_urls` (sequential) done: %d result(s) in %.3fs (avg %.3fs/result)",
+                "`get_results_from_urls` (sequential) done: %d result(s), %d skipped "
+                "(excluded), in %.3fs (avg %.3fs/result)",
                 yielded,
+                skipped,
                 elapsed,
                 elapsed / yielded if yielded else 0.0,
             )
@@ -511,9 +561,11 @@ async def get_results_from_urls(
 
         elapsed = time.monotonic() - started_at
         logger.debug(
-            "`get_results_from_urls` (concurrency=%d) done: %d result(s) in %.3fs (avg %.3fs/result)",
+            "`get_results_from_urls` (concurrency=%d) done: %d result(s), %d skipped "
+            "(excluded), in %.3fs (avg %.3fs/result)",
             concurrency,
             yielded,
+            skipped,
             elapsed,
             elapsed / yielded if yielded else 0.0,
         )
@@ -527,6 +579,7 @@ async def search(
     start_letter: str | None = None,
     limit: int | None = 3,
     concurrency: int = 1,
+    exclude: typing.AbstractSet[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Search the glossary for `query` and yield matching definitions.
@@ -544,6 +597,9 @@ async def search(
         matching term if `None`. Defaults to `3`.
     :param concurrency: Number of term detail pages to fetch in parallel.
         See `get_results_from_urls`. Defaults to `1` (sequential).
+    :param exclude: Term URLs to skip over, e.g. ones already stored
+        locally. See `get_terms_urls`/`get_results_from_urls`. `None`
+        (the default) excludes nothing.
     :yield: `SearchResult`s for the matched terms. In sequential order
         (`concurrency=1`) these are most-relevant-first; with higher
         concurrency, results may arrive out of relevance order.
@@ -556,10 +612,13 @@ async def search(
         topic=topic,
         start_letter=start_letter,
         limit=limit,
+        exclude=exclude,
     )
     count = 0
     async for result in log_timed_yields(
-        get_results_from_urls(session, urls, topic=topic, concurrency=concurrency),
+        get_results_from_urls(
+            session, urls, topic=topic, concurrency=concurrency, exclude=exclude
+        ),
         logger=logger,
         label=f"search({query!r})",
     ):
@@ -583,6 +642,7 @@ async def get_terms_on(
     start_letter: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
+    exclude: typing.AbstractSet[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield the definition of every term filed under `topic`.
@@ -595,6 +655,9 @@ async def get_terms_on(
         under `topic` if `None`.
     :param concurrency: Number of term detail pages to fetch in parallel.
         See `get_results_from_urls`. Defaults to `1` (sequential).
+    :param exclude: Term URLs to skip over, e.g. ones already stored
+        locally. See `get_terms_urls`/`get_results_from_urls`. `None`
+        (the default) excludes nothing.
     :yield: One `SearchResult` per term filed under `topic`.
     """
     logger.info(
@@ -610,6 +673,7 @@ async def get_terms_on(
         topic=topic,
         start_letter=start_letter,
         limit=limit,
+        exclude=exclude,
     )
     count = 0
     async for result in log_timed_yields(
@@ -618,6 +682,7 @@ async def get_terms_on(
             urls,
             topic=topic,
             concurrency=concurrency,
+            exclude=exclude,
         ),
         logger=logger,
         label=f"get_terms_on({topic!r})",

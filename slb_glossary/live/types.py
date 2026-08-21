@@ -214,14 +214,27 @@ class Session:
     size: int
     """Total number of terms in the glossary, as reported by the site."""
 
-    browser_type: str = "chromium"
-    """Playwright browser family this session launched (`"chromium"`, `"firefox"` or `"webkit"`)."""
+    browser_type: BrowserType = BrowserType.CHROMIUM
+    """
+    Playwright browser family this session launched. A `BrowserType` is a
+    `str` subclass (`enum.StrEnum`), so it still compares/formats/hashes
+    exactly like the plain `"chromium"`/`"firefox"`/`"webkit"` values it
+    used to be typed as - this is a stricter type, not a behavior change.
+    """
 
     terms_per_tab: int = 12
     """Number of results the glossary site returns per results page."""
 
     blocked_resources: frozenset[str] = dataclasses.field(default_factory=frozenset)
-    """Request resource types (e.g. `"image"`) dropped for this session."""
+    """
+    Request resource types dropped for this session, as the literal
+    strings Playwright's own `Request.resource_type` produces (e.g.
+    `"image"`), not `ResourceType` members. Resolved once from whatever
+    `open_session`'s `block` argument was (a `bool`, a `ResourceType`, or
+    an iterable of names) so that blocking a request is a single `in`
+    check against this frozenset on every intercepted request, with no
+    per-request enum conversion in that hot path.
+    """
 
     retry: RetryPolicy = dataclasses.field(default_factory=RetryPolicy)
     """
@@ -260,6 +273,24 @@ class Session:
     """
 
     base_page: Page | None = None
+    """
+    The page `initialize()` used to load `topics`/`size`, held onto
+    (unless `initialize(hold_page=False)` was used) so a later operation
+    can reuse an already-warmed-up page instead of opening and warming up
+    its own.
+
+    The glossary site blocks requests that don't originate from a page
+    that's already been interacted with, so a brand-new page has to run a
+    throwaway search first before it can be trusted with a real one.
+    `base_page` has already paid that cost during `initialize()`.
+    `slb_glossary.live.get_terms_urls` reuses it automatically when
+    available, falling back to opening and warming up a fresh page otherwise.
+
+    Two concurrent `Session`s tasks must never try to use it (they'd 
+    each be navigating out from under the other), and `base_page` itself 
+    is only actually reusable for the first such call; afterward it's a 
+    closed page, and the next call warms up a fresh one instead.
+    """
 
     _initialized: bool = dataclasses.field(init=False, repr=False, default=False)
 
@@ -283,6 +314,13 @@ class Session:
         you before returning the session; call it yourself only if you
         opened one with `initialize=False`.
 
+        :param hold_page: If `True` (the default), the page opened to
+            load `topics`/`size` is kept open afterward and stored on
+            `base_page`, instead of being closed once this call finishes.
+            See `base_page`'s own docstring for what that buys later
+            callers, and its limits. Pass `False` to close the page
+            immediately instead, e.g. if you don't expect to need a
+            warmed-up page again soon and would rather not hold one open.
         :raises NetworkError: If the glossary site could not be reached.
         """
         if self.initialized:
