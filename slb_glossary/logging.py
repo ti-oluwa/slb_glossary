@@ -40,6 +40,8 @@ from collections.abc import Iterable, Mapping
 
 from rich.logging import RichHandler
 
+from slb_glossary.constants import constants
+
 __all__ = [
     "LogSink",
     "ConsoleSink",
@@ -58,8 +60,12 @@ __all__ = [
 ]
 
 
-DEFAULT_LOG_FORMAT = "%(levelname)s  %(asctime)s  [%(name)s]:  %(message)s"
-"""Default format string used for every sink."""
+DEFAULT_LOG_FORMAT = constants.log_format
+"""
+Default format string used for every sink. Sourced from
+`slb_glossary.constants.constants.log_format` - override it by setting
+`SLB_GLOSSARY_LOG_FORMAT`, rather than editing this value directly.
+"""
 
 
 @typing.runtime_checkable
@@ -378,7 +384,7 @@ def configure_logging(
     sinks: SinksSpec = None,
     level: int | str | None = None,
     logger_name: str = "slb_glossary",
-    fmt: str = DEFAULT_LOG_FORMAT,
+    fmt: str | None = None,
     propagate: bool = False,
 ) -> SinkHandler:
     """
@@ -401,6 +407,10 @@ def configure_logging(
         Defaults to `"slb_glossary"`, the package's root logger, so every
         module's `logging.getLogger(__name__)` call propagates up to it.
     :param fmt: `logging.Formatter` format string used for every sink.
+        `None` (the default) uses `slb_glossary.constants.constants.log_format`,
+        resolved fresh on this call (so `SLB_GLOSSARY_LOG_FORMAT` set after
+        import still takes effect) rather than `DEFAULT_LOG_FORMAT`'s
+        import-time snapshot of it.
     :param propagate: Whether `logger_name`'s logger should still propagate
         records to its own ancestor loggers (e.g. the root logger) after
         also sending them to `sinks`. Defaults to `False` to avoid
@@ -408,6 +418,7 @@ def configure_logging(
         sets up on package initialization.
     :return: The `SinkHandler` now attached to `logger_name`'s logger.
     """
+    resolved_fmt = fmt if fmt is not None else constants.log_format
     resolved_sinks = resolve_sinks(sinks, default=StderrSink())
 
     logger = logging.getLogger(logger_name)
@@ -421,7 +432,7 @@ def configure_logging(
             existing.close()
 
     handler = SinkHandler(resolved_sinks, level=logger.level)
-    handler.setFormatter(logging.Formatter(fmt))
+    handler.setFormatter(logging.Formatter(resolved_fmt))
     logger.addHandler(handler)
     logger.debug(
         "Routed %r logging to: %s", logger_name, ", ".join(repr(sink) for sink in handler.sinks)
