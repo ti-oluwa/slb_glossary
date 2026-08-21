@@ -5,7 +5,6 @@ import typing
 
 import click
 
-from slb_glossary import __version__
 from slb_glossary.cli.banner import BANNER
 from slb_glossary.cli.commands import (
     compare,
@@ -45,6 +44,9 @@ def _print_version(ctx: click.Context, param: click.Parameter, value: bool) -> N
     """Eager `--version` callback: print `BANNER` plus the package version, then exit."""
     if not value or ctx.resilient_parsing:
         return
+
+    from slb_glossary import __version__
+
     click.echo(BANNER)
     click.echo()
     click.echo(f"slb-glossary, version {__version__}")
