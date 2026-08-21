@@ -20,6 +20,7 @@ from slb_glossary.live.parsers import (
     get_term_name,
     get_total_term_count,
 )
+from slb_glossary.live.topics import fetch_topics
 from slb_glossary.live.urls import build_pager_query, build_search_url
 from slb_glossary.retries import retry
 from slb_glossary.types import RelatedTerm, SearchResult
@@ -53,9 +54,7 @@ async def goto(
     return await retry(navigate, policy=session.retry, raise_exception=True)  # type: ignore[return-value]
 
 
-def _find_related_links(
-    blocks: typing.Sequence[TermBlock],
-) -> tuple[RelatedTerm, ...]:
+def _find_related_links(blocks: typing.Sequence[TermBlock]) -> tuple[RelatedTerm, ...]:
     """
     Return the related-term links from a definition section's blocks.
 
@@ -192,12 +191,21 @@ async def get_terms_urls(
     yielded = 0
     tab = 1
     max_tabs: int | None = None
-    # This generator owns `page` for its entire lifetime: every tab it
-    # pages through, and every pause while the caller processes a URL we
-    # already yielded, happens on this same page. It's never handed off
-    # to (or navigated by) anything else, so nothing can pull the rug out
-    # from under the SPA search state between one `yield` and the next.
-    page = await session.new_page()
+
+    if session.base_page is not None and not session.base_page.is_closed():
+        # Use the session's base page if it has it (since its already initialized).
+        # We have already interacted with it (to load topics et al) so subsequent
+        # requests will not meet a "access restricted" page/message.
+        # This is mostlikely the only reasonable place to utilize the base page so far.
+        # The only caveat is that two `get_term_urls` task must not run concurrently using
+        # this same session, else, they will be overriding each other page loads.
+        page = session.base_page
+    else:
+        page = await session.new_page()
+        # We need to interact and basically start from the base page
+        # so we dont get the "access restricted" message.
+        # The results links wont even load if we do not do this
+        await fetch_topics(page, base_url=session.base_url)
     try:
         # The glossary auto-runs an unfiltered query as soon as the search
         # screen loads (that's what populates the facet panel), so the page
@@ -226,7 +234,6 @@ async def get_terms_urls(
                 previous_links=previous_links,
                 previous_header=previous_header,
             )
-            print(links)
 
             if not links:
                 logger.debug("No result links on tab %d, stopping", tab)

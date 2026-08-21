@@ -32,15 +32,21 @@ def _prefill_schema(command_schema: typing.Any, ctx: click.Context) -> None:
 
     A param whose resolved value is `None` (an optional option/argument
     that wasn't actually given on this run, e.g. `--topic`/`--source`
-    left unset) is skipped rather than prefilled: trogon already built
-    `schema.default` from that option's own click-level default when it
-    first introspected the command, and that's a value trogon knows how
-    to preselect. Overwriting it with a processed `None` instead leaves a
-    choice-backed field (rendered as a `Select` widget) with nothing it
-    can map back to a real option and the field is then stuck showing no
-    selection, which only surfaces as an error once the form is submitted
-    and trogon/click tries to convert that non-selection into a string
-    argument. Skipping it here just leaves trogon's own working default in place.
+    left unset) is prefilled with its click-level default (`param.default`)
+    instead, if it has one. For a choice-backed field (rendered as a
+    `Select` widget) with no click-level default either, this falls back
+    to that field's *first* listed choice rather than leaving it blank:
+    programmatically preselecting the command tree node here (below, via
+    `tree.select_node(target)`) builds the initial form/command preview
+    outside the ordinary interactive flow, and a `Select` left with
+    nothing chosen at that point can leak its internal blank-value
+    sentinel into the built command line as literal text (e.g.
+    `--source Select.NULL`) instead of just omitting the flag. Every
+    shared choice-backed option in this CLI (see e.g.
+    `slb_glossary.cli.source_options.source_options`'s `--source`) is
+    expected to list its safe/no-op default value first for exactly this
+    reason. A plain (non-choice) field with no default is left alone -
+    those render as a text `Input`, which has no such blank-value pitfall.
 
     Best-effort otherwise: `ctx.command.params` and `command_schema.options`/
     `.arguments` are expected to zip up one-to-one in order, matching
@@ -69,6 +75,10 @@ def _prefill_schema(command_schema: typing.Any, ctx: click.Context) -> None:
             continue
 
         value = ctx.params[param.name]
+        if value is None:
+            value = param.default
+        if value is None and isinstance(param.type, click.Choice) and param.type.choices:
+            value = param.type.choices[0]
         if value is None:
             if param.required:
                 # Shouldn't normally happen as click resolves required

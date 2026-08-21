@@ -244,13 +244,13 @@ class Session:
 
     max_pages: int = 6
     """
-    Maximum number of browser pages this session will have open on
-    `context` at once. Each independent operation (the search/tab-paging
-    page `get_terms_urls` holds open, each concurrent worker page in
-    `get_results_from_urls`) checks out its own page via `new_page()`
-    rather than sharing one, so this should comfortably cover the highest
-    `concurrency` you plan to call search functions with, plus one for
-    a `get_terms_urls` page running alongside it.
+    Maximum number of browser pages this session will have open on `context` at once. 
+    
+    Each independent operation (the search/tab-paging page `get_terms_urls` 
+    holds open, each concurrent worker page in `get_results_from_urls`) checks 
+    out its own page via `new_page()` rather than sharing one, so this should 
+    comfortably cover the highest `concurrency` you plan to call search functions 
+    with, plus one for a `base_page` or `get_terms_urls` page running alongside it.
     """
 
     pages: Pages = dataclasses.field(init=False, repr=False)
@@ -258,6 +258,8 @@ class Session:
     The pool `new_page()` acquires pages from, bounded to `max_pages`.
     Built automatically from `context` and `max_pages`.
     """
+
+    base_page: Page | None = None
 
     _initialized: bool = dataclasses.field(init=False, repr=False, default=False)
 
@@ -271,7 +273,7 @@ class Session:
         """
         return self._initialized
 
-    async def initialize(self, page: Page | None = None) -> None:
+    async def initialize(self, hold_page: bool = True) -> None:
         """
         Load `topics`/`size` from the glossary site, if not already loaded.
 
@@ -279,20 +281,19 @@ class Session:
         once, e.g. defensively before a search function that requires it.
         `open_session(..., initialize=True)` (the default) calls this for
         you before returning the session; call it yourself only if you
-        opened one with `initialize=FalseINFO`.
+        opened one with `initialize=False`.
 
-        :param page: A page to load the glossary search screen on. When
-            given, it's assumed to be owned by the caller and is left open
-            when this returns. When omitted, a page is checked out from
-            this session for the call alone and closed before returning.
         :raises NetworkError: If the glossary site could not be reached.
         """
         if self.initialized:
             return
 
-        new_page: Page | None = None
-        if page is None:
-            page = new_page = await self.new_page()
+        page = await self.new_page()
+        if hold_page:
+            # Hold the base page for use later on. call `Session.base_page.close()`
+            # If you really do not need it anymore. But you honestly should leave it
+            # if you have no reason to close it.
+            self.base_page = page
 
         started_at = time.monotonic()
         try:
@@ -310,8 +311,8 @@ class Session:
         except Exception as exc:
             raise NetworkError(f"Could not reach the glossary at {self.base_url}") from exc
         finally:
-            if new_page is not None:
-                await new_page.close()
+            if not hold_page:
+                await page.close()
 
         logger.debug(
             "Loaded topics and size for %s in %.3fs", self.base_url, time.monotonic() - started_at

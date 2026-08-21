@@ -48,11 +48,11 @@ async def fetch_topics(
     started_at = time.monotonic()
     logger.info("Loading glossary topics from %s", base_url)
 
-    async def _get_facet_header() -> str:
+    async def get_facet_header() -> str:
         await page.goto(base_url, wait_until="domcontentloaded")
         return await get_element_text(page, FACET_HEADER_SELECTOR, timeout=settle_delay)
 
-    header_text = await retry_func(_get_facet_header, policy=retry, until=bool)
+    header_text = await retry_func(get_facet_header, policy=retry, until=bool)
     if not header_text:
         logger.warning(
             "Topics did not load after %d attempts (%.3fs)",
@@ -67,8 +67,8 @@ async def fetch_topics(
     if await expand_button.count():
         try:
             expand_started_at = time.monotonic()
-            await expand_button.scroll_into_view_if_needed(timeout=5_000)
-            await expand_button.click(timeout=5_000, delay=300)
+            await expand_button.scroll_into_view_if_needed(timeout=2000)
+            await expand_button.click(timeout=2000, delay=300)
             logger.debug("Expanded full topic list in %.3fs", time.monotonic() - expand_started_at)
         except PWTimeoutError:
             logger.warning("Could not expand the full topic list", exc_info=True)
