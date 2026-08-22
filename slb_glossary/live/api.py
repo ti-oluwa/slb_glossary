@@ -5,6 +5,7 @@ import logging
 import math
 import time
 import typing
+from collections.abc import Collection
 
 from patchright.async_api import Page
 
@@ -150,7 +151,7 @@ async def get_terms_urls(
     topic: str | None = None,
     start_letter: str | None = None,
     limit: int | None = None,
-    exclude: typing.AbstractSet[str] | None = None,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[str]:
     """
     Yield term detail page URLs matching the given filters.
@@ -190,13 +191,14 @@ async def get_terms_urls(
 
     started_at = time.monotonic()
     topic_match = get_topic_match(session.topics, topic=topic) if topic else None
+    excluded = frozenset(exclude) if exclude else None
     logger.debug(
         "Iterating term URLs: query=%r topic=%r start_letter=%r limit=%r exclude=%d url(s)",
         query,
         topic,
         start_letter,
         limit,
-        len(exclude) if exclude else 0,
+        len(excluded) if excluded else 0,
     )
 
     yielded = 0
@@ -267,10 +269,11 @@ async def get_terms_urls(
             tab_started_at = time.monotonic()
             skipped_this_tab = 0
             for href in links:
-                if exclude and href in exclude:
+                if excluded and href in excluded:
                     skipped += 1
                     skipped_this_tab += 1
                     continue
+
                 yield href
                 yielded += 1
                 if limit is not None and yielded >= limit:
@@ -310,7 +313,7 @@ async def get_results_from_url(
     *,
     topic: str | None = None,
     page: Page | None = None,
-    exclude: typing.AbstractSet[str] | None = None,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Load a term detail page and lazily yield each definition found on it.
@@ -340,9 +343,11 @@ async def get_results_from_url(
         if a sibling section does. `related` is empty when that section
         has no related-term links.
     """
-    if exclude and url in exclude:
+    excluded = frozenset(exclude) if exclude else None
+    if excluded and url in excluded:
         logger.debug("Skipping excluded url %r", url)
         return
+
     if not session.initialized:
         raise SessionNotInitializedError(
             "Session is not initialized; call `session.initialize()` first "
@@ -427,7 +432,7 @@ async def get_results_from_urls(
     topic: str | None = None,
     concurrency: int = 1,
     first_only: bool = False,
-    exclude: typing.AbstractSet[str] | None = None,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Fetch term detail pages for `urls` and yield their definitions.
@@ -469,6 +474,7 @@ async def get_results_from_urls(
     if concurrency < 1:
         raise ValueError("`concurrency` must be at least 1")
 
+    excluded = frozenset(exclude) if exclude else None
     started_at = time.monotonic()
     yielded = 0
     skipped = 0
@@ -476,7 +482,7 @@ async def get_results_from_urls(
     async def _filtered_urls() -> typing.AsyncIterator[str]:
         nonlocal skipped
         async for url in as_async_iterator(urls):
-            if exclude and url in exclude:
+            if excluded and url in excluded:
                 skipped += 1
                 continue
             yield url
@@ -579,7 +585,7 @@ async def search(
     limit: int | None = 3,
     concurrency: int = 1,
     first_only: bool = False,
-    exclude: typing.AbstractSet[str] | None = None,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Search the glossary for `query` and yield matching definitions.
@@ -650,7 +656,7 @@ async def get_terms_on(
     limit: int | None = None,
     concurrency: int = 1,
     first_only: bool = False,
-    exclude: typing.AbstractSet[str] | None = None,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield the definition of every term filed under `topic`.

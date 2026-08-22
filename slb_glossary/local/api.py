@@ -5,6 +5,7 @@ import json
 import logging
 import time
 import typing
+from collections.abc import Collection
 from difflib import get_close_matches
 
 import aiosqlite
@@ -412,6 +413,7 @@ async def scored_search(
     language: str | None = None,
     limit: int | None = 20,
     fuzzy: bool = False,
+    exclude: Collection[str] | None = None,
 ) -> list[tuple[SearchResult, float]]:
     """
     Full-text search the local database for `query`, ranked, scored, best match first.
@@ -474,12 +476,19 @@ async def scored_search(
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
         `topic` by resolving it against locally stored topic names first.
         Has no effect if `topic` is falsy.
+    :param exclude: URLs to leave out of the results entirely, e.g. ones
+        already handled elsewhere in the same run. Filtered in SQL before
+        `limit` is applied, so an excluded match doesn't use up part of
+        `limit`'s budget the way a plain post-filter would. Note that a very
+        large `exclude` (thousands of URLs) does cost one SQL parameter
+        each, so keep it to a reasonable, bounded size. `None` (the
+        default) excludes nothing.
     :return: `(result, score)` pairs, best match first. `score` is in `[0.0, 1.0]`.
     """
     normalized_query = clean_query(query)
     logger.debug(
         "Local `search` (scored): query=%r (normalized=%r) topic=%r start_letter=%r "
-        "language=%r limit=%r fuzzy=%r",
+        "language=%r limit=%r fuzzy=%r exclude=%d url(s)",
         query,
         normalized_query,
         topic,
@@ -487,6 +496,7 @@ async def scored_search(
         language,
         limit,
         fuzzy,
+        len(exclude) if exclude else 0,
     )
     started_at = time.monotonic()
     query_norm = _normalize(normalized_query)
@@ -522,6 +532,11 @@ async def scored_search(
     if language:
         sql += " AND terms.language = ?"
         params.append(language)
+
+    if exclude:
+        placeholders = ", ".join("?" for _ in exclude)
+        sql += f" AND terms.url NOT IN ({placeholders})"
+        params.extend(exclude)
 
     sql += " ORDER BY is_exact DESC, is_prefix DESC, bm25_score ASC"
     if limit:
@@ -571,6 +586,7 @@ async def _search(
     limit: int | None,
     fuzzy: bool,
     scored: bool,
+    exclude: Collection[str] | None,
 ) -> typing.AsyncIterator[typing.Any]:
     results = await scored_search(
         db,
@@ -580,6 +596,7 @@ async def _search(
         language=language,
         limit=limit,
         fuzzy=fuzzy,
+        exclude=exclude,
     )
     for result, score in results:
         yield (result, score) if scored else result
@@ -596,6 +613,7 @@ def search(
     limit: int | None = 20,
     fuzzy: bool = False,
     scored: typing.Literal[False] = False,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]: ...
 
 
@@ -610,6 +628,7 @@ def search(
     limit: int | None = 20,
     fuzzy: bool = False,
     scored: typing.Literal[True],
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[tuple[SearchResult, float]]: ...
 
 
@@ -623,6 +642,7 @@ def search(
     limit: int | None = 20,
     fuzzy: bool = False,
     scored: bool = False,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult] | typing.AsyncIterator[tuple[SearchResult, float]]:
     """
     Full-text search the local database for `query`, best match first.
@@ -647,6 +667,7 @@ def search(
         Has no effect if `topic` is falsy.
     :param scored: If `True`, yield `(result, score)` pairs instead of
         bare results. See `scored_search`.
+    :param exclude: URLs to leave out of the results entirely.
     :yield: Matching `SearchResult`s, or `(SearchResult, float)` pairs if
         `scored=True`, best match first either way.
     """
@@ -659,6 +680,7 @@ def search(
         limit=limit,
         fuzzy=fuzzy,
         scored=scored,
+        exclude=exclude,
     )
 
 
@@ -670,6 +692,7 @@ async def get_terms_on(
     language: str | None = None,
     limit: int | None = None,
     fuzzy: bool = False,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
     """
     Yield every locally stored term filed under `topic`.
@@ -692,15 +715,19 @@ async def get_terms_on(
     :param limit: Maximum number of results. `None` for unlimited.
     :param fuzzy: If `True`, resolve `topic` against locally stored topic
         names first, instead of requiring an exact (case-insensitive) match.
+    :param exclude: URLs to leave out of the results entirely, filtered in
+        SQL before `limit` is applied.
     :yield: `SearchResult`s filed under `topic`, ordered by term name.
     """
     logger.debug(
-        "Local `get_terms_on`: topic=%r start_letter=%r language=%r limit=%r fuzzy=%r",
+        "Local `get_terms_on`: topic=%r start_letter=%r language=%r limit=%r fuzzy=%r "
+        "exclude=%d url(s)",
         topic,
         start_letter,
         language,
         limit,
         fuzzy,
+        len(exclude) if exclude else 0,
     )
     started_at = time.monotonic()
     resolved_topic = await resolve_topic(db, topic, fuzzy, language=language)
@@ -721,6 +748,10 @@ async def get_terms_on(
     if language:
         sql += " AND language = ?"
         params.append(language)
+    if exclude:
+        exclude_placeholders = ", ".join("?" for _ in exclude)
+        sql += f" AND url NOT IN ({exclude_placeholders})"
+        params.extend(exclude)
 
     sql += " ORDER BY term"
     if limit:
@@ -836,7 +867,12 @@ async def get_term(
 
 
 async def get_random_term(
-    db: Database, *, topic: str | None = None, language: str | None = None, fuzzy: bool = False
+    db: Database,
+    *,
+    topic: str | None = None,
+    language: str | None = None,
+    fuzzy: bool = False,
+    exclude: Collection[str] | None = None,
 ) -> SearchResult | None:
     """
     Return one randomly chosen locally stored term, optionally restricted to a topic.
@@ -849,10 +885,19 @@ async def get_random_term(
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
         `topic` by resolving it against locally stored topic names first.
         Has no effect if `topic` is falsy.
+    :param exclude: URLs to leave out of the pick entirely, e.g. terms
+        already seen this run.
     :return: A random `SearchResult`, or `None` if the local database (or
-        the given topic/language within it) has no terms stored yet.
+        the given topic/language within it, once `exclude` is taken into
+        account) has no terms left to pick from.
     """
-    logger.debug("Local `get_random_term`: topic=%r language=%r fuzzy=%r", topic, language, fuzzy)
+    logger.debug(
+        "Local `get_random_term`: topic=%r language=%r fuzzy=%r exclude=%d url(s)",
+        topic,
+        language,
+        fuzzy,
+        len(exclude) if exclude else 0,
+    )
     sql = "SELECT * FROM terms"
     params: list[typing.Any] = []
     conditions: list[str] = []
@@ -867,6 +912,10 @@ async def get_random_term(
     if language:
         conditions.append("language = ?")
         params.append(language)
+    if exclude:
+        exclude_placeholders = ", ".join("?" for _ in exclude)
+        conditions.append(f"url NOT IN ({exclude_placeholders})")
+        params.extend(exclude)
 
     if conditions:
         sql += " WHERE " + " AND ".join(conditions)
@@ -890,6 +939,7 @@ async def get_terms_urls(
     language: str | None = None,
     limit: int | None = None,
     fuzzy: bool = False,
+    exclude: Collection[str] | None = None,
 ) -> typing.AsyncIterator[str]:
     """
     Yield locally stored term URLs matching the given filters.
@@ -905,15 +955,19 @@ async def get_terms_urls(
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
         `topic` by resolving it against locally stored topic names first.
         Has no effect if `topic` is falsy.
+    :param exclude: URLs to leave out of the results entirely, filtered
+        before `limit` is applied.
     :yield: Matching term URLs.
     """
     logger.debug(
-        "Local `get_terms_urls`: query=%r topic=%r start_letter=%r language=%r limit=%r",
+        "Local `get_terms_urls`: query=%r topic=%r start_letter=%r language=%r limit=%r "
+        "exclude=%d url(s)",
         query,
         topic,
         start_letter,
         language,
         limit,
+        len(exclude) if exclude else 0,
     )
     started_at = time.monotonic()
     yielded = 0
@@ -927,6 +981,7 @@ async def get_terms_urls(
             language=language,
             limit=limit,
             fuzzy=fuzzy,
+            exclude=exclude,
         ):
             if url := result.url:
                 yielded += 1
@@ -957,6 +1012,11 @@ async def get_terms_urls(
     if language:
         sql += " AND language = ?"
         params.append(language)
+
+    if exclude:
+        exclude_placeholders = ", ".join("?" for _ in exclude)
+        sql += f" AND url NOT IN ({exclude_placeholders})"
+        params.extend(exclude)
 
     sql += " ORDER BY term"
     if limit:
