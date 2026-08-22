@@ -9,6 +9,7 @@ from difflib import get_close_matches
 
 import aiosqlite
 
+from slb_glossary.constants import constants
 from slb_glossary.local.types import Database
 from slb_glossary.natural_language import clean_query
 from slb_glossary.relevance import CONTENT_MATCH_SCORE_CAP, EXACT_MATCH_SCORE, PREFIX_MATCH_SCORE
@@ -31,8 +32,12 @@ __all__ = [
     "count",
 ]
 
-DEFAULT_UPSERT_BATCH_SIZE = 20
-"""Default `batch_size` for `upsert_results_incrementally`."""
+DEFAULT_UPSERT_BATCH_SIZE = constants.persist_batch_size
+"""
+Default `batch_size` for `upsert_results_incrementally`. Sourced from
+`slb_glossary.constants.constants.persist_batch_size` - override via
+`SLB_GLOSSARY_PERSIST_BATCH_SIZE`, not by editing this value.
+"""
 
 FTS_COLUMN_WEIGHTS: tuple[float, float, float] = (10.0, 1.0, 3.0)
 """
@@ -197,7 +202,7 @@ async def upsert_results_incrementally(
     *,
     language: str | None = None,
     source: str = "glossary",
-    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    batch_size: int | None = None,
     persist_on_error: bool = True,
     stats: dict[str, int] | None = None,
 ) -> typing.AsyncIterator[SearchResult]:
@@ -225,7 +230,9 @@ async def upsert_results_incrementally(
         incremental batch. Smaller values save progress more often at the
         cost of more (smaller) database writes; larger values write less
         often but risk losing more unsaved results if something goes wrong
-        before the next flush.
+        before the next flush. `None` (the default) uses
+        `slb_glossary.constants.constants.persist_batch_size`, resolved
+        fresh on this call.
     :param persist_on_error: If `True` (the default), flush whatever's
         currently buffered when `results` raises, before letting the
         exception propagate, so an interrupted fetch still saves the
@@ -240,9 +247,10 @@ async def upsert_results_incrementally(
         need each result passed through (e.g. `slb_glossary.local.sync`)
         can drain this with `async for _ in ...: pass` and then read `stats`.
     :yield: Every item from `results`, unchanged.
-    :raises ValueError: If `batch_size` is less than 1.
+    :raises ValueError: If `batch_size` is given and is less than 1.
     """
-    if batch_size < 1:
+    resolved_batch_size = batch_size if batch_size is not None else constants.persist_batch_size
+    if resolved_batch_size < 1:
         raise ValueError("`batch_size` must be at least 1")
 
     buffer: list[SearchResult] = []
@@ -270,7 +278,7 @@ async def upsert_results_incrementally(
         async for result in as_async_iterator(results):
             buffer.append(result)
             yield result
-            if len(buffer) >= batch_size:
+            if len(buffer) >= resolved_batch_size:
                 await _flush()
     except BaseException as exc:
         error = exc
@@ -736,14 +744,18 @@ async def get_terms_on(
     )
 
 
-DEFAULT_SIMILAR_POOL_SIZE = 5
+DEFAULT_SIMILAR_POOL_SIZE = constants.similar_terms_pool_size
 """
 Default `similar_pool_size` for `get_term(with_similar=True)`: how many
-scored candidates `scored_search` pulls before drawing alternatives from them.
+scored candidates `scored_search` pulls before drawing alternatives from
+them. Sourced from `slb_glossary.constants.constants.similar_terms_pool_size`.
 """
 
-DEFAULT_MAX_SIMILAR_TERMS = 3
-"""Default `max_similar_terms` for `get_term(with_similar=True)`."""
+DEFAULT_MAX_SIMILAR_TERMS = constants.max_similar_terms
+"""
+Default `max_similar_terms` for `get_term(with_similar=True)`. Sourced
+from `slb_glossary.constants.constants.max_similar_terms`.
+"""
 
 
 @typing.overload
@@ -753,8 +765,8 @@ async def get_term(
     *,
     language: str | None = None,
     with_similar: typing.Literal[False] = False,
-    similar_pool_size: int = DEFAULT_SIMILAR_POOL_SIZE,
-    max_similar_terms: int = DEFAULT_MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> SearchResult | None: ...
 
 
@@ -765,8 +777,8 @@ async def get_term(
     *,
     language: str | None = None,
     with_similar: typing.Literal[True],
-    similar_pool_size: int = DEFAULT_SIMILAR_POOL_SIZE,
-    max_similar_terms: int = DEFAULT_MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> tuple[SearchResult | None, list[tuple[SearchResult, float]]]: ...
 
 
@@ -776,8 +788,8 @@ async def get_term(
     *,
     language: str | None = None,
     with_similar: bool = False,
-    similar_pool_size: int = DEFAULT_SIMILAR_POOL_SIZE,
-    max_similar_terms: int = DEFAULT_MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> SearchResult | None | tuple[SearchResult | None, list[tuple[SearchResult, float]]]:
     """
     Look up a single locally stored term by exact URL or exact term name.
@@ -796,7 +808,13 @@ async def get_term(
         match turns out to be `None`, or just to see what else is nearby.
     :param similar_pool_size: Candidates `scored_search` pulls before
         alternatives are drawn from them. Only used when `with_similar=True`.
-    :param max_similar_terms: Max alternatives returned. Only used when `with_similar=True`.
+        `None` (the default) uses
+        `slb_glossary.constants.constants.similar_terms_pool_size`,
+        resolved fresh on this call.
+    :param max_similar_terms: Max alternatives returned. Only used when
+        `with_similar=True`. `None` (the default) uses
+        `slb_glossary.constants.constants.max_similar_terms`, resolved
+        fresh on this call.
     :return: The stored `SearchResult`, or `None` if not found locally.
         With `with_similar=True`, a `(result, similar)` pair instead,
         `similar` being `(alternative, score)` pairs.
@@ -819,12 +837,18 @@ async def get_term(
     if not with_similar:
         return result
 
-    scored = await scored_search(db, term_or_url, language=language, limit=similar_pool_size)
+    resolved_pool_size = (
+        similar_pool_size if similar_pool_size is not None else constants.similar_terms_pool_size
+    )
+    resolved_max_similar = (
+        max_similar_terms if max_similar_terms is not None else constants.max_similar_terms
+    )
+    scored = await scored_search(db, term_or_url, language=language, limit=resolved_pool_size)
     similar = [
         (candidate, score)
         for candidate, score in scored
         if result is None or candidate.url != result.url
-    ][:max_similar_terms]
+    ][:resolved_max_similar]
     return result, similar
 
 

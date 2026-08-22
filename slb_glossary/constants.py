@@ -187,7 +187,7 @@ class Constants:
     """
 
     relevance_threshold = Constant(
-        0.55,
+        0.45,
         env_var="SLB_GLOSSARY_RELEVANCE_THRESHOLD",
         validate=lambda v: 0.0 <= v <= 1.0,
     )
@@ -219,6 +219,13 @@ class Constants:
         env_var="SLB_GLOSSARY_LOG_FORMAT",
     )
     """Default `logging.Formatter` format string used for every sink."""
+
+    compare_concurrency = Constant(
+        1,
+        env_var="SLB_GLOSSARY_COMPARE_CONCURRENCY",
+        validate=lambda v: v >= 1,
+    )
+    """Default `concurrency` for `slb_glossary.query.compare`: term lookups happen sequentially unless raised."""
 
 
 constants = Constants()

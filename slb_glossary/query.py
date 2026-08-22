@@ -63,6 +63,7 @@ import time
 import typing
 
 from slb_glossary import live
+from slb_glossary.constants import constants
 from slb_glossary.errors import QueryError
 from slb_glossary.live.browser import Session
 from slb_glossary.local import api as local_api
@@ -93,25 +94,33 @@ Default `persist_batch_size` for `search`/`get_terms_on`: how many
 live results to buffer before writing an incremental upsert batch.
 """
 
-DEFAULT_RELEVANCE_THRESHOLD = 0.45
+DEFAULT_RELEVANCE_THRESHOLD = constants.relevance_threshold
 """
 Default `relevance_threshold` for `search`'s `Source.AUTO` behavior:
 below this score (see `slb_glossary.local.scored_search`), the local
 database's best match isn't trusted alone and a live search is added on.
+Sourced from `slb_glossary.constants.constants.relevance_threshold`.
 """
 
-SIMILAR_TERMS_POOL_SIZE = 5
+SIMILAR_TERMS_POOL_SIZE = constants.similar_terms_pool_size
 """
 Maximum number of live results to pull from the glossary
 site to look for an exact match in and, when `with_similar` is `True`,
-to draw `SimilarResult.similar` alternatives from.
+to draw `SimilarResult.similar` alternatives from. Sourced from
+`slb_glossary.constants.constants.similar_terms_pool_size`.
 """
 
-MAX_SIMILAR_TERMS = 3
-"""Max number of alternative/similar terms to return in `SimilarResult.similar`."""
+MAX_SIMILAR_TERMS = constants.max_similar_terms
+"""
+Max number of alternative/similar terms to return in `SimilarResult.similar`.
+Sourced from `slb_glossary.constants.constants.max_similar_terms`.
+"""
 
-DEFAULT_COMPARE_CONCURRENCY = 1
-"""Default `concurrency` for `compare`: term lookups happen sequentially unless raised."""
+DEFAULT_COMPARE_CONCURRENCY = constants.compare_concurrency
+"""
+Default `concurrency` for `compare`: term lookups happen sequentially
+unless raised. Sourced from `slb_glossary.constants.constants.compare_concurrency`.
+"""
 
 
 class Source(enum.Enum):
@@ -272,7 +281,7 @@ def persist_incrementally(
     *,
     persist: bool,
     language: str,
-    batch_size: int = DEFAULT_PERSIST_BATCH_SIZE,
+    batch_size: int | None = None,
     persist_on_error: bool = True,
 ) -> typing.AsyncIterator[SearchResult]:
     """
@@ -293,7 +302,9 @@ def persist_incrementally(
         incremental batch. Smaller values save progress more often at the
         cost of more (smaller) database writes; larger values write less
         often but risk losing more unsaved results if something goes wrong
-        before the next flush. Defaults to `DEFAULT_PERSIST_BATCH_SIZE`.
+        before the next flush. `None` (the default) passes through
+        unchanged to `slb_glossary.local.upsert_results_incrementally`,
+        which resolves it from `slb_glossary.constants.constants.persist_batch_size`.
     :param persist_on_error: If `True` (the default), flush whatever's
         currently buffered when `results` raises, before letting the
         exception propagate, so an interrupted fetch still saves the
@@ -301,7 +312,7 @@ def persist_incrementally(
         not-yet-flushed buffer (results already flushed in earlier batches
         are unaffected either way).
     :yield: Every item from `results`, unchanged.
-    :raises ValueError: If `batch_size` is less than 1.
+    :raises ValueError: If `batch_size` is given and is less than 1.
     """
     if not persist or db is None:
         return results
@@ -327,10 +338,10 @@ async def search(
     limit: int | None = 3,
     concurrency: int = 1,
     persist: bool = False,
-    persist_batch_size: int = DEFAULT_PERSIST_BATCH_SIZE,
+    persist_batch_size: int | None = None,
     persist_on_error: bool = True,
     fuzzy: bool = False,
-    relevance_threshold: float = DEFAULT_RELEVANCE_THRESHOLD,
+    relevance_threshold: float | None = None,
 ) -> typing.AsyncIterator[LookupResult[SearchResult]]:
     """
     Search for `query`, reading from `db`/`session` according to `source`.
@@ -375,7 +386,9 @@ async def search(
         once at the end.
     :param persist_batch_size: Number of live results to buffer before each
         incremental write to `db`. Only relevant when `persist=True` and a
-        live fetch actually happens.
+        live fetch actually happens. `None` (the default) passes through
+        unchanged to `slb_glossary.local.upsert_results_incrementally`,
+        which resolves it from `slb_glossary.constants.constants.persist_batch_size`.
     :param persist_on_error: If `True` (the default), and `persist=True`,
         save whatever's buffered so far if the live fetch raises partway
         through, instead of losing it.
@@ -388,7 +401,9 @@ async def search(
         `slb_glossary.local.scored_search`) for its results to be served
         without also querying the live glossary. Lower it to trust local
         results more readily (fewer live fetches); raise it to augment
-        with live results more often.
+        with live results more often. `None` (the default) uses
+        `slb_glossary.constants.constants.relevance_threshold`, resolved
+        fresh on this call.
     :yield: `LookupResult[SearchResult]`s, best match first.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         the requested `source` needs one that wasn't given, or `language`
@@ -396,6 +411,9 @@ async def search(
     """
     validate_language(session, language)
     normalized_query = clean_query(query)
+    resolved_relevance_threshold = (
+        relevance_threshold if relevance_threshold is not None else constants.relevance_threshold
+    )
     started_at = time.monotonic()
     resolved = resolve_source(db, session, source)
     count = 0
@@ -466,14 +484,14 @@ async def search(
     results = [result for result, _ in scored]
     best_score = scored[0][1] if scored else 0.0
 
-    if results and best_score >= relevance_threshold:
+    if results and best_score >= resolved_relevance_threshold:
         logger.debug(
             "Serving `search(%r)` from the local database alone "
             "(%d result(s), best score %.3f >= threshold %.3f, in %.3fs)",
             normalized_query,
             len(results),
             best_score,
-            relevance_threshold,
+            resolved_relevance_threshold,
             time.monotonic() - started_at,
         )
         for result, score in scored:
@@ -486,7 +504,7 @@ async def search(
             "(or empty), but no session to augment with; serving local results as-is",
             normalized_query,
             best_score,
-            relevance_threshold,
+            resolved_relevance_threshold,
         )
         for result, score in scored:
             yield LookupResult(value=result, source=Source.LOCAL, persisted=False, score=score)
@@ -497,7 +515,7 @@ async def search(
         "(or empty); trying the live glossary first, filling out with local results",
         normalized_query,
         best_score,
-        relevance_threshold,
+        resolved_relevance_threshold,
     )
     seen_urls: set[str] = set()
     seen_terms: set[str] = set()
@@ -574,7 +592,7 @@ async def get_terms_on(
     limit: int | None = None,
     concurrency: int = 1,
     persist: bool = False,
-    persist_batch_size: int = DEFAULT_PERSIST_BATCH_SIZE,
+    persist_batch_size: int | None = None,
     persist_on_error: bool = True,
     fuzzy: bool = False,
 ) -> typing.AsyncIterator[SearchResult]:
@@ -607,7 +625,9 @@ async def get_terms_on(
         `slb_glossary.local.upsert_results_incrementally`.
     :param persist_batch_size: Number of live results to buffer before each
         incremental write to `db`. Only relevant when `persist=True` and a
-        live fetch actually happens.
+        live fetch actually happens. `None` (the default) passes through
+        unchanged to `slb_glossary.local.upsert_results_incrementally`,
+        which resolves it from `slb_glossary.constants.constants.persist_batch_size`.
     :param persist_on_error: If `True` (the default), and `persist=True`,
         save whatever's buffered so far if the live fetch raises partway
         through, instead of losing it.
@@ -914,8 +934,8 @@ async def get_term(
     persist: bool = False,
     language: str | None = None,
     with_similar: typing.Literal[False] = False,
-    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
-    max_similar_terms: int = MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> LookupResult[SearchResult | None]: ...
 
 
@@ -929,8 +949,8 @@ async def get_term(
     persist: bool = False,
     language: str | None = None,
     with_similar: typing.Literal[True],
-    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
-    max_similar_terms: int = MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> LookupResult[SimilarResult]: ...
 
 
@@ -943,8 +963,8 @@ async def get_term(
     persist: bool = False,
     language: str | None = None,
     with_similar: bool = False,
-    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
-    max_similar_terms: int = MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> LookupResult:
     """
     Look up a single term by exact name or detail-page URL.
@@ -974,10 +994,14 @@ async def get_term(
         to be `None`.
     :param similar_pool_size: Candidates pulled while looking for the
         exact match, and, with `with_similar=True`, to draw alternatives
-        from. Defaults to `SIMILAR_TERMS_POOL_SIZE`.
+        from. `None` (the default) uses
+        `slb_glossary.constants.constants.similar_terms_pool_size`,
+        resolved fresh on this call.
     :param max_similar_terms: Max alternatives returned in
-        `SimilarResult.similar`. Defaults to `MAX_SIMILAR_TERMS`. Ignored
-        unless `with_similar=True`.
+        `SimilarResult.similar`. Ignored unless `with_similar=True`.
+        `None` (the default) uses
+        `slb_glossary.constants.constants.max_similar_terms`, resolved
+        fresh on this call.
     :return: A `LookupResult` wrapping the found `SearchResult` (or `None` if
         not found by the resolved source(s)), scored `EXACT_MATCH_SCORE` if
         found. Or, with `with_similar=True`, a `SimilarResult`, where each
@@ -1050,8 +1074,8 @@ async def _lookup_local_term(
     *,
     language: str | None,
     with_similar: bool,
-    similar_pool_size: int,
-    max_similar_terms: int,
+    similar_pool_size: int | None,
+    max_similar_terms: int | None,
 ) -> LookupResult:
     """
     Look up `term_or_url` in `db` and build `get_term`'s return value from it.
@@ -1141,8 +1165,8 @@ async def _lookup_live_term(
     term_or_url: str,
     *,
     with_similar: typing.Literal[False] = False,
-    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
-    max_similar_terms: int = MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> LookupResult[SearchResult] | None: ...
 
 
@@ -1152,8 +1176,8 @@ async def _lookup_live_term(
     term_or_url: str,
     *,
     with_similar: typing.Literal[True],
-    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
-    max_similar_terms: int = MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> SimilarResult: ...
 
 
@@ -1162,8 +1186,8 @@ async def _lookup_live_term(
     term_or_url: str,
     *,
     with_similar: bool = False,
-    similar_pool_size: int = SIMILAR_TERMS_POOL_SIZE,
-    max_similar_terms: int = MAX_SIMILAR_TERMS,
+    similar_pool_size: int | None = None,
+    max_similar_terms: int | None = None,
 ) -> LookupResult[SearchResult] | None | SimilarResult:
     """
     Resolve `term_or_url` against the live glossary: a URL fetches directly, else it's searched.
@@ -1178,15 +1202,25 @@ async def _lookup_live_term(
         always empty in that case.
     :param similar_pool_size: Live results to pull while looking for the
         exact match, and, with `with_similar=True`, to draw
-        `SimilarResult.similar` alternatives from. Defaults to `SIMILAR_TERMS_POOL_SIZE`.
+        `SimilarResult.similar` alternatives from. `None` (the default)
+        uses `slb_glossary.constants.constants.similar_terms_pool_size`,
+        resolved fresh on this call.
     :param max_similar_terms: Max alternatives returned in
-        `SimilarResult.similar`. Defaults to `MAX_SIMILAR_TERMS`. Ignored
-        unless `with_similar=True`.
+        `SimilarResult.similar`. Ignored unless `with_similar=True`.
+        `None` (the default) uses
+        `slb_glossary.constants.constants.max_similar_terms`, resolved
+        fresh on this call.
     :return: A `LookupResult` wrapping the exact `SearchResult` match (or
         `None`), or with `with_similar=True`, a `SimilarResult` wrapping
         the exact match (if any) and its alternatives, each already
         wrapped in its own `LookupResult`.
     """
+    resolved_pool_size = (
+        similar_pool_size if similar_pool_size is not None else constants.similar_terms_pool_size
+    )
+    resolved_max_similar = (
+        max_similar_terms if max_similar_terms is not None else constants.max_similar_terms
+    )
     if term_or_url.startswith(("http://", "https://")):
         results: list[SearchResult] = [
             result async for result in live.get_results_from_url(session, term_or_url)
@@ -1212,7 +1246,7 @@ async def _lookup_live_term(
     if not with_similar:
         # The correct definition should at least be in the first `similar_pool_size`
         # results, searching at least 2 at a time.
-        async for result in live.search(session, term, limit=similar_pool_size, concurrency=2):
+        async for result in live.search(session, term, limit=resolved_pool_size, concurrency=2):
             if result.term and result.term.strip().lower() == term:
                 return LookupResult(
                     value=result, source=Source.LIVE, persisted=False, score=EXACT_MATCH_SCORE
@@ -1229,7 +1263,7 @@ async def _lookup_live_term(
     # available regardless of where (or whether) the exact match turned up.
     pool = [
         result
-        async for result in live.search(session, term, limit=similar_pool_size, concurrency=2)
+        async for result in live.search(session, term, limit=resolved_pool_size, concurrency=2)
     ]
     exact_result = next(
         (result for result in pool if result.term and result.term.strip().lower() == term), None
@@ -1242,7 +1276,7 @@ async def _lookup_live_term(
         else None
     )
     similar_results = tuple(result for result in pool if result is not exact_result)[
-        :max_similar_terms
+        :resolved_max_similar
     ]
     similar = tuple(
         LookupResult(
@@ -1407,7 +1441,7 @@ async def compare(
     source: Source = Source.AUTO,
     persist: bool = False,
     language: str | None = None,
-    concurrency: int = DEFAULT_COMPARE_CONCURRENCY,
+    concurrency: int | None = None,
     with_similar: typing.Literal[False] = False,
 ) -> dict[str, LookupResult[SearchResult | None]]: ...
 
@@ -1421,7 +1455,7 @@ async def compare(
     source: Source = Source.AUTO,
     persist: bool = False,
     language: str | None = None,
-    concurrency: int = DEFAULT_COMPARE_CONCURRENCY,
+    concurrency: int | None = None,
     with_similar: typing.Literal[True],
 ) -> dict[str, LookupResult[SimilarResult]]: ...
 
@@ -1434,7 +1468,7 @@ async def compare(
     source: Source = Source.AUTO,
     persist: bool = False,
     language: str | None = None,
-    concurrency: int = DEFAULT_COMPARE_CONCURRENCY,
+    concurrency: int | None = None,
     with_similar: bool = False,
 ) -> dict[str, LookupResult]:
     """
@@ -1460,8 +1494,9 @@ async def compare(
         earlier terms' results saved.
     :param language: Restrict every lookup to this glossary language
         edition. See `get_term`'s parameter of the same name.
-    :param concurrency: Number of terms to look up in parallel. `1` (the
-        default) looks them up one at a time.
+    :param concurrency: Number of terms to look up in parallel. `None`
+        (the default) uses `slb_glossary.constants.constants.compare_concurrency`,
+        resolved fresh on this call.
     :param with_similar: If `True`, each entry is a `LookupResult[SimilarResult]`
         instead of `LookupResult[SearchResult | None]`, the same as `get_term`'s.
     :return: `{term_or_url: LookupResult}`, in the order `terms` was given.
@@ -1470,18 +1505,22 @@ async def compare(
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
         the requested `source` needs one that wasn't given, `terms` is
         empty, or `language` doesn't match `session`'s own language.
-    :raises ValueError: If `concurrency` is less than 1.
+    :raises ValueError: If `concurrency` is given and is less than 1.
     """
     if not terms:
         raise QueryError("`compare()` needs at least one term to look up.")
-    if concurrency < 1:
+
+    resolved_concurrency = (
+        concurrency if concurrency is not None else constants.compare_concurrency
+    )
+    if resolved_concurrency < 1:
         raise ValueError("concurrency must be at least 1")
 
     validate_source(db, session, source)
     validate_language(session, language)
     started_at = time.monotonic()
 
-    semaphore = asyncio.Semaphore(concurrency)
+    semaphore = asyncio.Semaphore(resolved_concurrency)
 
     async def _lookup(term: str) -> tuple[str, LookupResult]:
         async with semaphore:
@@ -1507,7 +1546,7 @@ async def compare(
     logger.debug(
         "`compare(%d term(s), concurrency=%d)` done in %.3fs (avg %.3fs/term)",
         terms_count,
-        concurrency,
+        resolved_concurrency,
         elapsed,
         elapsed / terms_count,
     )
