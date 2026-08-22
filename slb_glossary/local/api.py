@@ -662,6 +662,7 @@ async def get_terms_on(
     topic: str,
     *,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = None,
     fuzzy: bool = False,
 ) -> typing.AsyncIterator[SearchResult]:
@@ -676,16 +677,23 @@ async def get_terms_on(
 
     :param db: The local database to read from.
     :param topic: Topic name, or several comma-separated topic names.
+        Topic names themselves are language-specific (the glossary's
+        Spanish edition doesn't use the same topic names as its English
+        one), so this should already be in whatever language you mean;
+        see `language` to also restrict which stored terms match.
     :param start_letter: Restrict results to terms starting with this letter.
+    :param language: Restrict results to this glossary language edition
+        (e.g. `"en"`/`"es"`). `None` (the default) doesn't filter by language.
     :param limit: Maximum number of results. `None` for unlimited.
     :param fuzzy: If `True`, resolve `topic` against locally stored topic
         names first, instead of requiring an exact (case-insensitive) match.
     :yield: `SearchResult`s filed under `topic`, ordered by term name.
     """
     logger.debug(
-        "Local `get_terms_on`: topic=%r start_letter=%r limit=%r fuzzy=%r",
+        "Local `get_terms_on`: topic=%r start_letter=%r language=%r limit=%r fuzzy=%r",
         topic,
         start_letter,
+        language,
         limit,
         fuzzy,
     )
@@ -705,6 +713,9 @@ async def get_terms_on(
     if start_letter:
         sql += " AND term COLLATE NOCASE LIKE ?"
         params.append(f"{start_letter}%")
+    if language:
+        sql += " AND language = ?"
+        params.append(language)
 
     sql += " ORDER BY term"
     if limit:
@@ -818,7 +829,7 @@ async def get_term(
 
 
 async def get_random_term(
-    db: Database, *, topic: str | None = None, fuzzy: bool = False
+    db: Database, *, topic: str | None = None, language: str | None = None, fuzzy: bool = False
 ) -> SearchResult | None:
     """
     Return one randomly chosen locally stored term, optionally restricted to a topic.
@@ -826,23 +837,32 @@ async def get_random_term(
     :param db: The local database to read from.
     :param topic: Restrict the pick to this topic, or several
         comma-separated topics. `None` picks from every locally stored term.
+    :param language: Restrict the pick to this glossary language edition
+        (e.g. `"en"`/`"es"`). `None` (the default) doesn't filter by language.
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
         `topic` by resolving it against locally stored topic names first.
         Has no effect if `topic` is falsy.
     :return: A random `SearchResult`, or `None` if the local database (or
-        the given topic within it) has no terms stored yet.
+        the given topic/language within it) has no terms stored yet.
     """
-    logger.debug("Local `get_random_term`: topic=%r fuzzy=%r", topic, fuzzy)
+    logger.debug("Local `get_random_term`: topic=%r language=%r fuzzy=%r", topic, language, fuzzy)
     sql = "SELECT * FROM terms"
     params: list[typing.Any] = []
+    conditions: list[str] = []
 
     resolved_topic = await resolve_topic(db, topic, fuzzy)
     if resolved_topic:
         topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
         if topics:
             placeholders = ", ".join("?" for _ in topics)
-            sql += f" WHERE topic COLLATE NOCASE IN ({placeholders})"
+            conditions.append(f"topic COLLATE NOCASE IN ({placeholders})")
             params.extend(topics)
+    if language:
+        conditions.append("language = ?")
+        params.append(language)
+
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
     sql += " ORDER BY RANDOM() LIMIT 1"
 
     async with db.connection.execute(sql, params) as cursor:
@@ -860,6 +880,7 @@ async def get_terms_urls(
     query: str | None = None,
     topic: str | None = None,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = None,
     fuzzy: bool = False,
 ) -> typing.AsyncIterator[str]:
@@ -871,6 +892,8 @@ async def get_terms_urls(
         this free-text query. See `search`.
     :param topic: Restrict to this topic, or several comma-separated topics.
     :param start_letter: Restrict to terms starting with this letter.
+    :param language: Restrict to this glossary language edition (e.g.
+        `"en"`/`"es"`). `None` (the default) doesn't filter by language.
     :param limit: Maximum number of URLs. `None` for unlimited.
     :param fuzzy: If `True`, tolerate minor misspellings/partial names in
         `topic` by resolving it against locally stored topic names first.
@@ -878,10 +901,11 @@ async def get_terms_urls(
     :yield: Matching term URLs.
     """
     logger.debug(
-        "Local `get_terms_urls`: query=%r topic=%r start_letter=%r limit=%r",
+        "Local `get_terms_urls`: query=%r topic=%r start_letter=%r language=%r limit=%r",
         query,
         topic,
         start_letter,
+        language,
         limit,
     )
     started_at = time.monotonic()
@@ -889,7 +913,13 @@ async def get_terms_urls(
 
     if query:
         async for result in search(
-            db, query, topic=topic, start_letter=start_letter, limit=limit, fuzzy=fuzzy
+            db,
+            query,
+            topic=topic,
+            start_letter=start_letter,
+            language=language,
+            limit=limit,
+            fuzzy=fuzzy,
         ):
             if url := result.url:
                 yielded += 1
@@ -917,6 +947,10 @@ async def get_terms_urls(
         sql += " AND term COLLATE NOCASE LIKE ?"
         params.append(f"{start_letter}%")
 
+    if language:
+        sql += " AND language = ?"
+        params.append(language)
+
     sql += " ORDER BY term"
     if limit:
         sql += " LIMIT ?"
@@ -934,26 +968,36 @@ async def get_terms_urls(
     )
 
 
-async def get_topics(db: Database) -> dict[str, int]:
+async def get_topics(db: Database, *, language: str | None = None) -> dict[str, int]:
     """
     Return `{topic: term_count}` for every topic represented in the local database.
 
     :param db: The local database to read from.
+    :param language: Restrict to this glossary language edition (e.g.
+        `"en"`/`"es"`). Topic names are language-specific (the glossary's
+        Spanish edition uses different topic names than its English one),
+        so counting across both without filtering can double-count the
+        "same" topic under its two different names. `None` (the default)
+        doesn't filter, and counts every stored term regardless of language.
     :return: Topic name to term count, for topics that have at least one
-        locally stored term.
+        locally stored term (matching `language`, if given).
     """
     sql = """
         SELECT topic, COUNT(*) AS term_count FROM terms
         WHERE topic IS NOT NULL AND topic != ''
-        GROUP BY topic COLLATE NOCASE
-        ORDER BY topic COLLATE NOCASE
     """
+    params: list[typing.Any] = []
+    if language:
+        sql += " AND language = ?"
+        params.append(language)
+    sql += " GROUP BY topic COLLATE NOCASE ORDER BY topic COLLATE NOCASE"
+
     counts: dict[str, int] = {}
-    async with db.connection.execute(sql) as cursor:
+    async with db.connection.execute(sql, params) as cursor:
         async for row in cursor:
             counts[row["topic"]] = row["term_count"]
 
-    logger.debug("Local database has %d topic(s) stored", len(counts))
+    logger.debug("Local database has %d topic(s) stored (language=%r)", len(counts), language)
     return counts
 
 

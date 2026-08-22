@@ -570,6 +570,7 @@ async def get_terms_on(
     session: Session | None = None,
     source: Source = Source.AUTO,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
     persist: bool = False,
@@ -583,10 +584,21 @@ async def get_terms_on(
     Same local-first, live-fallback behavior as `search` for `Source.AUTO`.
 
     :param topic: Topic name, or several comma-separated topic names.
+        Topic names themselves are language-specific (the glossary's
+        Spanish edition doesn't use the same topic names as its English
+        one), so this should already be in whatever language you mean;
+        see `language` to also restrict which stored terms match on a
+        local read.
     :param db: An open local `Database`.
     :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param start_letter: Restrict results to terms starting with this letter.
+    :param language: Restrict results to this glossary language edition
+        (e.g. `"en"`/`"es"`). For a local read, this filters by each
+        stored result's `.language`; `None` (the default) doesn't filter.
+        For a live read, `session` is already bound to one language for
+        its whole lifetime, so `language` here is only validated against
+        it, not applied as a filter. See `validate_language`.
     :param limit: Maximum number of terms to yield. `None` for unlimited.
     :param concurrency: Concurrent term-page fetches, only relevant when a
         live fetch happens.
@@ -604,8 +616,10 @@ async def get_terms_on(
         fuzzy-match topics unconditionally, so this has no effect on them.
     :yield: `SearchResult`s filed under `topic`.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
-        or the requested `source` needs one that wasn't given.
+        the requested `source` needs one that wasn't given, or `language`
+        doesn't match `session`'s own language.
     """
+    validate_language(session, language)
     started_at = time.monotonic()
     resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
@@ -615,6 +629,7 @@ async def get_terms_on(
             db,
             topic,
             start_letter=start_letter,
+            language=language,
             limit=limit,
             fuzzy=fuzzy,
         ):
@@ -665,6 +680,7 @@ async def get_terms_on(
             db,
             topic,
             start_letter=start_letter,
+            language=language,
             limit=limit,
             fuzzy=fuzzy,
         )
@@ -720,8 +736,10 @@ async def get_terms_urls(
     query: str | None = None,
     topic: str | None = None,
     start_letter: str | None = None,
+    language: str | None = None,
     limit: int | None = None,
     fuzzy: bool = False,
+    exclude: typing.AbstractSet[str] | None = None,
 ) -> typing.AsyncIterator[str]:
     """
     Yield term detail-page URLs matching the given filters, reading from
@@ -736,16 +754,31 @@ async def get_terms_urls(
     :param session: An open live `Session`.
     :param source: Which source(s) to read from. See the module docstring.
     :param query: Restrict to a free-text query match.
-    :param topic: Restrict to this topic, or several comma-separated topics.
+    :param topic: Restrict to this topic, or several comma-separated
+        topics. Topic names themselves are language-specific; see `language`.
     :param start_letter: Restrict to terms starting with this letter.
+    :param language: Restrict results to this glossary language edition
+        (e.g. `"en"`/`"es"`). For a local read, this filters by each
+        stored result's `.language`; `None` (the default) doesn't filter.
+        For a live read, `session` is already bound to one language for
+        its whole lifetime, so `language` here is only validated against
+        it, not applied as a filter. See `validate_language`.
     :param limit: Maximum number of URLs to yield. `None` for unlimited.
     :param fuzzy: If `True`, any local-database read tolerates minor
         misspellings/partial names in `topic`. Live reads already
         fuzzy-match topics unconditionally, so this has no effect on them.
+    :param exclude: URLs to skip over instead of yielding, e.g. ones
+        already stored locally. Only meaningful for a live read - a local
+        read's own filters already narrow to what's stored, so excluding
+        from that same set besides is rarely useful, but it's still
+        honored there too for consistency. Pass a `set`/`frozenset` to
+        keep the check cheap. `None` (the default) excludes nothing.
     :yield: Matching term detail-page URLs.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
-        or the requested `source` needs one that wasn't given.
+        the requested `source` needs one that wasn't given, or `language`
+        doesn't match `session`'s own language.
     """
+    validate_language(session, language)
     resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
@@ -754,9 +787,12 @@ async def get_terms_urls(
             query=query,
             topic=topic,
             start_letter=start_letter,
+            language=language,
             limit=limit,
             fuzzy=fuzzy,
         ):
+            if exclude and url in exclude:
+                continue
             yield url
         return
 
@@ -768,6 +804,7 @@ async def get_terms_urls(
             topic=topic,
             start_letter=start_letter,
             limit=limit,
+            exclude=exclude,
         ):
             yield url
         return
@@ -781,9 +818,11 @@ async def get_terms_urls(
             query=query,
             topic=topic,
             start_letter=start_letter,
+            language=language,
             limit=limit,
             fuzzy=fuzzy,
         )
+        if not (exclude and url in exclude)
     ]
     if urls:
         logger.debug("Serving `get_terms_urls(...)` from the local database")
@@ -806,6 +845,7 @@ async def get_terms_urls(
         topic=topic,
         start_letter=start_letter,
         limit=limit,
+        exclude=exclude,
     ):
         yield url
 
@@ -815,6 +855,7 @@ async def get_topics(
     db: Database | None = None,
     session: Session | None = None,
     source: Source = Source.AUTO,
+    language: str | None = None,
 ) -> dict[str, int]:
     """
     Return `{topic: term_count}`, reading from `db`/`session` according to `source`.
@@ -830,21 +871,31 @@ async def get_topics(
     :param source: Which source(s) to read from. `Source.AUTO`
         prefers the local database when it has at least one topic, falling
         back to `session.topics` otherwise. See the module docstring.
+    :param language: Restrict to this glossary language edition (e.g.
+        `"en"`/`"es"`). Only meaningful for a local read: topic names are
+        language-specific (the glossary's Spanish edition uses different
+        topic names than its English one), so counting across both
+        without filtering can double-count the "same" topic under its two
+        different names. For a live read, `session.topics` is already
+        specific to `session`'s own language; `language` is only
+        validated against it, not applied as a filter.
     :return: Topic name to term count.
     :raises slb_glossary.QueryError: If neither `db` nor `session` is given,
-        or the requested `source` needs one that wasn't given.
+        the requested `source` needs one that wasn't given, or `language`
+        doesn't match `session`'s own language.
     """
+    validate_language(session, language)
     resolved = resolve_source(db, session, source)
     if resolved is Source.LOCAL:
         assert db is not None
-        return await local_api.get_topics(db)
+        return await local_api.get_topics(db, language=language)
 
     if resolved is Source.LIVE or source is not Source.AUTO:
         assert session is not None
         return dict(session.topics)
 
     assert db is not None
-    topics = await local_api.get_topics(db)
+    topics = await local_api.get_topics(db, language=language)
     if topics:
         return topics
 
