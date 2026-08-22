@@ -29,7 +29,7 @@ CONTENT_MATCH_SCORE_CAP = 0.40
 """
 Upper bound on a result's score when it only matched by content
 (definition/topic text), never the term name. Kept below
-`slb_glossary.query.DEFAULT_RELEVANCE_THRESHOLD` (0.55), so a content-only
+`constants.relevance_threshold` (0.55), so a content-only
 match is never, by default, mistaken for a confident name match. Without
 this cap, a query that happens to line up well with one term's definition
 (but isn't actually about that term) could otherwise look confident

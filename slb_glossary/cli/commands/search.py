@@ -20,9 +20,10 @@ from slb_glossary.cli.source_options import (
     source_options,
 )
 from slb_glossary.cli.tui import launch_tui
+from slb_glossary.constants import constants
 from slb_glossary.local import scored_search as scored_search
 from slb_glossary.local.types import Database
-from slb_glossary.query import DEFAULT_RELEVANCE_THRESHOLD, LookupResult, Source
+from slb_glossary.query import LookupResult, Source
 from slb_glossary.types import SearchResult
 
 __all__ = ["search"]
@@ -161,7 +162,7 @@ async def auto_search_stream(
     "--relevance-threshold",
     "relevance_threshold",
     type=click.FloatRange(min=0.0, max=1.0),
-    default=DEFAULT_RELEVANCE_THRESHOLD,
+    default=constants.relevance_threshold,
     show_default=True,
     help=(
         "Only used with --auto (the default). The local database's best "

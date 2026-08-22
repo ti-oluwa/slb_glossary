@@ -435,7 +435,7 @@ async def scored_search(
     "Drilling fluid" ahead of "Mud" itself, because "mud" is repeated
     throughout that definition, is the failure mode a purely
     bm25/word-count-driven ranking is prone to. Tier 2's score is also
-    capped below `slb_glossary.query.DEFAULT_RELEVANCE_THRESHOLD` (see
+    capped below `constants.relevance_threshold` (see
     `CONTENT_MATCH_SCORE_CAP`), so a query that only ever matches by
     content, never an actual term name, reads as unconfident by default.
     A real name match should generally be trusted over content overlap alone.
