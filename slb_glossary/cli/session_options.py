@@ -19,10 +19,10 @@ __all__ = [
     "resolve_session_kwargs",
 ]
 
-CONFIG_SENTINEL_DEFAULT = "default"
+DEFAULT_CONFIG_SENTINEL = "default"
 """`--config` value meaning "load the global config" (see `Config.load`)."""
 
-CONFIG_SENTINEL_NONE = "none"
+NULL_CONFIG_SENTINEL = "none"
 """`--config` value meaning "skip config entirely, use built-in defaults"."""
 
 SESSION_PARAM_TO_CONFIG_KEY: dict[str, str] = {
@@ -116,7 +116,7 @@ def session_options(func: F) -> F:
         click.option(
             "--language",
             "-L",
-            type=click.Choice([lang.value for lang in Language], case_sensitive=False),
+            type=click.Choice([language.value for language in Language], case_sensitive=False),
             default=Language.ENGLISH.value,
             show_default=True,
             help="Glossary language edition to search.",
@@ -124,7 +124,9 @@ def session_options(func: F) -> F:
         click.option(
             "--browser-type",
             "-b",
-            type=click.Choice([bt.value for bt in BrowserType], case_sensitive=False),
+            type=click.Choice(
+                [browser_type.value for browser_type in BrowserType], case_sensitive=False
+            ),
             default=BrowserType.CHROMIUM.value,
             show_default=True,
             help="Playwright browser family to launch.",
@@ -272,7 +274,9 @@ def session_options(func: F) -> F:
         ),
         click.option(
             "--retry-backoff",
-            type=click.Choice([bt.value for bt in BackoffType], case_sensitive=False),
+            type=click.Choice(
+                [browser_type.value for browser_type in BackoffType], case_sensitive=False
+            ),
             default=BackoffType.EXPONENTIAL.value,
             show_default=True,
             help="Strategy used to grow the delay between retry attempts.",
@@ -317,7 +321,7 @@ def config_option(func: F) -> F:
     return click.option(
         "--config",
         "config_path",
-        default=CONFIG_SENTINEL_DEFAULT,
+        default=DEFAULT_CONFIG_SENTINEL,
         show_default=True,
         metavar="default|none|PATH",
         help=(
@@ -339,9 +343,9 @@ def load_named_config(config_path: str) -> Config:
         specific JSON/TOML/YAML config file.
     :return: The resolved `Config`.
     """
-    if config_path == CONFIG_SENTINEL_NONE:
+    if config_path == NULL_CONFIG_SENTINEL:
         return Config()
-    if config_path == CONFIG_SENTINEL_DEFAULT:
+    if config_path == DEFAULT_CONFIG_SENTINEL:
         return Config.load()
     return Config.from_file(config_path)
 
@@ -375,7 +379,7 @@ def resolve_session_kwargs(
     :return: A keyword-argument dict ready to splat into
         `slb_glossary.browser.open_session` or `session`.
     """
-    resolved = load_named_config(params.get("config_path", CONFIG_SENTINEL_DEFAULT))
+    resolved = load_named_config(params.get("config_path", DEFAULT_CONFIG_SENTINEL))
 
     for param_name, config_key in SESSION_PARAM_TO_CONFIG_KEY.items():
         if param_name not in params:

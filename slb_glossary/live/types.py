@@ -100,8 +100,8 @@ class Pages:
     """
     A bounded pool of browser pages opened on a single `BrowserContext`.
 
-    Callers that each want an independently-owned page should acquire 
-    one with `get()` instead of sharing (and racing over) a single page. 
+    Callers that each want an independently-owned page should acquire
+    one with `get()` instead of sharing (and racing over) a single page.
     `max_size` caps how many pages can be open on `context`
     at once; once that many are checked out, further `get()` calls wait
     for one to close.
@@ -186,11 +186,11 @@ class Session:
     then pass it to the search functions in `slb_glossary.live`.
 
     A session owns one browser context shared by however many pages are
-    open at once (bounded by `max_pages`). 
+    open at once (bounded by `max_pages`).
 
-    Operations that need their own page check one out via `pages.get()` 
-    or `new_page()`, so a session is safe to drive concurrently as 
-    long as `max_pages` covers however many pages those operations need 
+    Operations that need their own page check one out via `pages.get()`
+    or `new_page()`, so a session is safe to drive concurrently as
+    long as `max_pages` covers however many pages those operations need
     open at the same time.
     """
 

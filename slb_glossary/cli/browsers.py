@@ -10,6 +10,7 @@ import sys
 import time
 import typing
 
+from slb_glossary.live.types import BrowserType
 from slb_glossary.retries import RetryPolicy
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,8 @@ class BrowserInstallError(RuntimeError):
     """Raised when a patchright driver invocation (install/uninstall) fails."""
 
 
-KNOWN_BROWSERS: tuple[str, ...] = ("chromium", "firefox", "webkit")
-"""Browser families patchright's driver knows how to install."""
+KNOWN_BROWSERS: tuple[str, ...] = tuple(browser_type for browser_type in BrowserType)
+"""Browser families patchright's driver knows how to install and is supported by `slb_glossary`."""
 
 DEFAULT_INSTALL_RETRY_POLICY = RetryPolicy.exponential(base_delay=2.0, attempts=3, max_delay=15.0)
 """
@@ -163,7 +164,7 @@ def install_browsers(
     only_shell: bool = False,
     timeout_ms: int | None = None,
     download_host: str | None = None,
-    retry: RetryPolicy | None = DEFAULT_INSTALL_RETRY_POLICY,
+    retry: RetryPolicy | None = None,
 ) -> None:
     """
     Install one or more browser engines via patchright's driver.
@@ -211,7 +212,11 @@ def install_browsers(
     if download_host:
         env_overrides["PLAYWRIGHT_DOWNLOAD_HOST"] = download_host
 
-    run_driver(args, env_overrides=env_overrides or None, retry=retry)
+    run_driver(
+        args,
+        env_overrides=env_overrides or None,
+        retry=retry if retry is not None else DEFAULT_INSTALL_RETRY_POLICY,
+    )
 
 
 def remove_browsers(browsers: typing.Sequence[str]) -> list[str]:

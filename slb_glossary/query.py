@@ -88,40 +88,6 @@ __all__ = [
     "compare",
 ]
 
-DEFAULT_PERSIST_BATCH_SIZE = local_api.DEFAULT_UPSERT_BATCH_SIZE
-"""
-Default `persist_batch_size` for `search`/`get_terms_on`: how many
-live results to buffer before writing an incremental upsert batch.
-"""
-
-DEFAULT_RELEVANCE_THRESHOLD = constants.relevance_threshold
-"""
-Default `relevance_threshold` for `search`'s `Source.AUTO` behavior:
-below this score (see `slb_glossary.local.scored_search`), the local
-database's best match isn't trusted alone and a live search is added on.
-Sourced from `slb_glossary.constants.constants.relevance_threshold`.
-"""
-
-SIMILAR_TERMS_POOL_SIZE = constants.similar_terms_pool_size
-"""
-Maximum number of live results to pull from the glossary
-site to look for an exact match in and, when `with_similar` is `True`,
-to draw `SimilarResult.similar` alternatives from. Sourced from
-`slb_glossary.constants.constants.similar_terms_pool_size`.
-"""
-
-MAX_SIMILAR_TERMS = constants.max_similar_terms
-"""
-Max number of alternative/similar terms to return in `SimilarResult.similar`.
-Sourced from `slb_glossary.constants.constants.max_similar_terms`.
-"""
-
-DEFAULT_COMPARE_CONCURRENCY = constants.compare_concurrency
-"""
-Default `concurrency` for `compare`: term lookups happen sequentially
-unless raised. Sourced from `slb_glossary.constants.constants.compare_concurrency`.
-"""
-
 
 class Source(enum.Enum):
     """Where a `slb_glossary.query` function is allowed to read/write results from."""

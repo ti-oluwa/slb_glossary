@@ -4,7 +4,7 @@ Shared relevance-scoring building blocks for search results, local or live.
 `slb_glossary.local.scored_search` computes its scores in SQL (bm25 plus
 an exact/prefix name-match tier). A live search has no database to run
 that kind of query against, so `slb_glossary.query` scores live results
-here instead, using the same tiers and the same `CONTENT_MATCH_SCORE_CAP` 
+here instead, using the same tiers and the same `CONTENT_MATCH_SCORE_CAP`
 so a local score and a live score mean roughly the same thing to a caller comparing the two.
 """
 
@@ -25,7 +25,7 @@ EXACT_MATCH_SCORE = 1.0
 PREFIX_MATCH_SCORE = 0.9
 """Score for a result's term name starting with the query."""
 
-CONTENT_MATCH_SCORE_CAP = 0.45
+CONTENT_MATCH_SCORE_CAP = 0.40
 """
 Upper bound on a result's score when it only matched by content
 (definition/topic text), never the term name. Kept below

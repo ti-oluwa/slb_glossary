@@ -13,7 +13,11 @@ import typing
 
 import click
 
-from slb_glossary.cli.session_options import load_named_config, resolve_session_kwargs
+from slb_glossary.cli.session_options import (
+    DEFAULT_CONFIG_SENTINEL,
+    load_named_config,
+    resolve_session_kwargs,
+)
 from slb_glossary.config import Config
 from slb_glossary.live.browser import Session
 from slb_glossary.live.browser import session as browser_session
@@ -245,7 +249,7 @@ async def live_session(
 
 def get_loaded_config(params: typing.Mapping[str, typing.Any]) -> Config:
     """Load the `Config` named by this run's `--config` option (see `config_option`)."""
-    return load_named_config(params.get("config_path", "default"))
+    return load_named_config(params.get("config_path", DEFAULT_CONFIG_SENTINEL))
 
 
 T = typing.TypeVar("T")
@@ -313,7 +317,8 @@ async def resolve_stream(
     live_call: typing.Callable[[Session], typing.AsyncIterator[T]],
 ) -> typing.AsyncIterator[T]:
     """
-    Stream a `slb_glossary.query`-style lookup, opening a live session only if actually needed.
+    Stream a `slb_glossary.query`-style lookup, opening a live session
+    only if actually needed.
 
     The streaming counterpart to `resolve_lookup`, for commands built on a
     `slb_glossary.query` function that yields several results (`search`,

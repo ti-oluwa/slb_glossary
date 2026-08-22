@@ -14,13 +14,9 @@ import typing
 from slb_glossary.live.api import get_results_from_urls, get_terms_on, get_terms_urls
 from slb_glossary.live.api import search as live_search
 from slb_glossary.live.browser import Session
-from slb_glossary.local.api import (
-    DEFAULT_UPSERT_BATCH_SIZE,
-    get_topics,
-    upsert_results_incrementally,
-)
 from slb_glossary.local.api import count as count_terms
 from slb_glossary.local.api import get_terms_urls as get_known_urls
+from slb_glossary.local.api import get_topics, upsert_results_incrementally
 from slb_glossary.local.types import Database, Metadata
 from slb_glossary.types import SearchResult
 
@@ -51,10 +47,14 @@ async def get_known_urls_set(
     filter. `frozenset` keeps membership checks against it (one per URL
     the live site returns) cheap regardless of how many URLs are excluded.
     """
-    return frozenset([
-        url
-        async for url in get_known_urls(db, query=query, topic=topic, start_letter=start_letter)
-    ])
+    return frozenset(
+        [
+            url
+            async for url in get_known_urls(
+                db, query=query, topic=topic, start_letter=start_letter
+            )
+        ]
+    )
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
@@ -117,7 +117,7 @@ async def _drain_and_upsert(
     results: typing.AsyncIterable[SearchResult],
     *,
     language: str,
-    batch_size: int,
+    batch_size: int | None,
     persist_on_error: bool,
 ) -> tuple[int, bool]:
     """
@@ -181,7 +181,7 @@ async def sync_query(
     start_letter: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
-    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    batch_size: int | None = None,
     persist_on_error: bool = True,
     skip_existing: bool = True,
 ) -> SyncSummary:
@@ -260,7 +260,7 @@ async def sync_topic(
     *,
     limit: int | None = None,
     concurrency: int = 1,
-    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    batch_size: int | None = None,
     persist_on_error: bool = True,
     skip_existing: bool = True,
 ) -> SyncSummary:
@@ -321,7 +321,7 @@ async def sync_letter(
     topic: str | None = None,
     limit: int | None = None,
     concurrency: int = 1,
-    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    batch_size: int | None = None,
     persist_on_error: bool = True,
     skip_existing: bool = True,
 ) -> SyncSummary:
@@ -329,7 +329,7 @@ async def sync_letter(
     Fetch every term starting with `start_letter` from the live glossary and store them locally.
 
     Useful for incremental updates keyed by the alphabet instead of by
-    topic, e.g. syncing by start-letter "a" through "z" over several 
+    topic, e.g. syncing by start-letter "a" through "z" over several
     separate, spaced-out runs.
 
     :param db: The local database to write to.
@@ -399,7 +399,7 @@ async def sync_all(
     session: Session,
     *,
     concurrency: int = 1,
-    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    batch_size: int | None = None,
     persist_on_error: bool = True,
     skip_existing: bool = True,
 ) -> SyncSummary:

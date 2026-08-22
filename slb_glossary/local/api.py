@@ -32,13 +32,6 @@ __all__ = [
     "count",
 ]
 
-DEFAULT_UPSERT_BATCH_SIZE = constants.persist_batch_size
-"""
-Default `batch_size` for `upsert_results_incrementally`. Sourced from
-`slb_glossary.constants.constants.persist_batch_size` - override via
-`SLB_GLOSSARY_PERSIST_BATCH_SIZE`, not by editing this value.
-"""
-
 FTS_COLUMN_WEIGHTS: tuple[float, float, float] = (10.0, 1.0, 3.0)
 """
 bm25() column weights for `terms_fts`'s `(term, definition, topic)` columns,
@@ -311,15 +304,17 @@ async def upsert_results_incrementally(
 
 def _to_fts_query(query: str) -> str:
     """
-    Turn free text into a safe FTS5 MATCH query: quoted, prefix-matched tokens ANDed together.
+        Turn free text into a safe FTS5 MATCH query: quoted, prefix-matched tokens ANDed together.
 
-    Quoting each token sidesteps FTS5's own query syntax (so punctuation
-    in `query` can't be misread as an FTS operator), and the trailing `*`
-    makes each token a prefix match, so `"poros"` finds `"porosity"`.
+        Quoting each token sidesteps FTS5's own query syntax (so punctuation
+        in `query` can't be misread as an FTS operator), and the trailing `*`
+        makes each token a prefix match, so `"poros"` finds `"porosity"`.
 
-    :param query: Free-text search input.
-    :return: An FTS5 `MATCH` query string equivalent to "every token,
-        as a prefix, in any order".
+        :param query: Free-text search input.
+        :return: An FTS5 `MATCH` query string equivalent to "every token,
+            as a prefix, in any batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
+    batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,order".
     """
     tokens = query.strip().split()
     if not tokens:
@@ -383,7 +378,9 @@ def fuzzy_match_topics(
     return result
 
 
-async def resolve_topic(db: Database, topic: str | None, fuzzy: bool) -> str | None:
+async def resolve_topic(
+    db: Database, topic: str | None, fuzzy: bool, *, language: str | None = None
+) -> str | None:
     """
     Resolve a caller-supplied topic filter, optionally fuzzily, against the local database.
 
@@ -510,7 +507,7 @@ async def scored_search(
         _to_fts_query(normalized_query),
     ]
 
-    resolved_topic = await resolve_topic(db, topic, fuzzy)
+    resolved_topic = await resolve_topic(db, topic, fuzzy, language=language)
     if resolved_topic:
         topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
         if topics:
@@ -706,7 +703,7 @@ async def get_terms_on(
         fuzzy,
     )
     started_at = time.monotonic()
-    resolved_topic = await resolve_topic(db, topic, fuzzy)
+    resolved_topic = await resolve_topic(db, topic, fuzzy, language=language)
     if not resolved_topic:
         logger.debug("No local topic resolved for %r, yielding nothing", topic)
         return
@@ -742,20 +739,6 @@ async def get_terms_on(
     logger.debug(
         "Local `get_terms_on(%r)` yielded %d term(s) in %.3fs", topic, count_yielded, elapsed
     )
-
-
-DEFAULT_SIMILAR_POOL_SIZE = constants.similar_terms_pool_size
-"""
-Default `similar_pool_size` for `get_term(with_similar=True)`: how many
-scored candidates `scored_search` pulls before drawing alternatives from
-them. Sourced from `slb_glossary.constants.constants.similar_terms_pool_size`.
-"""
-
-DEFAULT_MAX_SIMILAR_TERMS = constants.max_similar_terms
-"""
-Default `max_similar_terms` for `get_term(with_similar=True)`. Sourced
-from `slb_glossary.constants.constants.max_similar_terms`.
-"""
 
 
 @typing.overload
@@ -874,7 +857,7 @@ async def get_random_term(
     params: list[typing.Any] = []
     conditions: list[str] = []
 
-    resolved_topic = await resolve_topic(db, topic, fuzzy)
+    resolved_topic = await resolve_topic(db, topic, fuzzy, language=language)
     if resolved_topic:
         topics = [name.strip() for name in resolved_topic.split(",") if name.strip()]
         if topics:
@@ -957,7 +940,7 @@ async def get_terms_urls(
         )
         return
 
-    resolved_topic = await resolve_topic(db, topic, fuzzy)
+    resolved_topic = await resolve_topic(db, topic, fuzzy, language=language)
     sql = "SELECT url FROM terms WHERE 1=1"
     params: list[typing.Any] = []
     if resolved_topic:
